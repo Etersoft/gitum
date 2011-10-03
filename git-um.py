@@ -20,33 +20,48 @@
 
 from git import *
 from subprocess import Popen
-import os
+import os, sys
 
 upstream_branch = 'upstream'
 rebased_branch = 'rebased'
 current_branch = 'current'
 
+START_ST = 0
+MERGE_ST = 1
+REBASE_ST = 2
+COMMIT_ST = 3
+
+CONFIG_FILE = '.git-um-config'
+
 class GitUpstream(object):
 	def __init__(self, repo_path='.'):
 		self.repo = Repo(repo_path)
+		self.state = START_ST
+		self.id = 0
+		self.commits = []
 
 	def pull(self, server, branch):
 		self.repo.git.fetch(server)
-		commits = self._get_commits(server, branch)
-		commits.reverse()
-		self._process_commits(commits)
+		self.commits = self._get_commits(server, branch)
+		self.commits.reverse()
+		self._process_commits()
 
 	def _get_commits(self, server, branch):
-		return self.repo.log(upstream_branch + '..' + server + '/' + branch)
+		return [q.id for q in self.repo.log(upstream_branch + '..' + server + '/' + branch)]
 
-	def _process_commits(self, commits):
-		for q in commits:
-			self._process_commit(q.id)
+	def _process_commits(self):
+		for i in xrange(self.id, len(self.commits)):
+			self._process_commit(self.commits[i])
+			self.id += 1
 
 	def _process_commit(self, commit):
-		self._stage1(commit)
-		diff_str = self._stage2(commit)
-		self._stage3(commit, diff_str)
+		try:
+			self._stage1(commit)
+			diff_str = self._stage2(commit)
+			self._stage3(commit, diff_str)
+		except:
+			self._save_state()
+			raise
 
 	def _patch_tree(self, diff_str):
 		with open('__patch__.patch', 'w') as f:
@@ -58,25 +73,68 @@ class GitUpstream(object):
 
 	def _stage1(self, commit):
 		git = self.repo.git
+		self.state = MERGE_ST
 		git.checkout(upstream_branch)
 		print('merge commit ' + commit)
 		git.merge(commit)
 
-	def _stage2(self, commit):
+	def _stage2(self, commit, continue_rebase=False):
 		git = self.repo.git
-		git.checkout(rebased_branch)
-		git.branch('__' + rebased_branch + '__')
-		git.rebase(commit)
+		self.state = REBASE_ST
+		try:
+			if continue_rebase:
+				git.rebase('--continue')
+			else:
+				git.checkout(rebased_branch)
+				git.branch('__' + rebased_branch + '__')
+				git.rebase(commit)
+		except:
+			raise
 		diff_str = self.repo.diff('__' + rebased_branch + '__', rebased_branch)
 		git.branch('-D', '__' + rebased_branch + '__')
 		return diff_str
 
 	def _stage3(self, commit, diff_str):
 		git = self.repo.git
+		self.state = COMMIT_ST
 		git.checkout(current_branch)
 		self._patch_tree(diff_str)
 		git.add('-A')
 		git.commit('-m', '"commit upstream ' + str(commit) + '"')
 
+	def _save_state(self):
+		with open(CONFIG_FILE, 'w') as f:
+			f.write(str(self.state) + '\n')
+			for i in xrange(self.id, len(self.commits)):
+				f.write(str(self.commits[i]) + '\n')
+
+	def _load_state(self):
+		with open(CONFIG_FILE, 'r') as f:
+			_str = f.readline()
+			self.state = int(_str)
+			_strs = f.readlines()
+			for i in _strs:
+				self.commits.append(i.split()[0])
+
+	def continue_pull(self):
+		self._load_state()
+		if self.state == REBASE_ST:
+			try:
+				diff_str = self._stage2(self.commits[self.id], True)
+				self._stage3(self.commits[self.id], diff_str)
+				self.id += 1
+			except:
+				self._save_state()
+				raise
+		else:
+			print("Don't support continue not from rebase mode")
+			return
+		self._process_commits()
+
 if __name__ == "__main__":
-	GitUpstream().pull('origin', 'master')
+	if len(sys.argv) < 2:
+		GitUpstream().pull('origin', 'master')
+	elif len(sys.argv) < 3 and sys.argv[1] == '--continue':
+		GitUpstream().continue_pull()
+	else:
+		print("Usage git-um.py [--continue]")
