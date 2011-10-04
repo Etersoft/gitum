@@ -44,7 +44,53 @@ class GitUpstream(object):
 		self.repo.git.fetch(server)
 		self.commits = self._get_commits(server, branch)
 		self.commits.reverse()
-		self._process_commits()
+		self._save_branches()
+		if self._process_commits() == -1:
+			return
+		self._clear_branches()
+
+	def abort(self):
+		try:
+			self.repo.git.rebase('--abort')
+		except:
+			pass
+		try:
+			self.repo.git.branch('-D', '__' + rebased_branch + '__')
+		except:
+			pass
+		self._restore_branches()
+		self._clear_branches()
+
+	def _restore_branches(self):
+		git = self.repo.git
+		git.checkout(upstream_branch, '-f')
+		git.reset('__saved_' + upstream_branch + '__', '--hard')
+		git.checkout(rebased_branch, '-f')
+		git.reset('__saved_' + rebased_branch + '__', '--hard')
+		git.checkout(current_branch, '-f')
+		git.reset('__saved_' + current_branch + '__', '--hard')
+
+	def _clear_branches(self):
+		git = self.repo.git
+		git.branch('-D', '__saved_' + rebased_branch + '__')
+		git.branch('-D', '__saved_' + upstream_branch + '__')
+		git.branch('-D', '__saved_' + current_branch + '__')
+
+	def _save_branches(self):
+		git = self.repo.git
+		cur_id = self.repo.commits('HEAD')[0].id
+		git.stash()
+		git.checkout(upstream_branch)
+		git.branch('__saved_' + upstream_branch + '__')
+		git.checkout(rebased_branch)
+		git.branch('__saved_' + rebased_branch + '__')
+		git.checkout(current_branch)
+		git.branch('__saved_' + current_branch + '__')
+		git.checkout(cur_id)
+		try:
+			git.stash('pop')
+		except:
+			pass
 
 	def _get_commits(self, server, branch):
 		return [q.id for q in self.repo.log(upstream_branch + '..' + server + '/' + branch)]
@@ -57,9 +103,11 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._save_state()
 			print e.stdout
+			return -1
 		except:
 			self._save_state()
 			raise
+		return 0
 
 	def _process_commit(self, commit):
 		self._stage1(commit)
@@ -133,12 +181,16 @@ class GitUpstream(object):
 		else:
 			print("Don't support continue not from rebase mode")
 			return
-		self._process_commits()
+		if self._process_commits() == -1:
+			return
+		self._clear_branches()
 
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
 		GitUpstream().pull('origin', 'master')
 	elif len(sys.argv) < 3 and sys.argv[1] == '--continue':
 		GitUpstream().continue_pull()
+	elif len(sys.argv) < 3 and sys.argv[1] == '--abort':
+		GitUpstream().abort()
 	else:
-		print("Usage git-um.py [--continue]")
+		print("Usage git-um.py [--continue | --abort]")
