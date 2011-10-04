@@ -50,18 +50,21 @@ class GitUpstream(object):
 		return [q.id for q in self.repo.log(upstream_branch + '..' + server + '/' + branch)]
 
 	def _process_commits(self):
-		for i in xrange(self.id, len(self.commits)):
-			self._process_commit(self.commits[i])
-			self.id += 1
-
-	def _process_commit(self, commit):
 		try:
-			self._stage1(commit)
-			diff_str = self._stage2(commit)
-			self._stage3(commit, diff_str)
+			for i in xrange(self.id, len(self.commits)):
+				self._process_commit(self.commits[i])
+				self.id += 1
+		except GitCommandError as e:
+			self._save_state()
+			print e.stdout
 		except:
 			self._save_state()
 			raise
+
+	def _process_commit(self, commit):
+		self._stage1(commit)
+		diff_str = self._stage2(commit)
+		self._stage3(commit, diff_str)
 
 	def _patch_tree(self, diff_str):
 		with open('__patch__.patch', 'w') as f:
@@ -81,15 +84,12 @@ class GitUpstream(object):
 	def _stage2(self, commit, continue_rebase=False):
 		git = self.repo.git
 		self.state = REBASE_ST
-		try:
-			if continue_rebase:
-				git.rebase('--continue')
-			else:
-				git.checkout(rebased_branch)
-				git.branch('__' + rebased_branch + '__')
-				git.rebase(commit)
-		except:
-			raise
+		if continue_rebase:
+			git.rebase('--continue')
+		else:
+			git.checkout(rebased_branch)
+			git.branch('__' + rebased_branch + '__')
+			git.rebase(commit)
 		diff_str = self.repo.diff('__' + rebased_branch + '__', rebased_branch)
 		git.branch('-D', '__' + rebased_branch + '__')
 		return diff_str
@@ -123,6 +123,10 @@ class GitUpstream(object):
 				diff_str = self._stage2(self.commits[self.id], True)
 				self._stage3(self.commits[self.id], diff_str)
 				self.id += 1
+			except GitCommandError as e:
+				self._save_state()
+				print e.stdout
+				return
 			except:
 				self._save_state()
 				raise
