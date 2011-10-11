@@ -39,27 +39,22 @@ class GitUpstream(object):
 		self.state = START_ST
 		self.id = 0
 		self.commits = []
+		self.saved_branches = {}
 
 	def pull(self, server, branch):
 		self.repo.git.fetch(server)
 		self.commits = self._get_commits(server, branch)
 		self.commits.reverse()
 		self._save_branches()
-		if self._process_commits() == -1:
-			return
-		self._clear_branches()
+		self._process_commits()
 
 	def abort(self):
+		self._load_state()
 		try:
 			self.repo.git.rebase('--abort')
 		except:
 			pass
-		try:
-			self.repo.git.branch('-D', '__' + rebased_branch + '__')
-		except:
-			pass
 		self._restore_branches()
-		self._clear_branches()
 
 	def continue_pull(self):
 		self._load_state()
@@ -80,38 +75,21 @@ class GitUpstream(object):
 			return
 		if self._process_commits() == -1:
 			return
-		self._clear_branches()
 
 	def _restore_branches(self):
 		git = self.repo.git
 		git.checkout(upstream_branch, '-f')
-		git.reset('__saved_' + upstream_branch + '__', '--hard')
+		git.reset(self.saved_branches[upstream_branch], '--hard')
 		git.checkout(rebased_branch, '-f')
-		git.reset('__saved_' + rebased_branch + '__', '--hard')
+		git.reset(self.saved_branches[rebased_branch], '--hard')
 		git.checkout(current_branch, '-f')
-		git.reset('__saved_' + current_branch + '__', '--hard')
-
-	def _clear_branches(self):
-		git = self.repo.git
-		git.branch('-D', '__saved_' + rebased_branch + '__')
-		git.branch('-D', '__saved_' + upstream_branch + '__')
-		git.branch('-D', '__saved_' + current_branch + '__')
+		git.reset(self.saved_branches[current_branch], '--hard')
 
 	def _save_branches(self):
 		git = self.repo.git
-		cur_id = self.repo.commits('HEAD')[0].id
-		git.stash()
-		git.checkout(upstream_branch)
-		git.branch('__saved_' + upstream_branch + '__')
-		git.checkout(rebased_branch)
-		git.branch('__saved_' + rebased_branch + '__')
-		git.checkout(current_branch)
-		git.branch('__saved_' + current_branch + '__')
-		git.checkout(cur_id)
-		try:
-			git.stash('pop')
-		except:
-			pass
+		self.saved_branches[upstream_branch] = self.repo.commit(upstream_branch).id
+		self.saved_branches[rebased_branch] = self.repo.commit(rebased_branch).id
+		self.saved_branches[current_branch] = self.repo.commit(current_branch).id
 
 	def _get_commits(self, server, branch):
 		return [q.id for q in self.repo.log(upstream_branch + '..' + server + '/' + branch)]
@@ -124,11 +102,9 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._save_state()
 			print e.stdout
-			return -1
 		except:
 			self._save_state()
 			raise
-		return 0
 
 	def _process_commit(self, commit):
 		self._stage1(commit)
@@ -159,10 +135,9 @@ class GitUpstream(object):
 			git.rebase('--continue')
 		else:
 			git.checkout(rebased_branch)
-			git.branch('__' + rebased_branch + '__')
+			self.saved_branches['prev_head'] = self._repo.commit(rebased_branch).id
 			git.rebase(commit)
-		diff_str = self.repo.diff('__' + rebased_branch + '__', rebased_branch)
-		git.branch('-D', '__' + rebased_branch + '__')
+		diff_str = self.repo.diff(self.saved_branches['prev_head'], rebased_branch)
 		return diff_str
 
 	def _stage3(self, commit, diff_str):
@@ -184,16 +159,22 @@ class GitUpstream(object):
 
 	def _save_state(self):
 		with open(CONFIG_FILE, 'w') as f:
+			f.write(self.saved_branches[upstream_branch] + '\n')
+			f.write(self.saved_branches[rebased_branch] + '\n')
+			f.write(self.saved_branches[current_branch] + '\n')
+			f.write(self.saved_branches['prev_head'] + '\n')
 			f.write(str(self.state) + '\n')
 			for i in xrange(self.id, len(self.commits)):
 				f.write(str(self.commits[i]) + '\n')
 
 	def _load_state(self):
 		with open(CONFIG_FILE, 'r') as f:
-			_str = f.readline()
-			self.state = int(_str)
-			_strs = f.readlines()
-			for i in _strs:
+			self.saved_branches[upstream_branch] = f.readline().split()[0]
+			self.saved_branches[rebased_branch] = f.readline().split()[0]
+			self.saved_branches[current_branch] = f.readline().split()[0]
+			self.saved_branches['prev_head'] = f.readline().split()[0]
+			self.state = int(f.readline())
+			for i in f.readlines():
 				self.commits.append(i.split()[0])
 
 if __name__ == "__main__":
