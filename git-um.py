@@ -172,7 +172,15 @@ class GitUpstream(object):
 		if self._patch_tree(diff_str) != 0:
 			print 'error occurs during applying the patch'
 		git.add('-A')
-		git.commit('-m', '"commit upstream ' + str(commit) + '"')
+		mess = self._fix_commit_message(self.repo.commit(commit).message)
+		git.commit('-m', mess)
+
+	def _fix_commit_message(self, mess):
+		parts = mess.split('\n')
+		mess = ''
+		for i in parts:
+			mess += i + '\n\n'
+		return mess[:-1]
 
 	def _save_state(self):
 		with open(CONFIG_FILE, 'w') as f:
