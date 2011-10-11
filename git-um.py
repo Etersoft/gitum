@@ -61,6 +61,27 @@ class GitUpstream(object):
 		self._restore_branches()
 		self._clear_branches()
 
+	def continue_pull(self):
+		self._load_state()
+		if self.state == REBASE_ST:
+			try:
+				diff_str = self._stage2(self.commits[self.id], True)
+				self._stage3(self.commits[self.id], diff_str)
+				self.id += 1
+			except GitCommandError as e:
+				self._save_state()
+				print e.stdout
+				return
+			except:
+				self._save_state()
+				raise
+		else:
+			print("Don't support continue not from rebase mode")
+			return
+		if self._process_commits() == -1:
+			return
+		self._clear_branches()
+
 	def _restore_branches(self):
 		git = self.repo.git
 		git.checkout(upstream_branch, '-f')
@@ -166,27 +187,6 @@ class GitUpstream(object):
 			_strs = f.readlines()
 			for i in _strs:
 				self.commits.append(i.split()[0])
-
-	def continue_pull(self):
-		self._load_state()
-		if self.state == REBASE_ST:
-			try:
-				diff_str = self._stage2(self.commits[self.id], True)
-				self._stage3(self.commits[self.id], diff_str)
-				self.id += 1
-			except GitCommandError as e:
-				self._save_state()
-				print e.stdout
-				return
-			except:
-				self._save_state()
-				raise
-		else:
-			print("Don't support continue not from rebase mode")
-			return
-		if self._process_commits() == -1:
-			return
-		self._clear_branches()
 
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
