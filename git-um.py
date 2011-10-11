@@ -115,12 +115,14 @@ class GitUpstream(object):
 		self._stage3(commit, diff_str)
 
 	def _patch_tree(self, diff_str):
+		status = 0
 		with open('__patch__.patch', 'w') as f:
 			f.write(diff_str + '\n')
 		with open('__patch__.patch', 'r') as f:
 			proc = Popen(['patch', '-p1'], stdin=f)
 			status = proc.wait()
 		os.unlink('__patch__.patch')
+		return status
 
 	def _stage1(self, commit):
 		git = self.repo.git
@@ -146,7 +148,8 @@ class GitUpstream(object):
 		git = self.repo.git
 		self.state = COMMIT_ST
 		git.checkout(current_branch)
-		self._patch_tree(diff_str)
+		if self._patch_tree(diff_str) != 0:
+			print 'error occurs during applying the patch'
 		git.add('-A')
 		git.commit('-m', '"commit upstream ' + str(commit) + '"')
 
