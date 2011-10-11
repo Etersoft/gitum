@@ -31,6 +31,7 @@ MERGE_ST = 1
 REBASE_ST = 2
 COMMIT_ST = 3
 
+PULL_FILE = '.git-um-pull'
 CONFIG_FILE = '.git-um-config'
 
 class GitUpstream(object):
@@ -40,6 +41,7 @@ class GitUpstream(object):
 		self.id = 0
 		self.commits = []
 		self.saved_branches = {}
+		self._load_config(CONFIG_FILE)
 
 	def pull(self, server, branch):
 		self.repo.git.fetch(server)
@@ -75,6 +77,27 @@ class GitUpstream(object):
 			return
 		if self._process_commits() == -1:
 			return
+
+	def _load_config(self, filename):
+		global upstream_branch, rebased_branch, current_branch
+		with open(filename, 'r') as f:
+			num = 0
+			_strs = [q.split('\n')[0] for q in f.readlines()]
+			for i in _strs:
+				num = 1
+				i = i.split('#')[0].strip()
+				parts = i.split(' ')
+				if len(parts) != 3 or parts[1] != '=':
+					print('error in config file on line %d :' % num)
+					print('    %s' % i)
+					return -1
+				if parts[0] == 'upstream':
+					upstream_branch = parts[2]
+				elif parts[0] == 'rebased':
+					rebased_branch = parts[2]
+				elif parts[0] == 'current':
+					current_branch = parts[2]
+		return 0
 
 	def _restore_branches(self):
 		git = self.repo.git
@@ -158,7 +181,7 @@ class GitUpstream(object):
 		return mess[:-1]
 
 	def _save_state(self):
-		with open(CONFIG_FILE, 'w') as f:
+		with open(PULL_FILE, 'w') as f:
 			f.write(self.saved_branches[upstream_branch] + '\n')
 			f.write(self.saved_branches[rebased_branch] + '\n')
 			f.write(self.saved_branches[current_branch] + '\n')
@@ -168,7 +191,7 @@ class GitUpstream(object):
 				f.write(str(self.commits[i]) + '\n')
 
 	def _load_state(self):
-		with open(CONFIG_FILE, 'r') as f:
+		with open(PULL_FILE, 'r') as f:
 			self.saved_branches[upstream_branch] = f.readline().split()[0]
 			self.saved_branches[rebased_branch] = f.readline().split()[0]
 			self.saved_branches[current_branch] = f.readline().split()[0]
