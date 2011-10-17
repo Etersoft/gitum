@@ -35,6 +35,12 @@ COMMIT_ST = 3
 PULL_FILE = '.git-um-pull'
 CONFIG_FILE = '.git-um-config'
 
+class PatchError(Exception):
+	def __init__(self, message):
+		self.message = message
+	def __str__(self):
+		return repr(self.message)
+
 class GitUpstream(object):
 	def __init__(self, repo_path='.'):
 		self._repo = Repo(repo_path)
@@ -69,6 +75,10 @@ class GitUpstream(object):
 			except GitCommandError as e:
 				self._save_state()
 				print(e.stdout)
+				return
+			except PatchError as e:
+				self._save_state()
+				print(e.message)
 				return
 			except:
 				self._save_state()
@@ -126,6 +136,9 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._save_state()
 			print(e.stdout)
+		except PatchError as e:
+			self._save_state()
+			print(e.message)
 		except:
 			self._save_state()
 			raise
@@ -168,8 +181,14 @@ class GitUpstream(object):
 		git = self._repo.git
 		self._state = COMMIT_ST
 		git.checkout(current_branch)
+		if diff_str == "":
+			print('nothing to commit in branch current, skipping %s commit' % commit)
+			return
 		if self._patch_tree(diff_str) != 0:
-			print('error occurs during applying the commit %s' % commit)
+			self._id += 1
+			self._state = MERGE_ST
+			raise PatchError('error occurs during applying the commit %s\n'
+					 'fix error, commit and continue the process, please!' % commit)
 		git.add('-A')
 		mess = self._fix_commit_message(self._repo.commit(commit).message)
 		git.commit('-m', mess)
