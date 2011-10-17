@@ -83,11 +83,10 @@ class GitUpstream(object):
 			except:
 				self._save_state()
 				raise
-		else:
-			print("Don't support continue not from rebase mode")
+		elif self._state != MERGE_ST:
+			print("Don't support continue not from merge or rebase mode")
 			return
-		if self._process_commits() == -1:
-			return
+		self._process_commits()
 
 	def _load_config(self, filename):
 		global upstream_branch, rebased_branch, current_branch
