@@ -68,12 +68,12 @@ class GitUpstream(object):
 			pass
 		self._restore_branches()
 
-	def continue_pull(self):
+	def continue_pull(self, rebase_cmd):
 		self._load_config(CONFIG_FILE)
 		self._load_state()
 		if self._state == REBASE_ST:
 			try:
-				diff_str = self._stage2(self._commits[self._id], True)
+				diff_str = self._stage2(self._commits[self._id], rebase_cmd)
 				self._stage3(self._commits[self._id], diff_str)
 				self._id += 1
 			except GitCommandError as e:
@@ -201,11 +201,11 @@ class GitUpstream(object):
 		print('merge commit ' + commit)
 		git.merge(commit)
 
-	def _stage2(self, commit, continue_rebase=False):
+	def _stage2(self, commit, rebase_cmd=None):
 		git = self._repo.git
 		self._state = REBASE_ST
-		if continue_rebase:
-			git.rebase('--continue')
+		if rebase_cmd:
+			git.rebase(rebase_cmd)
 		else:
 			git.checkout(rebased_branch)
 			self._saved_branches['prev_head'] = self._repo.commit(rebased_branch).id
@@ -259,6 +259,7 @@ if __name__ == "__main__":
 	pull_p = subparsers.add_parser('pull')
 	gr = pull_p.add_mutually_exclusive_group()
 	gr.add_argument('--continue', action='store_true', help='continue a pull process')
+	gr.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a pull process')
 	gr.add_argument('--abort', action='store_true', help='abort a pull process')
 	update_p = subparsers.add_parser('update')
 	update_p.add_argument('since', help='commit id or branch name to start with (excluded)')
@@ -272,7 +273,9 @@ if __name__ == "__main__":
 
 	if args['command_name'] == 'pull':
 		if args['continue']:
-			GitUpstream().continue_pull()
+			GitUpstream().continue_pull('--continue')
+		elif args['skip']:
+			GitUpstream().continue_pull('--skip')
 		elif args['abort']:
 			GitUpstream().abort()
 		else:
