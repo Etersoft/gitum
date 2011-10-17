@@ -252,29 +252,37 @@ class GitUpstream(object):
 				self._commits.append(i.split()[0])
 		os.unlink(PULL_FILE)
 
+def _print_usage():
+	print("Usage git-um.py {create,pull,update}\n"
+		"create [--remote=<remote> [--current=<current> [--upstream=<upstream> [--rebased=<rebased>]]]]\n"
+		"pull [--continue | --abort]\n"
+		"update <commit> <commit>")
+
 if __name__ == "__main__":
-	if len(sys.argv) < 2:
-		GitUpstream().pull()
-	elif len(sys.argv) < 3 and sys.argv[1] == '--continue':
-		GitUpstream().continue_pull()
-	elif len(sys.argv) < 3 and sys.argv[1] == '--abort':
-		GitUpstream().abort()
-	elif len(sys.argv) >= 2 and sys.argv[1] == '--create':
-		if len(sys.argv) == 2:
-			GitUpstream().create()
-		elif len(sys.argv) == 3:
-			GitUpstream().create(sys.argv[2])
-		elif len(sys.argv) == 4:
-			GitUpstream().create(sys.argv[2], sys.argv[3])
-		elif len(sys.argv) == 5:
-			GitUpstream().create(sys.argv[2], sys.argv[3], sys.argv[4])
-		elif len(sys.argv) == 6:
-			GitUpstream().create(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+	if len(sys.argv) >= 2 and sys.argv[1] == 'pull':
+		if len(sys.argv) == 3:
+			if sys.argv[2] == '--continue':
+				GitUpstream().continue_pull()
+			elif sys.argv[2] == '--abort':
+				GitUpstream().abort()
+			else:
+				_print_usage()
+		elif len(sys.argv) == 2:
+			GitUpstream().pull()
 		else:
-			print("Usage git-um.py [--continue | --abort | --update <commit> <commit> | "
-			                       "--create [<remote> [<current> [<upstream> [[rebased]]]]]]")
-	elif len(sys.argv) == 4 and sys.argv[1] == '--update':
+			_print_usage()
+	elif len(sys.argv) >= 2 and sys.argv[1] == 'create':
+		for i in xrange(2, len(sys.argv), 2):
+			if sys.argv[i] == '--remote':
+				remote_branch = sys.argv[i+1]
+			if sys.argv[i] == '--current':
+				current_branch = sys.argv[i+1]
+			if sys.argv[i] == '--upstream':
+				upstream_branch = sys.argv[i+1]
+			if sys.argv[i] == '--rebased':
+				rebased_branch = sys.argv[i+1]
+		GitUpstream().create(remote_branch, current_branch, upstream_branch, rebased_branch)
+	elif len(sys.argv) == 4 and sys.argv[1] == 'update':
 		GitUpstream().update_rebased(sys.argv[2], sys.argv[3])
 	else:
-		print("Usage git-um.py [--continue | --abort | --update <commit> <commit> | "
-		                       "--create [<remote> [<current> [<upstream> [[rebased]]]]]]")
+		_print_usage()
