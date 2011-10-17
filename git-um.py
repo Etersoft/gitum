@@ -175,11 +175,7 @@ class GitUpstream(object):
 		git.commit('-m', mess)
 
 	def _fix_commit_message(self, mess):
-		parts = mess.split('\n')
-		mess = ''
-		for i in parts:
-			mess += i + '\n\n'
-		return mess[:-1]
+		return '\n\n'.join(mess.split('\n'))
 
 	def _save_state(self):
 		with open(PULL_FILE, 'w') as f:
