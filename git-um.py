@@ -196,6 +196,7 @@ class GitUpstream(object):
 			self._state = int(f.readline())
 			for i in f.readlines():
 				self._commits.append(i.split()[0])
+		os.unlink(PULL_FILE)
 
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
