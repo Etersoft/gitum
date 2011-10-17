@@ -49,12 +49,9 @@ class GitUpstream(object):
 		self._id = 0
 		self._commits = []
 		self._saved_branches = {}
-		try:
-			self._load_config(CONFIG_FILE)
-		except IOError:
-			print('.git-un-config missing, using default branch names...')
 
 	def pull(self):
+		self._load_config(CONFIG_FILE)
 		self._repo.git.fetch(remote_branch.split('/')[0])
 		self._commits = self._get_commits()
 		self._commits.reverse()
@@ -62,6 +59,7 @@ class GitUpstream(object):
 		self._process_commits()
 
 	def abort(self):
+		self._load_config(CONFIG_FILE)
 		self._load_state()
 		try:
 			self._repo.git.rebase('--abort')
@@ -70,6 +68,7 @@ class GitUpstream(object):
 		self._restore_branches()
 
 	def continue_pull(self):
+		self._load_config(CONFIG_FILE)
 		self._load_state()
 		if self._state == REBASE_ST:
 			try:
@@ -93,6 +92,7 @@ class GitUpstream(object):
 		self._process_commits()
 
 	def update_rebased(self, since, to):
+		self._load_config(CONFIG_FILE)
 		git = self._repo.git
 		since = self._repo.commit(since).id
 		to = self._repo.commit(to).id
@@ -105,7 +105,24 @@ class GitUpstream(object):
 			return
 		git.checkout(current_branch)
 
+	def create(self, remote=None, current=None, upstream=None, rebased=None):
+		with open(CONFIG_FILE, 'w') as f:
+			if remote:
+				f.write('remote = %s\n' % remote)
+			if current:
+				f.write('current = %s\n' % current)
+			if upstream:
+				f.write('upstream = %s\n' % upstream)
+			if rebased:
+				f.write('rebased = %s\n' % rebased)
+
 	def _load_config(self, filename):
+		try:
+			self._load_config_raised(filename)
+		except IOError:
+			print('.git-un-config missing, using default branch names...')
+
+	def _load_config_raised(self, filename):
 		global upstream_branch, rebased_branch, current_branch, remote_branch
 		with open(filename, 'r') as f:
 			num = 0
@@ -242,7 +259,22 @@ if __name__ == "__main__":
 		GitUpstream().continue_pull()
 	elif len(sys.argv) < 3 and sys.argv[1] == '--abort':
 		GitUpstream().abort()
+	elif len(sys.argv) >= 2 and sys.argv[1] == '--create':
+		if len(sys.argv) == 2:
+			GitUpstream().create()
+		elif len(sys.argv) == 3:
+			GitUpstream().create(sys.argv[2])
+		elif len(sys.argv) == 4:
+			GitUpstream().create(sys.argv[2], sys.argv[3])
+		elif len(sys.argv) == 5:
+			GitUpstream().create(sys.argv[2], sys.argv[3], sys.argv[4])
+		elif len(sys.argv) == 6:
+			GitUpstream().create(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+		else:
+			print("Usage git-um.py [--continue | --abort | --update <commit> <commit> | "
+			                       "--create [<remote> [<current> [<upstream> [[rebased]]]]]]")
 	elif len(sys.argv) == 4 and sys.argv[1] == '--update':
 		GitUpstream().update_rebased(sys.argv[2], sys.argv[3])
 	else:
-		print("Usage git-um.py [--continue | --abort | --update <commit> <commit>]")
+		print("Usage git-um.py [--continue | --abort | --update <commit> <commit> | "
+		                       "--create [<remote> [<current> [<upstream> [[rebased]]]]]]")
