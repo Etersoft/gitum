@@ -91,6 +91,19 @@ class GitUpstream(object):
 			return
 		self._process_commits()
 
+	def update_rebased(self, since, to):
+		git = self._repo.git
+		since = self._repo.commit(since).id
+		to = self._repo.commit(to).id
+		git.checkout(rebased_branch, '-f')
+		try:
+			for i in [q.id for q in self._repo.log(since + '..' + to)]:
+				git.cherry_pick(i)
+		except GitCommandError as e:
+			print(e.stdout)
+			return
+		git.checkout(current_branch)
+
 	def _load_config(self, filename):
 		global upstream_branch, rebased_branch, current_branch
 		with open(filename, 'r') as f:
@@ -226,5 +239,7 @@ if __name__ == "__main__":
 		GitUpstream().continue_pull()
 	elif len(sys.argv) < 3 and sys.argv[1] == '--abort':
 		GitUpstream().abort()
+	elif len(sys.argv) == 4 and sys.argv[1] == '--update':
+		GitUpstream().update_rebased(sys.argv[2], sys.argv[3])
 	else:
-		print("Usage git-um.py [--continue | --abort]")
+		print("Usage git-um.py [--continue | --abort | --update <commit> <commit>]")
