@@ -48,7 +48,10 @@ class GitUpstream(object):
 		self._id = 0
 		self._commits = []
 		self._saved_branches = {}
-		self._load_config(CONFIG_FILE)
+		try:
+			self._load_config(CONFIG_FILE)
+		except IOError:
+			print('.git-un-config missing, using default branch names...')
 
 	def pull(self, server, branch):
 		self._repo.git.fetch(server)
