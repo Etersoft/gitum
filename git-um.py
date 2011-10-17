@@ -26,6 +26,7 @@ import sys
 upstream_branch = 'upstream'
 rebased_branch = 'rebased'
 current_branch = 'current'
+remote_branch = 'origin/master'
 
 START_ST = 0
 MERGE_ST = 1
@@ -53,9 +54,9 @@ class GitUpstream(object):
 		except IOError:
 			print('.git-un-config missing, using default branch names...')
 
-	def pull(self, server, branch):
-		self._repo.git.fetch(server)
-		self._commits = self._get_commits(server, branch)
+	def pull(self):
+		self._repo.git.fetch(remote_branch.split('/')[0])
+		self._commits = self._get_commits()
 		self._commits.reverse()
 		self._save_branches()
 		self._process_commits()
@@ -105,7 +106,7 @@ class GitUpstream(object):
 		git.checkout(current_branch)
 
 	def _load_config(self, filename):
-		global upstream_branch, rebased_branch, current_branch
+		global upstream_branch, rebased_branch, current_branch, remote_branch
 		with open(filename, 'r') as f:
 			num = 0
 			_strs = [q.split('\n')[0] for q in f.readlines()]
@@ -123,6 +124,8 @@ class GitUpstream(object):
 					rebased_branch = parts[2]
 				elif parts[0] == 'current':
 					current_branch = parts[2]
+				elif parts[0] == 'remote':
+					remote_branch = parts[2]
 		return 0
 
 	def _restore_branches(self):
@@ -140,8 +143,8 @@ class GitUpstream(object):
 		self._saved_branches[rebased_branch] = self._repo.commit(rebased_branch).id
 		self._saved_branches[current_branch] = self._repo.commit(current_branch).id
 
-	def _get_commits(self, server, branch):
-		return [q.id for q in self._repo.log(upstream_branch + '..' + server + '/' + branch)]
+	def _get_commits(self):
+		return [q.id for q in self._repo.log(upstream_branch + '..' + remote_branch)]
 
 	def _process_commits(self):
 		try:
@@ -234,7 +237,7 @@ class GitUpstream(object):
 
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
-		GitUpstream().pull('origin', 'master')
+		GitUpstream().pull()
 	elif len(sys.argv) < 3 and sys.argv[1] == '--continue':
 		GitUpstream().continue_pull()
 	elif len(sys.argv) < 3 and sys.argv[1] == '--abort':
