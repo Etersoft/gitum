@@ -95,11 +95,11 @@ class GitUpstream(object):
 	def update_rebased(self, since, to):
 		self._load_config(CONFIG_FILE)
 		git = self._repo.git
-		since = self._repo.commit(since).id
-		to = self._repo.commit(to).id
+		since = self._repo.commit(since).hexsha
+		to = self._repo.commit(to).hexsha
 		git.checkout(rebased_branch, '-f')
 		try:
-			for i in [q.id for q in self._repo.log(since + '..' + to)]:
+			for i in [q.hexsha for q in self._repo.iter_commits(since + '..' + to)]:
 				git.cherry_pick(i)
 		except GitCommandError as e:
 			print(e.stdout)
@@ -157,12 +157,12 @@ class GitUpstream(object):
 
 	def _save_branches(self):
 		git = self._repo.git
-		self._saved_branches[upstream_branch] = self._repo.commit(upstream_branch).id
-		self._saved_branches[rebased_branch] = self._repo.commit(rebased_branch).id
-		self._saved_branches[current_branch] = self._repo.commit(current_branch).id
+		self._saved_branches[upstream_branch] = self._repo.branches[upstream_branch].commit.hexsha
+		self._saved_branches[rebased_branch] = self._repo.branches[rebased_branch].commit.hexsha
+		self._saved_branches[current_branch] = self._repo.branches[current_branch].commit.hexsha
 
 	def _get_commits(self):
-		return [q.id for q in self._repo.log(upstream_branch + '..' + remote_branch)]
+		return [q.hexsha for q in self._repo.iter_commits(upstream_branch + '..' + remote_branch)]
 
 	def _process_commits(self):
 		try:
@@ -208,9 +208,9 @@ class GitUpstream(object):
 			git.rebase(rebase_cmd)
 		else:
 			git.checkout(rebased_branch)
-			self._saved_branches['prev_head'] = self._repo.commit(rebased_branch).id
+			self._saved_branches['prev_head'] = self._repo.branches[rebased_branch].commit.hexsha
 			git.rebase(commit)
-		diff_str = self._repo.diff(self._saved_branches['prev_head'], rebased_branch)
+		diff_str = self._repo.git.diff(self._saved_branches['prev_head'], rebased_branch)
 		return diff_str
 
 	def _stage3(self, commit, diff_str):
@@ -226,11 +226,8 @@ class GitUpstream(object):
 			raise PatchError('error occurs during applying the commit %s\n'
 					 'fix error, commit and continue the process, please!' % commit)
 		git.add('-A')
-		mess = self._fix_commit_message(self._repo.commit(commit).message)
+		mess = self._repo.commit(commit).message
 		git.commit('-m', mess)
-
-	def _fix_commit_message(self, mess):
-		return '\n\n'.join(mess.split('\n'))
 
 	def _save_state(self):
 		with open(PULL_FILE, 'w') as f:
