@@ -1,0 +1,7 @@
+.gitignore
+.gear/rules
+*~
+*pyc
+*egg*
+git-um/build
+git-um/dist
