@@ -24,11 +24,6 @@ import os
 import sys
 import argparse
 
-upstream_branch = 'upstream'
-rebased_branch = 'rebased'
-current_branch = 'current'
-remote_branch = 'origin/master'
-
 START_ST = 0
 MERGE_ST = 1
 REBASE_ST = 2
@@ -50,17 +45,16 @@ class GitUpstream(object):
 		self._id = 0
 		self._commits = []
 		self._saved_branches = {}
+		self._load_config(CONFIG_FILE)
 
 	def pull(self):
-		self._load_config(CONFIG_FILE)
-		self._repo.git.fetch(remote_branch.split('/')[0])
+		self._repo.git.fetch(self._remote.split('/')[0])
 		self._commits = self._get_commits()
 		self._commits.reverse()
 		self._save_branches()
 		self._process_commits()
 
 	def abort(self):
-		self._load_config(CONFIG_FILE)
 		self._load_state()
 		try:
 			self._repo.git.rebase('--abort')
@@ -69,7 +63,6 @@ class GitUpstream(object):
 		self._restore_branches()
 
 	def continue_pull(self, rebase_cmd):
-		self._load_config(CONFIG_FILE)
 		self._load_state()
 		if self._state == REBASE_ST:
 			try:
@@ -93,18 +86,17 @@ class GitUpstream(object):
 		self._process_commits()
 
 	def update_rebased(self, since, to):
-		self._load_config(CONFIG_FILE)
 		git = self._repo.git
 		since = self._repo.commit(since).hexsha
 		to = self._repo.commit(to).hexsha
-		git.checkout(rebased_branch, '-f')
+		git.checkout(self._rebased, '-f')
 		try:
 			for i in [q.hexsha for q in self._repo.iter_commits(since + '..' + to)]:
 				git.cherry_pick(i)
 		except GitCommandError as e:
 			print(e.stdout)
 			return
-		git.checkout(current_branch)
+		git.checkout(self._current)
 
 	def create(self, remote=None, current=None, upstream=None, rebased=None):
 		with open(CONFIG_FILE, 'w') as f:
@@ -124,7 +116,6 @@ class GitUpstream(object):
 			print('.git-un-config missing, using default branch names...')
 
 	def _load_config_raised(self, filename):
-		global upstream_branch, rebased_branch, current_branch, remote_branch
 		with open(filename, 'r') as f:
 			num = 0
 			_strs = [q.split('\n')[0] for q in f.readlines()]
@@ -137,32 +128,32 @@ class GitUpstream(object):
 					print('    %s' % i)
 					return -1
 				if parts[0] == 'upstream':
-					upstream_branch = parts[2]
+					self._upstream = parts[2]
 				elif parts[0] == 'rebased':
-					rebased_branch = parts[2]
+					self._rebased = parts[2]
 				elif parts[0] == 'current':
-					current_branch = parts[2]
+					self._current = parts[2]
 				elif parts[0] == 'remote':
-					remote_branch = parts[2]
+					self._remote = parts[2]
 		return 0
 
 	def _restore_branches(self):
 		git = self._repo.git
-		git.checkout(upstream_branch, '-f')
-		git.reset(self._saved_branches[upstream_branch], '--hard')
-		git.checkout(rebased_branch, '-f')
-		git.reset(self._saved_branches[rebased_branch], '--hard')
-		git.checkout(current_branch, '-f')
-		git.reset(self._saved_branches[current_branch], '--hard')
+		git.checkout(self._upstream, '-f')
+		git.reset(self._saved_branches[self._upstream], '--hard')
+		git.checkout(self._rebased, '-f')
+		git.reset(self._saved_branches[self._rebased], '--hard')
+		git.checkout(self._current, '-f')
+		git.reset(self._saved_branches[self._current], '--hard')
 
 	def _save_branches(self):
 		git = self._repo.git
-		self._saved_branches[upstream_branch] = self._repo.branches[upstream_branch].commit.hexsha
-		self._saved_branches[rebased_branch] = self._repo.branches[rebased_branch].commit.hexsha
-		self._saved_branches[current_branch] = self._repo.branches[current_branch].commit.hexsha
+		self._saved_branches[self._upstream] = self._repo.branches[self._upstream].commit.hexsha
+		self._saved_branches[self._rebased] = self._repo.branches[self._rebased].commit.hexsha
+		self._saved_branches[self._current] = self._repo.branches[self._current].commit.hexsha
 
 	def _get_commits(self):
-		return [q.hexsha for q in self._repo.iter_commits(upstream_branch + '..' + remote_branch)]
+		return [q.hexsha for q in self._repo.iter_commits(self._upstream + '..' + self._remote)]
 
 	def _process_commits(self):
 		try:
@@ -197,7 +188,7 @@ class GitUpstream(object):
 	def _stage1(self, commit):
 		git = self._repo.git
 		self._state = MERGE_ST
-		git.checkout(upstream_branch)
+		git.checkout(self._upstream)
 		print('merge commit ' + commit)
 		git.merge(commit)
 
@@ -207,16 +198,16 @@ class GitUpstream(object):
 		if rebase_cmd:
 			git.rebase(rebase_cmd)
 		else:
-			git.checkout(rebased_branch)
-			self._saved_branches['prev_head'] = self._repo.branches[rebased_branch].commit.hexsha
+			git.checkout(self._rebased)
+			self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 			git.rebase(commit)
-		diff_str = self._repo.git.diff(self._saved_branches['prev_head'], rebased_branch)
+		diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
 		return diff_str
 
 	def _stage3(self, commit, diff_str):
 		git = self._repo.git
 		self._state = COMMIT_ST
-		git.checkout(current_branch)
+		git.checkout(self._current)
 		if diff_str == "":
 			print('nothing to commit in branch current, skipping %s commit' % commit)
 			return
@@ -231,9 +222,9 @@ class GitUpstream(object):
 
 	def _save_state(self):
 		with open(PULL_FILE, 'w') as f:
-			f.write(self._saved_branches[upstream_branch] + '\n')
-			f.write(self._saved_branches[rebased_branch] + '\n')
-			f.write(self._saved_branches[current_branch] + '\n')
+			f.write(self._saved_branches[self._upstream] + '\n')
+			f.write(self._saved_branches[self._rebased] + '\n')
+			f.write(self._saved_branches[self._current] + '\n')
 			f.write(self._saved_branches['prev_head'] + '\n')
 			f.write(str(self._state) + '\n')
 			for i in xrange(self._id, len(self._commits)):
@@ -241,9 +232,9 @@ class GitUpstream(object):
 
 	def _load_state(self):
 		with open(PULL_FILE, 'r') as f:
-			self._saved_branches[upstream_branch] = f.readline().split()[0]
-			self._saved_branches[rebased_branch] = f.readline().split()[0]
-			self._saved_branches[current_branch] = f.readline().split()[0]
+			self._saved_branches[self._upstream] = f.readline().split()[0]
+			self._saved_branches[self._rebased] = f.readline().split()[0]
+			self._saved_branches[self._current] = f.readline().split()[0]
 			self._saved_branches['prev_head'] = f.readline().split()[0]
 			self._state = int(f.readline())
 			for i in f.readlines():
@@ -280,6 +271,12 @@ def main():
 	elif args['command_name'] == 'update':
 		GitUpstream().update_rebased(args['since'], args['to'])
 	elif args['command_name'] == 'create':
+		# default branch names
+		upstream_branch = 'upstream'
+		rebased_branch = 'rebased'
+		current_branch = 'current'
+		remote_branch = 'origin/master'
+
 		if args['remote']:
 			remote_branch = args['remote']
 		if args['current']:
