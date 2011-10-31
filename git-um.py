@@ -250,7 +250,7 @@ class GitUpstream(object):
 				self._commits.append(i.split()[0])
 		os.unlink(PULL_FILE)
 
-if __name__ == "__main__":
+def main():
 	parser = argparse.ArgumentParser(description='Git Upstream Manager')
 	subparsers = parser.add_subparsers(dest='command_name')
 	pull_p = subparsers.add_parser('pull')
@@ -289,3 +289,6 @@ if __name__ == "__main__":
 		if args['rebased']:
 			rebased_branch = args['rebased']
 		GitUpstream().create(remote_branch, current_branch, upstream_branch, rebased_branch)
+
+if __name__ == "__main__":
+	main()
