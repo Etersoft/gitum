@@ -69,7 +69,7 @@ class GitUpstream(object):
 				self._id += 1
 			except GitCommandError as e:
 				self._save_state()
-				print(e.stdout)
+				print(e.stderr)
 				return
 			except PatchError as e:
 				self._save_state()
@@ -92,7 +92,7 @@ class GitUpstream(object):
 			for i in [q.hexsha for q in self._repo.iter_commits(since + '..' + to)]:
 				git.cherry_pick(i)
 		except GitCommandError as e:
-			print(e.stdout)
+			print(e.stderr)
 			return
 		git.checkout(self._current)
 
@@ -160,7 +160,7 @@ class GitUpstream(object):
 				self._id += 1
 		except GitCommandError as e:
 			self._save_state()
-			print(e.stdout)
+			print(e.stderr)
 		except PatchError as e:
 			self._save_state()
 			print(e.message)
