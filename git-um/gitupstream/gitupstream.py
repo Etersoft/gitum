@@ -115,7 +115,7 @@ class GitUpstream(object):
 		try:
 			self._load_config_raised(filename)
 		except IOError:
-			print('.git-un-config missing, using default branch names...')
+			print('.git-um-config missing, using default branch names...')
 
 	def _load_config_raised(self, filename):
 		with open(filename, 'r') as f:
