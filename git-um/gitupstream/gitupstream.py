@@ -21,6 +21,7 @@
 from git import *
 from subprocess import Popen
 import os
+import tempfile
 
 START_ST = 0
 MERGE_ST = 1
@@ -63,12 +64,15 @@ class GitUpstream(object):
 	def continue_pull(self, rebase_cmd):
 		self._load_state()
 		if self._state == REBASE_ST:
+			tmp_file = tempfile.TemporaryFile()
 			try:
-				diff_str = self._stage2(self._commits[self._id], rebase_cmd)
+				diff_str = self._stage2(self._commits[self._id], tmp_file, rebase_cmd)
 				self._stage3(self._commits[self._id], diff_str)
 				self._id += 1
 			except GitCommandError as e:
 				self._save_state()
+				tmp_file.seek(0)
+				print ''.join(tmp_file.readlines())
 				print(e.stderr)
 				return
 			except PatchError as e:
@@ -154,12 +158,17 @@ class GitUpstream(object):
 		return [q.hexsha for q in self._repo.iter_commits(self._upstream + '..' + self._remote)]
 
 	def _process_commits(self):
+		tmp_file = tempfile.TemporaryFile()
 		try:
 			for i in xrange(self._id, len(self._commits)):
-				self._process_commit(self._commits[i])
+				self._process_commit(self._commits[i], tmp_file)
 				self._id += 1
+				tmp_file.close()
+				tmp_file = tempfile.TemporaryFile()
 		except GitCommandError as e:
 			self._save_state()
+			tmp_file.seek(0)
+			print ''.join(tmp_file.readlines())
 			print(e.stderr)
 		except PatchError as e:
 			self._save_state()
@@ -168,9 +177,9 @@ class GitUpstream(object):
 			self._save_state()
 			raise
 
-	def _process_commit(self, commit):
+	def _process_commit(self, commit, output):
 		self._stage1(commit)
-		diff_str = self._stage2(commit)
+		diff_str = self._stage2(commit, output)
 		self._stage3(commit, diff_str)
 
 	def _patch_tree(self, diff_str):
@@ -190,15 +199,15 @@ class GitUpstream(object):
 		print('merge commit ' + commit)
 		git.merge(commit)
 
-	def _stage2(self, commit, rebase_cmd=None):
+	def _stage2(self, commit, output, rebase_cmd=None):
 		git = self._repo.git
 		self._state = REBASE_ST
 		if rebase_cmd:
-			git.rebase(rebase_cmd)
+			git.rebase(rebase_cmd, output_stream=output)
 		else:
 			git.checkout(self._rebased)
 			self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
-			git.rebase(commit)
+			git.rebase(commit, output_stream=output)
 		diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
 		return diff_str
 
