@@ -225,7 +225,8 @@ class GitUpstream(object):
 					 'fix error, commit and continue the process, please!' % commit)
 		git.add('-A')
 		mess = self._repo.commit(commit).message
-		git.commit('-m', mess)
+		author = self._repo.commit(commit).author
+		git.commit('-m', mess, '--author=', author)
 
 	def _save_state(self):
 		with open(PULL_FILE, 'w') as f:
