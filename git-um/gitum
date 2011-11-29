@@ -30,6 +30,7 @@ def main():
 	gr.add_argument('--continue', action='store_true', help='continue a pull process')
 	gr.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a pull process')
 	gr.add_argument('--abort', action='store_true', help='abort a pull process')
+	gr.add_argument('--branch', help='local/remote branch to pull from')
 	update_p = subparsers.add_parser('update')
 	update_p.add_argument('since', help='commit id or branch name to start with (excluded)')
 	update_p.add_argument('to', help='commit id or branch name that specifies the last entry')
@@ -47,6 +48,8 @@ def main():
 			GitUpstream().continue_pull('--skip')
 		elif args['abort']:
 			GitUpstream().abort()
+		elif args['branch']:
+			GitUpstream().pull(args['branch'])
 		else:
 			GitUpstream().pull()
 	elif args['command_name'] == 'update':

@@ -45,9 +45,12 @@ class GitUpstream(object):
 		self._commits = []
 		self._saved_branches = {}
 
-	def pull(self):
+	def pull(self, branch=None):
 		self._load_config(CONFIG_FILE)
-		self._repo.git.fetch(self._remote.split('/')[0])
+		if branch:
+			self._remote = branch
+		if len(self._remote.split('/')) == 2:
+			self._repo.git.fetch(self._remote.split('/')[0])
 		self._commits = self._get_commits()
 		self._commits.reverse()
 		self._save_branches()
@@ -255,7 +258,7 @@ class GitUpstream(object):
 		git.add('-A')
 		mess = self._repo.commit(commit).message
 		author = self._repo.commit(commit).author
-		git.commit('-m', mess, '--author=', author)
+		git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 
 	def _save_state(self):
 		with open(PULL_FILE, 'w') as f:
