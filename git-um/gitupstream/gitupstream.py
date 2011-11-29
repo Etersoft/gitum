@@ -44,9 +44,9 @@ class GitUpstream(object):
 		self._id = 0
 		self._commits = []
 		self._saved_branches = {}
-		self._load_config(CONFIG_FILE)
 
 	def pull(self):
+		self._load_config(CONFIG_FILE)
 		self._repo.git.fetch(self._remote.split('/')[0])
 		self._commits = self._get_commits()
 		self._commits.reverse()
@@ -54,6 +54,7 @@ class GitUpstream(object):
 		self._process_commits()
 
 	def abort(self):
+		self._load_config(CONFIG_FILE)
 		self._load_state()
 		try:
 			self._repo.git.rebase('--abort')
@@ -62,6 +63,7 @@ class GitUpstream(object):
 		self._restore_branches()
 
 	def continue_pull(self, rebase_cmd):
+		self._load_config(CONFIG_FILE)
 		self._load_state()
 		if self._state == REBASE_ST:
 			tmp_file = tempfile.TemporaryFile()
@@ -88,6 +90,7 @@ class GitUpstream(object):
 		self._process_commits()
 
 	def update_rebased(self, since, to):
+		self._load_config(CONFIG_FILE)
 		git = self._repo.git
 		since = self._repo.commit(since).hexsha
 		to = self._repo.commit(to).hexsha
