@@ -28,5 +28,5 @@ setup(
 	author_email = "piastry@etersoft.ru",
 	description = "Git Upstream Manager",
 	packages = ["gitupstream"],
-	scripts = ["git-um"]
+	scripts = ["gitum"]
 )
