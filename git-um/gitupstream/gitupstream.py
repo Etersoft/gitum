@@ -100,16 +100,42 @@ class GitUpstream(object):
 			return
 		git.checkout(self._current)
 
-	def create(self, remote=None, current=None, upstream=None, rebased=None):
+	def create(self, remote, current, upstream, rebased):
+		git = self._repo.git
+
+		try:
+			self._repo.branches[upstream]
+		except:
+			self._repo.create_head(upstream)
+		try:
+			self._repo.branches[current]
+		except:
+			self._repo.create_head(current)
+
+		try:
+			self._repo.delete_head(self._repo.branches[rebased])
+		except:
+			pass
+
+		git.checkout(current)
+
 		with open(CONFIG_FILE, 'w') as f:
-			if remote:
-				f.write('remote = %s\n' % remote)
-			if current:
-				f.write('current = %s\n' % current)
-			if upstream:
-				f.write('upstream = %s\n' % upstream)
-			if rebased:
-				f.write('rebased = %s\n' % rebased)
+			f.write('remote = %s\n' % remote)
+			f.write('current = %s\n' % current)
+			f.write('upstream = %s\n' % upstream)
+			f.write('rebased = %s\n' % rebased)
+
+		if os.path.exists('.gitignore'):
+			f = open('.gitignore', 'a')
+		else:
+			f = open('.gitignore', 'w')
+		f.write('.git-um-*\n')
+		f.close()
+
+		git.add('.gitignore')
+		git.commit('-m', 'Update .gitignore')
+
+		self._repo.create_head(rebased)
 
 	def _load_config(self, filename):
 		try:
