@@ -150,6 +150,12 @@ class GitUpstream(object):
 			print('.git-um-config missing, using default branch names...')
 
 	def _load_config_raised(self, filename):
+		# set defaults
+		self._upstream = 'upstream'
+		self._rebased = 'rebased'
+		self._current = 'current'
+		self._remote = 'origin/master'
+		# load config
 		with open(filename, 'r') as f:
 			num = 0
 			_strs = [q.split('\n')[0] for q in f.readlines()]
