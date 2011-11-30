@@ -304,12 +304,22 @@ class GitUpstream(object):
 		return ret
 
 	def _load_state_raised(self, filename):
-		with open(filename, 'r') as f:
-			self._saved_branches[self._upstream] = f.readline().split()[0]
-			self._saved_branches[self._rebased] = f.readline().split()[0]
-			self._saved_branches[self._current] = f.readline().split()[0]
-			self._saved_branches['prev_head'] = f.readline().split()[0]
-			self._state = int(f.readline())
-			for i in f.readlines():
-				self._commits.append(i.split()[0])
+		try:
+			with open(filename, 'r') as f:
+				strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
+		except IOError:
+			print('.git/um-pull is missed!')
+			return
+		except:
+			raise
+		if len(strs) < 5:
+			print('.git/um-pull is corrupted!')
+			return
+		self._saved_branches[self._upstream] = strs[0]
+		self._saved_branches[self._rebased] = strs[1]
+		self._saved_branches[self._current] = strs[2]
+		self._saved_branches['prev_head'] = strs[3]
+		self._state = int(strs[4])
+		for i in xrange(5, len(strs)):
+			self._commits.append(strs[i])
 		os.unlink(filename)
