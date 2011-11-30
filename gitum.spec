@@ -1,6 +1,6 @@
 Name: gitum
 Version: 0.2
-Release: alt1
+Release: alt2
 
 Summary: Git Upstream Manager
 License: GPLv2
@@ -44,6 +44,9 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Wed Nov 30 2011 Pavel Shilovsky <piastry@altlinux.org> 0.2-alt2
+- Change a version in setup
+
 * Wed Nov 30 2011 Pavel Shilovsky <piastry@altlinux.org> 0.2-alt1
 - Improve create command
 - Add remove command
