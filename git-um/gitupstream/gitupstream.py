@@ -131,16 +131,6 @@ class GitUpstream(object):
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
 
-		if os.path.exists('.gitignore'):
-			f = open('.gitignore', 'a')
-		else:
-			f = open('.gitignore', 'w')
-		f.write('.git-um-*\n')
-		f.close()
-
-		git.add('.gitignore')
-		git.commit('-m', 'Update .gitignore')
-
 		self._repo.create_head(rebased)
 
 	def _load_config(self, filename):
