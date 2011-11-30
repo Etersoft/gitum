@@ -45,26 +45,27 @@ def main():
 	remove_p.add_argument('--configfiles', action='store_true', help='remove config files')
 	args = vars(parser.parse_args(sys.argv[1:]))
 
+	repo = GitUpstream()
+
 	if args['command_name'] == 'pull':
 		if args['continue']:
-			GitUpstream().continue_pull('--continue')
+			repo.continue_pull('--continue')
 		elif args['skip']:
-			GitUpstream().continue_pull('--skip')
+			repo.continue_pull('--skip')
 		elif args['abort']:
-			GitUpstream().abort()
+			repo.abort()
 		elif args['branch']:
-			GitUpstream().pull(args['branch'])
+			repo.pull(args['branch'])
 		else:
-			GitUpstream().pull()
+			repo.pull()
 	elif args['command_name'] == 'update':
-		GitUpstream().update_rebased(args['since'], args['to'])
+		repo.update_rebased(args['since'], args['to'])
 	elif args['command_name'] == 'create':
 		# default branch names
 		upstream_branch = 'upstream'
 		rebased_branch = 'rebased'
 		current_branch = 'current'
 		remote_branch = 'origin/master'
-
 		if args['remote']:
 			remote_branch = args['remote']
 		if args['current']:
@@ -73,14 +74,14 @@ def main():
 			upstream_branch = args['upstream']
 		if args['rebased']:
 			rebased_branch = args['rebased']
-		GitUpstream().create(remote_branch, current_branch, upstream_branch, rebased_branch)
+		repo.create(remote_branch, current_branch, upstream_branch, rebased_branch)
 	elif args['command_name'] == 'remove':
 		if args['branches']:
-			GitUpstream().remove_branches()
+			repo.remove_branches()
 		elif args['configfiles']:
-			GitUpstream().remove_config_files()
+			repo.remove_config_files()
 		else:
-			GitUpstream().remove_all()
+			repo.remove_all()
 
 if __name__ == "__main__":
 	main()
