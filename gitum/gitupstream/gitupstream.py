@@ -100,8 +100,10 @@ class GitUpstream(object):
 		since = self._repo.commit(since).hexsha
 		to = self._repo.commit(to).hexsha
 		git.checkout(self._rebased, '-f')
+		commits = [q.hexsha for q in self._repo.iter_commits(since + '..' + to)]
+		commits.reverse()
 		try:
-			for i in [q.hexsha for q in self._repo.iter_commits(since + '..' + to)]:
+			for i in commits:
 				git.cherry_pick(i)
 		except GitCommandError as e:
 			print(e.stderr)
