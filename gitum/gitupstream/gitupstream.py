@@ -46,6 +46,9 @@ class GitUpstream(object):
 		self._saved_branches = {}
 
 	def pull(self, branch=None):
+		if self._repo.is_dirty():
+			print('Repository is dirty - can not pull!')
+			return
 		self._load_config(CONFIG_FILE)
 		if branch:
 			self._remote = branch
