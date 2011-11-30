@@ -22,6 +22,7 @@ from git import *
 from subprocess import Popen
 import os
 import tempfile
+import sys
 
 START_ST = 0
 MERGE_ST = 1
@@ -38,16 +39,17 @@ class PatchError(Exception):
 		return repr(self.message)
 
 class GitUpstream(object):
-	def __init__(self, repo_path='.'):
+	def __init__(self, repo_path='.', with_log=False):
 		self._repo = Repo(repo_path)
 		self._state = START_ST
 		self._id = 0
 		self._commits = []
 		self._saved_branches = {}
+		self._with_log = with_log
 
 	def pull(self, branch=None):
 		if self._repo.is_dirty():
-			print('Repository is dirty - can not pull!')
+			self._log('Repository is dirty - can not pull!')
 			return
 		self._load_config(CONFIG_FILE)
 		if branch:
@@ -82,18 +84,18 @@ class GitUpstream(object):
 			except GitCommandError as e:
 				self._save_state(PULL_FILE)
 				tmp_file.seek(0)
-				print(self._fixup_rebase_message(''.join(tmp_file.readlines())))
-				print(e.stderr)
+				self._log(self._fixup_rebase_message(''.join(tmp_file.readlines())))
+				self._log(e.stderr)
 				return
 			except PatchError as e:
 				self._save_state(PULL_FILE)
-				print(e.message)
+				self._log(e.message)
 				return
 			except:
 				self._save_state(PULL_FILE)
 				raise
 		elif self._state != MERGE_ST:
-			print("Don't support continue not from merge or rebase mode")
+			self._log("Don't support continue not from merge or rebase mode")
 			return
 		self._process_commits()
 
@@ -109,7 +111,7 @@ class GitUpstream(object):
 			for i in commits:
 				git.cherry_pick(i)
 		except GitCommandError as e:
-			print(e.stderr)
+			self._log(e.stderr)
 			return
 		git.checkout(self._current)
 
@@ -167,7 +169,7 @@ class GitUpstream(object):
 		try:
 			self._load_config_raised(filename)
 		except IOError:
-			print('%s missing, using default branch names...' % filename)
+			self._log('%s missing, using default branch names...' % filename)
 
 	def _load_config_raised(self, filename):
 		# set defaults
@@ -183,8 +185,8 @@ class GitUpstream(object):
 			num += 1
 			parts = i.split('#')[0].strip().split(' ')
 			if len(parts) != 3 or parts[1] != '=':
-				print('error in config file on line %d :' % num)
-				print('    %s' % i)
+				self._log('error in config file on line %d :' % num)
+				self._log('    %s' % i)
 			if parts[0] == 'upstream':
 				self._upstream = parts[2]
 			elif parts[0] == 'rebased':
@@ -223,11 +225,11 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._save_state(PULL_FILE)
 			tmp_file.seek(0)
-			print(self._fixup_rebase_message(''.join(tmp_file.readlines())))
-			print(e.stderr)
+			self._log(self._fixup_rebase_message(''.join(tmp_file.readlines())))
+			self._log(e.stderr)
 		except PatchError as e:
 			self._save_state(PULL_FILE)
-			print(e.message)
+			self._log(e.message)
 		except:
 			self._save_state(PULL_FILE)
 			raise
@@ -239,10 +241,14 @@ class GitUpstream(object):
 
 	def _patch_tree(self, diff_str):
 		status = 0
+		if self._with_log:
+			out = sys.stdout
+		else:
+			out = open('/dev/null', 'w')
 		with open('__patch__.patch', 'w') as f:
 			f.write(diff_str + '\n')
 		with open('__patch__.patch', 'r') as f:
-			proc = Popen(['patch', '-p1'], stdin=f)
+			proc = Popen(['patch', '-p1'], stdin=f, stdout=out)
 			status = proc.wait()
 		os.unlink('__patch__.patch')
 		return status
@@ -251,7 +257,7 @@ class GitUpstream(object):
 		git = self._repo.git
 		self._state = MERGE_ST
 		git.checkout(self._upstream)
-		print('merge commit ' + commit)
+		self._log('merge commit ' + commit)
 		git.merge(commit)
 
 	def _stage2(self, commit, output, rebase_cmd=None):
@@ -271,7 +277,7 @@ class GitUpstream(object):
 		self._state = COMMIT_ST
 		git.checkout(self._current)
 		if diff_str == "":
-			print('nothing to commit in branch current, skipping %s commit' % commit)
+			self._log('nothing to commit in branch current, skipping %s commit' % commit)
 			return
 		git.clean('-d', '-f')
 		if self._patch_tree(diff_str) != 0:
@@ -299,7 +305,7 @@ class GitUpstream(object):
 		try:
 			self._load_state_raised(filename)
 		except IOError:
-			print('missing state file: nothing to continue.')
+			self._log('missing state file: nothing to continue.')
 			ret = False
 		return ret
 
@@ -308,12 +314,12 @@ class GitUpstream(object):
 			with open(filename, 'r') as f:
 				strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
 		except IOError:
-			print('.git/um-pull is missed!')
+			self._log('.git/um-pull is missed!')
 			return
 		except:
 			raise
 		if len(strs) < 5:
-			print('.git/um-pull is corrupted!')
+			self._log('.git/um-pull is corrupted!')
 			return
 		self._saved_branches[self._upstream] = strs[0]
 		self._saved_branches[self._rebased] = strs[1]
@@ -323,3 +329,7 @@ class GitUpstream(object):
 		for i in xrange(5, len(strs)):
 			self._commits.append(strs[i])
 		os.unlink(filename)
+
+	def _log(self, mess):
+		if self._with_log:
+			print(mess)

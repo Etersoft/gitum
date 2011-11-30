@@ -45,7 +45,7 @@ def main():
 	remove_p.add_argument('--configfiles', action='store_true', help='remove config files')
 	args = vars(parser.parse_args(sys.argv[1:]))
 
-	repo = GitUpstream()
+	repo = GitUpstream(with_log=True)
 
 	if args['command_name'] == 'pull':
 		if args['continue']:
