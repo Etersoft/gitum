@@ -79,7 +79,7 @@ class GitUpstream(object):
 			except GitCommandError as e:
 				self._save_state(PULL_FILE)
 				tmp_file.seek(0)
-				print ''.join(tmp_file.readlines())
+				print(self._fixup_rebase_message(''.join(tmp_file.readlines())))
 				print(e.stderr)
 				return
 			except PatchError as e:
@@ -154,6 +154,12 @@ class GitUpstream(object):
 		self.remove_branches()
 		self.remove_config_files()
 
+	def _fixup_rebase_message(self, mess):
+		mess = mess.replace('git rebase --continue', 'gitum pull --continue')
+		mess = mess.replace('git rebase --abort', 'gitum pull --abort')
+		mess = mess.replace('git rebase --skip', 'gitum pull --skip')
+		return mess
+
 	def _load_config(self, filename):
 		try:
 			self._load_config_raised(filename)
@@ -214,7 +220,7 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._save_state(PULL_FILE)
 			tmp_file.seek(0)
-			print ''.join(tmp_file.readlines())
+			print(self._fixup_rebase_message(''.join(tmp_file.readlines())))
 			print(e.stderr)
 		except PatchError as e:
 			self._save_state(PULL_FILE)
