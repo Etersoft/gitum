@@ -41,13 +41,10 @@ class PatchError(Exception):
 class GitUpstream(object):
 	def __init__(self, repo_path='.', with_log=False):
 		self._repo = Repo(repo_path)
-		self._state = START_ST
-		self._id = 0
-		self._commits = []
-		self._saved_branches = {}
 		self._with_log = with_log
 
 	def pull(self, branch=None):
+		self._init_pull()
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not pull!')
 			return
@@ -62,6 +59,7 @@ class GitUpstream(object):
 		self._process_commits()
 
 	def abort(self):
+		self._init_pull()
 		self._load_config(CONFIG_FILE)
 		if not self._load_state(PULL_FILE):
 			return
@@ -72,6 +70,7 @@ class GitUpstream(object):
 		self._restore_branches()
 
 	def continue_pull(self, rebase_cmd):
+		self._init_pull()
 		self._load_config(CONFIG_FILE)
 		if not self._load_state(PULL_FILE):
 			return
@@ -333,3 +332,9 @@ class GitUpstream(object):
 	def _log(self, mess):
 		if self._with_log:
 			print(mess)
+
+	def _init_pull(self):
+		self._state = START_ST
+		self._id = 0
+		self._commits = []
+		self._saved_branches = {}
