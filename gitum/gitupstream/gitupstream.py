@@ -135,6 +135,23 @@ class GitUpstream(object):
 
 		self._repo.create_head(rebased)
 
+	def remove_branches(self):
+		self._load_config(CONFIG_FILE)
+		self._repo.git.checkout(self._upstream, '-f')
+		self._repo.delete_head(self._current, '-D')
+		self._repo.delete_head(self._rebased, '-D')
+
+	def remove_config_files(self):
+		try:
+			os.unlink(CONFIG_FILE)
+			os.unlink(PULL_FILE)
+		except:
+			pass
+
+	def remove_all(self):
+		self.remove_branches()
+		self.remove_config_files()
+
 	def _load_config(self, filename):
 		try:
 			self._load_config_raised(filename)

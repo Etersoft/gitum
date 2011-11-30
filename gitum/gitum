@@ -34,11 +34,15 @@ def main():
 	update_p = subparsers.add_parser('update')
 	update_p.add_argument('since', help='commit id or branch name to start with (excluded)')
 	update_p.add_argument('to', help='commit id or branch name that specifies the last entry')
-	create_parser = subparsers.add_parser('create')
-	create_parser.add_argument('--remote', metavar='server/branch', help='remote branch to track with')
-	create_parser.add_argument('--current', metavar='branch', help='current development branch')
-	create_parser.add_argument('--upstream', metavar='branch', help='copy of tracked upstream branch')
-	create_parser.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
+	create_p = subparsers.add_parser('create')
+	create_p.add_argument('--remote', metavar='server/branch', help='remote branch to track with')
+	create_p.add_argument('--current', metavar='branch', help='current development branch')
+	create_p.add_argument('--upstream', metavar='branch', help='copy of tracked upstream branch')
+	create_p.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
+	remove_p = subparsers.add_parser('remove')
+	remove_p.add_argument('--full', action='store_true', help='remove branches and config files (default)')
+	remove_p.add_argument('--branches', action='store_true', help='remove branches')
+	remove_p.add_argument('--configfiles', action='store_true', help='remove config files')
 	args = vars(parser.parse_args(sys.argv[1:]))
 
 	if args['command_name'] == 'pull':
@@ -70,6 +74,13 @@ def main():
 		if args['rebased']:
 			rebased_branch = args['rebased']
 		GitUpstream().create(remote_branch, current_branch, upstream_branch, rebased_branch)
+	elif args['command_name'] == 'remove':
+		if args['branches']:
+			GitUpstream().remove_branches()
+		elif args['configfiles']:
+			GitUpstream().remove_config_files()
+		else:
+			GitUpstream().remove_all()
 
 if __name__ == "__main__":
 	main()
