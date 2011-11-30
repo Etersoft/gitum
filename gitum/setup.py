@@ -22,7 +22,7 @@ from setuptools import setup
 
 setup(
 	name = "gitum",
-	version = "0.1",
+	version = "0.2",
 	license = "GPLv2",
 	author = "Pavel Shilovsky",
 	author_email = "piastry@etersoft.ru",
