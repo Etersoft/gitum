@@ -28,8 +28,8 @@ MERGE_ST = 1
 REBASE_ST = 2
 COMMIT_ST = 3
 
-PULL_FILE = '.git-um-pull'
-CONFIG_FILE = '.git-um-config'
+PULL_FILE = '.git/um-pull'
+CONFIG_FILE = '.git/um-config'
 
 class PatchError(Exception):
 	def __init__(self, message):
@@ -147,7 +147,7 @@ class GitUpstream(object):
 		try:
 			self._load_config_raised(filename)
 		except IOError:
-			print('.git-um-config missing, using default branch names...')
+			print('%s missing, using default branch names...' % filename)
 
 	def _load_config_raised(self, filename):
 		# set defaults
