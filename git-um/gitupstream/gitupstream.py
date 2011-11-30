@@ -58,7 +58,8 @@ class GitUpstream(object):
 
 	def abort(self):
 		self._load_config(CONFIG_FILE)
-		self._load_state()
+		if not self._load_state(PULL_FILE):
+			return
 		try:
 			self._repo.git.rebase('--abort')
 		except:
@@ -67,7 +68,8 @@ class GitUpstream(object):
 
 	def continue_pull(self, rebase_cmd):
 		self._load_config(CONFIG_FILE)
-		self._load_state()
+		if not self._load_state(PULL_FILE):
+			return
 		if self._state == REBASE_ST:
 			tmp_file = tempfile.TemporaryFile()
 			try:
@@ -75,17 +77,17 @@ class GitUpstream(object):
 				self._stage3(self._commits[self._id], diff_str)
 				self._id += 1
 			except GitCommandError as e:
-				self._save_state()
+				self._save_state(PULL_FILE)
 				tmp_file.seek(0)
 				print ''.join(tmp_file.readlines())
 				print(e.stderr)
 				return
 			except PatchError as e:
-				self._save_state()
+				self._save_state(PULL_FILE)
 				print(e.message)
 				return
 			except:
-				self._save_state()
+				self._save_state(PULL_FILE)
 				raise
 		elif self._state != MERGE_ST:
 			print("Don't support continue not from merge or rebase mode")
@@ -194,15 +196,15 @@ class GitUpstream(object):
 				tmp_file.close()
 				tmp_file = tempfile.TemporaryFile()
 		except GitCommandError as e:
-			self._save_state()
+			self._save_state(PULL_FILE)
 			tmp_file.seek(0)
 			print ''.join(tmp_file.readlines())
 			print(e.stderr)
 		except PatchError as e:
-			self._save_state()
+			self._save_state(PULL_FILE)
 			print(e.message)
 		except:
-			self._save_state()
+			self._save_state(PULL_FILE)
 			raise
 
 	def _process_commit(self, commit, output):
@@ -256,8 +258,8 @@ class GitUpstream(object):
 		author = self._repo.commit(commit).author
 		git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 
-	def _save_state(self):
-		with open(PULL_FILE, 'w') as f:
+	def _save_state(self, filename):
+		with open(filename, 'w') as f:
 			f.write(self._saved_branches[self._upstream] + '\n')
 			f.write(self._saved_branches[self._rebased] + '\n')
 			f.write(self._saved_branches[self._current] + '\n')
@@ -266,8 +268,17 @@ class GitUpstream(object):
 			for i in xrange(self._id, len(self._commits)):
 				f.write(str(self._commits[i]) + '\n')
 
-	def _load_state(self):
-		with open(PULL_FILE, 'r') as f:
+	def _load_state(self, filename):
+		ret = True
+		try:
+			self._load_state_raised(filename)
+		except IOError:
+			print('missing state file: nothing to continue.')
+			ret = False
+		return ret
+
+	def _load_state_raised(self, filename):
+		with open(filename, 'r') as f:
 			self._saved_branches[self._upstream] = f.readline().split()[0]
 			self._saved_branches[self._rebased] = f.readline().split()[0]
 			self._saved_branches[self._current] = f.readline().split()[0]
@@ -275,4 +286,4 @@ class GitUpstream(object):
 			self._state = int(f.readline())
 			for i in f.readlines():
 				self._commits.append(i.split()[0])
-		os.unlink(PULL_FILE)
+		os.unlink(filename)
