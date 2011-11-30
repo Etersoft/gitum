@@ -267,6 +267,7 @@ class GitUpstream(object):
 		if diff_str == "":
 			print('nothing to commit in branch current, skipping %s commit' % commit)
 			return
+		git.clean('-d', '-f')
 		if self._patch_tree(diff_str) != 0:
 			self._id += 1
 			self._state = MERGE_ST
