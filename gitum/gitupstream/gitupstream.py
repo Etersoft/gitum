@@ -168,25 +168,22 @@ class GitUpstream(object):
 		self._remote = 'origin/master'
 		# load config
 		with open(filename, 'r') as f:
-			num = 0
 			_strs = [q.split('\n')[0] for q in f.readlines()]
-			for i in _strs:
-				num += 1
-				i = i.split('#')[0].strip()
-				parts = i.split(' ')
-				if len(parts) != 3 or parts[1] != '=':
-					print('error in config file on line %d :' % num)
-					print('    %s' % i)
-					return -1
-				if parts[0] == 'upstream':
-					self._upstream = parts[2]
-				elif parts[0] == 'rebased':
-					self._rebased = parts[2]
-				elif parts[0] == 'current':
-					self._current = parts[2]
-				elif parts[0] == 'remote':
-					self._remote = parts[2]
-		return 0
+		num = 0
+		for i in _strs:
+			num += 1
+			parts = i.split('#')[0].strip().split(' ')
+			if len(parts) != 3 or parts[1] != '=':
+				print('error in config file on line %d :' % num)
+				print('    %s' % i)
+			if parts[0] == 'upstream':
+				self._upstream = parts[2]
+			elif parts[0] == 'rebased':
+				self._rebased = parts[2]
+			elif parts[0] == 'current':
+				self._current = parts[2]
+			elif parts[0] == 'remote':
+				self._remote = parts[2]
 
 	def _restore_branches(self):
 		git = self._repo.git
