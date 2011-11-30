@@ -56,7 +56,8 @@ def simple_test(dirname, remove=True):
 	repo.create_head('merge')
 
 	# crete gitum repo
-	GitUpstream().create('merge', 'dev', 'master', 'patches')
+	repo_um = GitUpstream()
+	repo_um.create('merge', 'dev', 'master', 'patches')
 	repo.git.checkout('dev')
 	print('OK')
 
@@ -74,7 +75,7 @@ def simple_test(dirname, remove=True):
 
 	# update patches branch
 	print('updating patches branch...')
-	GitUpstream().update_rebased('HEAD^^', 'HEAD')
+	repo_um.update_rebased('HEAD^^', 'HEAD')
 	print('OK')
 
 	# make upstream changes
@@ -93,31 +94,31 @@ def simple_test(dirname, remove=True):
 	# gitum pull
 	print('doing interactive gitum pull...')
 	repo.git.checkout('dev')
-	GitUpstream().pull()
+	repo_um.pull()
 
 	# 1st fail
 	with open('testfile', 'w') as f:
 		f.write('ab\nd')
 	repo.git.add('testfile')
-	GitUpstream().continue_pull('--continue')
+	repo_um.continue_pull('--continue')
 
 	# 2nd fail
 	with open('testfile', 'w') as f:
 		f.write('abc\nd')
 	repo.git.add('testfile')
-	GitUpstream().continue_pull('--continue')
+	repo_um.continue_pull('--continue')
 
 	# 3rd fail
 	with open('testfile', 'w') as f:
 		f.write('sb\nd')
 	repo.git.add('testfile')
-	GitUpstream().continue_pull('--continue')
+	repo_um.continue_pull('--continue')
 
 	# 4th fail
 	with open('testfile', 'w') as f:
 		f.write('sbc\nd')
 	repo.git.add('testfile')
-	GitUpstream().continue_pull('--continue')
+	repo_um.continue_pull('--continue')
 	print('OK')
 
 	if not remove:
@@ -125,7 +126,7 @@ def simple_test(dirname, remove=True):
 
 	# remove gitum repo
 	print('removing gitum repo...')
-	GitUpstream().remove_all()
+	repo_um.remove_all()
 	print('OK')
 
 	# remove repo
