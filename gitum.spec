@@ -1,5 +1,5 @@
-Name: git-um
-Version: 0.1
+Name: gitum
+Version: 0.2
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -19,6 +19,10 @@ BuildRequires: python-module-setuptools
 
 Requires: git-core >= 1.7
 Requires: python-module-GitPython = 0.3.0
+
+Provides: gitum
+
+Obsoletes: git-um
 
 %description
 Git Upstream Manager is the development tool that maintains your current
@@ -40,5 +44,13 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Wed Nov 30 2011 Pavel Shilovsky <piastry@altlinux.org> 0.2-alt1
+- Improve create command
+- Add remove command
+- Simplify output messages
+- Add branch argument to pull command
+- Move config files to .git
+- Use original authors for commits
+
 * Mon Oct 31 2011 Pavel Shilovsky <piastry@altlinux.org> 0.1-alt1
 - Initial build
