@@ -171,7 +171,7 @@ class GitUpstream(object):
 			num = 0
 			_strs = [q.split('\n')[0] for q in f.readlines()]
 			for i in _strs:
-				num = 1
+				num += 1
 				i = i.split('#')[0].strip()
 				parts = i.split(' ')
 				if len(parts) != 3 or parts[1] != '=':
