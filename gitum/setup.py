@@ -21,7 +21,7 @@
 from setuptools import setup
 
 setup(
-	name = "git-um",
+	name = "gitum",
 	version = "0.1",
 	license = "GPLv2",
 	author = "Pavel Shilovsky",
