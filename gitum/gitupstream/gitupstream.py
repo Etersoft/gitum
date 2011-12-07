@@ -209,6 +209,7 @@ class GitUpstream(object):
 		self._saved_branches[self._upstream] = self._repo.branches[self._upstream].commit.hexsha
 		self._saved_branches[self._rebased] = self._repo.branches[self._rebased].commit.hexsha
 		self._saved_branches[self._current] = self._repo.branches[self._current].commit.hexsha
+		self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 
 	def _get_commits(self):
 		return [q.hexsha for q in self._repo.iter_commits(self._upstream + '..' + self._remote)]
