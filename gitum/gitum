@@ -43,6 +43,12 @@ def main():
 	remove_p.add_argument('--full', action='store_true', help='remove branches and config files (default)')
 	remove_p.add_argument('--branches', action='store_true', help='remove branches')
 	remove_p.add_argument('--configfiles', action='store_true', help='remove config files')
+	editpatch_p = subparsers.add_parser('editpatch')
+	gr_editpatch = editpatch_p.add_mutually_exclusive_group()
+	gr_editpatch.add_argument('--continue', action='store_true', help='continue a editpatch process')
+	gr_editpatch.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a editpatch process')
+	gr_editpatch.add_argument('--abort', action='store_true', help='abort a editpatch process')
+	gr_editpatch.add_argument('--commit', action='store_true', help='commit changes into current development branch')
 	args = vars(parser.parse_args(sys.argv[1:]))
 
 	repo = GitUpstream(with_log=True)
@@ -60,6 +66,17 @@ def main():
 			repo.pull()
 	elif args['command_name'] == 'update':
 		repo.update_rebased(args['since'], args['to'])
+	elif args['command_name'] == 'editpatch':
+		if args['continue']:
+			repo.edit_patch('--continue')
+		elif args['skip']:
+			repo.edit_patch('--skip')
+		elif args['abort']:
+			repo.edit_patch('--abort')
+		elif args['commit']:
+			repo.edit_patch('--commit')
+		else:
+			repo.edit_patch()
 	elif args['command_name'] == 'create':
 		# default branch names
 		upstream_branch = 'upstream'

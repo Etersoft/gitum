@@ -19,7 +19,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from git import *
-from subprocess import Popen
+from subprocess import Popen, call
 import os
 import tempfile
 import sys
@@ -115,6 +115,30 @@ class GitUpstream(object):
 			self._log(e.stderr)
 			return
 		git.checkout(self._current)
+
+	def edit_patch(self, command=None):
+		if command == '--commit':
+			return self._update_current()
+		if command == '--abort':
+			return self.abort()
+		self._init_pull()
+		self._load_config(CONFIG_FILE)
+		if not command:
+			self._save_branches()
+			self._save_state(PULL_FILE)
+		elif not self._load_state(PULL_FILE, False):
+			return
+		tmp_file = tempfile.TemporaryFile()
+		try:
+			self._stage2(self._upstream, tmp_file, command, True)
+		except GitCommandError as e:
+			tmp_file.seek(0)
+			self._log(self._fixup_rebase_message(''.join(tmp_file.readlines())))
+			self._log(e.stderr)
+		except:
+			self._save_state(PULL_FILE)
+			raise
+		self._save_state(PULL_FILE)
 
 	def create(self, remote, current, upstream, rebased):
 		git = self._repo.git
@@ -265,19 +289,29 @@ class GitUpstream(object):
 		git.checkout(self._upstream)
 		git.merge(commit)
 
-	def _stage2(self, commit, output, rebase_cmd=None):
+	def _stage2(self, commit, output, rebase_cmd=None, interactive=False):
 		git = self._repo.git
 		self._state = REBASE_ST
 		if rebase_cmd:
-			git.rebase(rebase_cmd, output_stream=output)
+			if interactive:
+				res = call(['git', 'rebase', rebase_cmd])
+				if res != 0:
+					raise GitCommandError('git rebase %s' % rebase_cmd, res, '')
+			else:
+				git.rebase(rebase_cmd, output_stream=output)
 		else:
 			git.checkout(self._rebased)
 			self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
-			git.rebase(commit, output_stream=output)
+			if interactive:
+				res = call(['git', 'rebase', '-i', commit])
+				if res != 0:
+					raise GitCommandError('git rebase', res, '')
+			else:
+				git.rebase(commit, output_stream=output)
 		diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
 		return diff_str
 
-	def _stage3(self, commit, diff_str):
+	def _stage3(self, commit, diff_str, interactive=False):
 		git = self._repo.git
 		self._state = COMMIT_ST
 		git.checkout(self._current)
@@ -288,12 +322,33 @@ class GitUpstream(object):
 		if self._patch_tree(diff_str) != 0:
 			self._id += 1
 			self._state = MERGE_ST
-			raise PatchError('error occurs during applying the commit %s\n'
+			raise PatchError('error occurs during applying %s\n'
 					 'fix error, commit and continue the process, please!' % commit)
 		git.add('-A')
-		mess = self._repo.commit(commit).message
-		author = self._repo.commit(commit).author
-		git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
+		if interactive:
+			res = call(['git', 'commit', '-e', '-m',
+				    'remove this line and place your comments to commit into %s branch' % self._current])
+			if res != 0:
+				raise GitCommandError('git commit', res, '')
+		else:
+			mess = self._repo.commit(commit).message
+			author = self._repo.commit(commit).author
+			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
+
+	def _update_current(self):
+		self._init_pull()
+		self._load_config(CONFIG_FILE)
+		if not self._load_state(PULL_FILE):
+			return
+		try:
+			diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
+			self._stage3('editpatch result', diff_str, True)
+		except PatchError as e:
+			self._save_state(PULL_FILE)
+			self._log(e.message)
+		except:
+			self._save_state(PULL_FILE)
+			raise
 
 	def _save_state(self, filename):
 		with open(filename, 'w') as f:
@@ -307,27 +362,20 @@ class GitUpstream(object):
 			for i in xrange(self._id, len(self._commits)):
 				f.write(str(self._commits[i]) + '\n')
 
-	def _load_state(self, filename):
+	def _load_state(self, filename, remove=True):
 		ret = True
 		try:
-			self._load_state_raised(filename)
+			self._load_state_raised(filename, remove)
 		except IOError:
-			self._log('missing state file: nothing to continue.')
+			self._log('state file is missed or corrupted: nothing to continue.')
 			ret = False
 		return ret
 
-	def _load_state_raised(self, filename):
-		try:
-			with open(filename, 'r') as f:
-				strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
-		except IOError:
-			self._log('.git/um-pull is missed!')
-			return
-		except:
-			raise
+	def _load_state_raised(self, filename, remove):
+		with open(filename, 'r') as f:
+			strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
 		if len(strs) < 5:
-			self._log('.git/um-pull is corrupted!')
-			return
+			raise IOError
 		self._saved_branches[self._upstream] = strs[0]
 		self._saved_branches[self._rebased] = strs[1]
 		self._saved_branches[self._current] = strs[2]
@@ -337,7 +385,8 @@ class GitUpstream(object):
 		self._cur_num = int(strs[6])
 		for i in xrange(7, len(strs)):
 			self._commits.append(strs[i])
-		os.unlink(filename)
+		if remove:
+			os.unlink(filename)
 
 	def _log(self, mess):
 		if self._with_log:
