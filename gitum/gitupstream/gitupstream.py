@@ -55,6 +55,7 @@ class GitUpstream(object):
 			self._repo.git.fetch(self._remote.split('/')[0])
 		self._commits = self._get_commits()
 		self._commits.reverse()
+		self._all_num = len(self._commits)
 		self._save_branches()
 		self._process_commits()
 
@@ -80,6 +81,7 @@ class GitUpstream(object):
 				diff_str = self._stage2(self._commits[self._id], tmp_file, rebase_cmd)
 				self._stage3(self._commits[self._id], diff_str)
 				self._id += 1
+				self._cur_num += 1
 			except GitCommandError as e:
 				self._save_state(PULL_FILE)
 				tmp_file.seek(0)
@@ -220,6 +222,7 @@ class GitUpstream(object):
 			for i in xrange(self._id, len(self._commits)):
 				self._process_commit(self._commits[i], tmp_file)
 				self._id += 1
+				self._cur_num += 1
 				tmp_file.close()
 				tmp_file = tempfile.TemporaryFile()
 		except GitCommandError as e:
@@ -235,6 +238,9 @@ class GitUpstream(object):
 			raise
 
 	def _process_commit(self, commit, output):
+		self._log("[%d/%d] commit %s" % \
+			  (self._cur_num + 1, self._all_num,
+			   self._repo.commit(commit).summary))
 		self._stage1(commit)
 		diff_str = self._stage2(commit, output)
 		self._stage3(commit, diff_str)
@@ -257,7 +263,6 @@ class GitUpstream(object):
 		git = self._repo.git
 		self._state = MERGE_ST
 		git.checkout(self._upstream)
-		self._log('merge commit ' + commit)
 		git.merge(commit)
 
 	def _stage2(self, commit, output, rebase_cmd=None):
@@ -297,6 +302,8 @@ class GitUpstream(object):
 			f.write(self._saved_branches[self._current] + '\n')
 			f.write(self._saved_branches['prev_head'] + '\n')
 			f.write(str(self._state) + '\n')
+			f.write(str(self._all_num) + '\n')
+			f.write(str(self._cur_num) + '\n')
 			for i in xrange(self._id, len(self._commits)):
 				f.write(str(self._commits[i]) + '\n')
 
@@ -326,7 +333,9 @@ class GitUpstream(object):
 		self._saved_branches[self._current] = strs[2]
 		self._saved_branches['prev_head'] = strs[3]
 		self._state = int(strs[4])
-		for i in xrange(5, len(strs)):
+		self._all_num = int(strs[5])
+		self._cur_num = int(strs[6])
+		for i in xrange(7, len(strs)):
 			self._commits.append(strs[i])
 		os.unlink(filename)
 
@@ -337,5 +346,7 @@ class GitUpstream(object):
 	def _init_pull(self):
 		self._state = START_ST
 		self._id = 0
+		self._cur_num = 0
+		self._all_num = 0
 		self._commits = []
 		self._saved_branches = {}
