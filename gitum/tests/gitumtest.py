@@ -56,7 +56,7 @@ def simple_test(dirname, remove=True):
 	repo.create_head('merge')
 
 	# crete gitum repo
-	repo_um = GitUpstream()
+	repo_um = GitUpstream(with_log=True)
 	repo_um.create('merge', 'dev', 'master', 'patches')
 	repo.git.checkout('dev')
 	print('OK')
@@ -89,10 +89,14 @@ def simple_test(dirname, remove=True):
 		f.write('s\nd')
 	repo.git.add('testfile')
 	repo.git.commit('-m', 'remote: s')
+	with open('testfile', 'w') as f:
+		f.write('s\nd\n\n\n\n\n\n\nr\n')
+	repo.git.add('testfile')
+	repo.git.commit('-m', 'remote: r')
 	print('OK')
 
 	# gitum pull
-	print('doing interactive gitum pull...')
+	print('doing gitum pull...')
 	repo.git.checkout('dev')
 	repo_um.pull()
 
