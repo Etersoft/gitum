@@ -100,7 +100,11 @@ class GitUpstream(object):
 			return
 		self._process_commits()
 
-	def update_rebased(self, since, to):
+	def update(self, num):
+		self.update_range('HEAD~'+str(num)+':HEAD')
+
+	def update_range(self, commit_range):
+		since, to = commit_range.split(':')
 		self._load_config(CONFIG_FILE)
 		git = self._repo.git
 		since = self._repo.commit(since).hexsha

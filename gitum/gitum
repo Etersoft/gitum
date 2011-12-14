@@ -25,30 +25,37 @@ import argparse
 def main():
 	parser = argparse.ArgumentParser(description='Git Upstream Manager')
 	subparsers = parser.add_subparsers(dest='command_name')
+
 	pull_p = subparsers.add_parser('pull')
 	gr = pull_p.add_mutually_exclusive_group()
 	gr.add_argument('--continue', action='store_true', help='continue a pull process')
 	gr.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a pull process')
 	gr.add_argument('--abort', action='store_true', help='abort a pull process')
 	gr.add_argument('--branch', help='local/remote branch to pull from')
+
 	update_p = subparsers.add_parser('update')
-	update_p.add_argument('since', help='commit id or branch name to start with (excluded)')
-	update_p.add_argument('to', help='commit id or branch name that specifies the last entry')
+	gr_update = update_p.add_mutually_exclusive_group()
+	gr_update.add_argument('-n', '--number', metavar='N', help='number of commits to process')
+	gr_update.add_argument('--range', metavar='since:to', help='commit range to process')
+
 	create_p = subparsers.add_parser('create')
 	create_p.add_argument('--remote', metavar='server/branch', help='remote branch to track with')
 	create_p.add_argument('--current', metavar='branch', help='current development branch')
 	create_p.add_argument('--upstream', metavar='branch', help='copy of tracked upstream branch')
 	create_p.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
+
 	remove_p = subparsers.add_parser('remove')
 	remove_p.add_argument('--full', action='store_true', help='remove branches and config files (default)')
 	remove_p.add_argument('--branches', action='store_true', help='remove branches')
 	remove_p.add_argument('--configfiles', action='store_true', help='remove config files')
+
 	editpatch_p = subparsers.add_parser('editpatch')
 	gr_editpatch = editpatch_p.add_mutually_exclusive_group()
 	gr_editpatch.add_argument('--continue', action='store_true', help='continue a editpatch process')
 	gr_editpatch.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a editpatch process')
 	gr_editpatch.add_argument('--abort', action='store_true', help='abort a editpatch process')
 	gr_editpatch.add_argument('--commit', action='store_true', help='commit changes into current development branch')
+
 	args = vars(parser.parse_args(sys.argv[1:]))
 
 	repo = GitUpstream(with_log=True)
@@ -65,7 +72,10 @@ def main():
 		else:
 			repo.pull()
 	elif args['command_name'] == 'update':
-		repo.update_rebased(args['since'], args['to'])
+		if args['number']:
+			repo.update(int(args['number']))
+		elif args['range']:
+			repo.update_range(args['range'])
 	elif args['command_name'] == 'editpatch':
 		if args['continue']:
 			repo.edit_patch('--continue')

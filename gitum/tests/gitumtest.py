@@ -75,7 +75,7 @@ def simple_test(dirname, remove=True):
 
 	# update patches branch
 	print('updating patches branch...')
-	repo_um.update_rebased('HEAD^^', 'HEAD')
+	repo_um.update(2)
 	print('OK')
 
 	# make upstream changes
