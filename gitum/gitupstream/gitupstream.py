@@ -99,7 +99,7 @@ class GitUpstream(object):
 				self._save_state(PULL_FILE)
 				raise
 		elif self._state != MERGE_ST:
-			self._log("Don't support continue not from merge or rebase mode")
+			self._log("Don't support continue not from merge or rebase mode!")
 			return
 		self._process_commits()
 
@@ -341,7 +341,7 @@ class GitUpstream(object):
 		git.add('-A')
 		if interactive:
 			res = call(['git', 'commit', '-e', '-m',
-				    'remove this line and place your comments to commit into %s branch' % self._current])
+				   'place your comments for %s branch commit' % self._current])
 			if res != 0:
 				raise GitCommandError('git commit', res, '')
 		else:
@@ -381,7 +381,7 @@ class GitUpstream(object):
 		try:
 			self._load_state_raised(filename, remove)
 		except IOError:
-			self._log('state file is missed or corrupted: nothing to continue.')
+			self._log('state file is missed or corrupted: nothing to continue!')
 			ret = False
 		return ret
 
