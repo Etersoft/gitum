@@ -49,6 +49,9 @@ class GitUpstream(object):
 			self._log('Repository is dirty - can not pull!')
 			return
 		self._load_config(CONFIG_FILE)
+		if self._repo.git.diff(self._rebased, self._current) != '':
+			self._log('%s and %s work trees are not equal - can not pull!' % (self._rebased, self._current))
+			return
 		if branch:
 			self._remote = branch
 		if len(self._remote.split('/')) == 2:
@@ -104,8 +107,14 @@ class GitUpstream(object):
 		self.update_range('HEAD~'+str(num)+':HEAD')
 
 	def update_range(self, commit_range):
+		if self._repo.is_dirty():
+			self._log('Repository is dirty - can not update!')
+			return
 		since, to = commit_range.split(':')
 		self._load_config(CONFIG_FILE)
+		if self._repo.git.diff(self._rebased, self._current) == '':
+			self._log('%s and %s work trees are equal - nothing to update!' % (self._rebased, self._current))
+			return
 		git = self._repo.git
 		since = self._repo.commit(since).hexsha
 		to = self._repo.commit(to).hexsha
@@ -126,7 +135,13 @@ class GitUpstream(object):
 		if command == '--abort':
 			return self.abort()
 		self._init_pull()
+		if self._repo.is_dirty():
+			self._log('Repository is dirty - can not edit patch!')
+			return
 		self._load_config(CONFIG_FILE)
+		if self._repo.git.diff(self._rebased, self._current) != '':
+			self._log('%s and %s work trees are not equal - can not edit patch!' % (self._rebased, self._current))
+			return
 		if not command:
 			self._save_branches()
 			self._save_state(PULL_FILE)
