@@ -161,7 +161,6 @@ class GitUpstream(object):
 
 	def create(self, remote, current, upstream, rebased):
 		git = self._repo.git
-
 		try:
 			self._repo.branches[upstream]
 		except:
@@ -170,20 +169,16 @@ class GitUpstream(object):
 			self._repo.branches[current]
 		except:
 			self._repo.create_head(current)
-
 		try:
 			self._repo.delete_head(self._repo.branches[rebased])
 		except:
 			pass
-
 		git.checkout(current)
-
 		with open(CONFIG_FILE, 'w') as f:
 			f.write('remote = %s\n' % remote)
 			f.write('current = %s\n' % current)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
-
 		self._repo.create_head(rebased)
 
 	def remove_branches(self):
