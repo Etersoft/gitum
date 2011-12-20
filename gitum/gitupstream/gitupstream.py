@@ -88,7 +88,7 @@ class GitUpstream(object):
 			except GitCommandError as e:
 				self._save_state(PULL_FILE)
 				tmp_file.seek(0)
-				self._log(self._fixup_rebase_message(''.join(tmp_file.readlines())))
+				self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
 				self._log(e.stderr)
 				return
 			except PatchError as e:
@@ -151,12 +151,12 @@ class GitUpstream(object):
 		try:
 			self._stage2(self._upstream, tmp_file, command, True)
 		except GitCommandError as e:
-			tmp_file.seek(0)
-			self._log(self._fixup_rebase_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
 		except:
 			self._save_state(PULL_FILE)
 			raise
+		tmp_file.seek(0)
+		self._log(self._fixup_editpatch_message(''.join(tmp_file.readlines())))
 		self._save_state(PULL_FILE)
 
 	def create(self, remote, current, upstream, rebased):
@@ -198,7 +198,13 @@ class GitUpstream(object):
 		self.remove_branches()
 		self.remove_config_files()
 
-	def _fixup_rebase_message(self, mess):
+	def _fixup_editpatch_message(self, mess):
+		mess = mess.replace('git rebase --continue', 'gitum editpatch --continue')
+		mess = mess.replace('git rebase --abort', 'gitum editpatch --abort')
+		mess = mess.replace('git rebase --skip', 'gitum editpatch --skip')
+		return mess
+
+	def _fixup_pull_message(self, mess):
 		mess = mess.replace('git rebase --continue', 'gitum pull --continue')
 		mess = mess.replace('git rebase --abort', 'gitum pull --abort')
 		mess = mess.replace('git rebase --skip', 'gitum pull --skip')
@@ -266,7 +272,7 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._save_state(PULL_FILE)
 			tmp_file.seek(0)
-			self._log(self._fixup_rebase_message(''.join(tmp_file.readlines())))
+			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
 		except PatchError as e:
 			self._save_state(PULL_FILE)
@@ -317,7 +323,7 @@ class GitUpstream(object):
 			git.checkout(self._rebased)
 			self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 			if interactive:
-				res = call(['git', 'rebase', '-i', commit])
+				res = call(['git', 'rebase', '-i', commit], stderr=output)
 				if res != 0:
 					raise GitCommandError('git rebase', res, '')
 			else:
