@@ -23,6 +23,7 @@ from subprocess import Popen, call
 import os
 import tempfile
 import sys
+import shutil
 
 START_ST = 0
 MERGE_ST = 1
@@ -31,6 +32,9 @@ COMMIT_ST = 3
 
 PULL_FILE = '.git/um-pull'
 CONFIG_FILE = '.git/um-config'
+
+GITUM_TMP_DIR = '/tmp/gitum'
+GITUM_PATCHES_DIR = 'gitum-patches'
 
 class PatchError(Exception):
 	def __init__(self, message):
@@ -83,6 +87,7 @@ class GitUpstream(object):
 			try:
 				diff_str = self._stage2(self._commits[self._id], tmp_file, rebase_cmd)
 				self._stage3(self._commits[self._id], diff_str)
+				self._save_repo_state(self._repo.branches[self._current].commit.hexsha if diff_str else '')
 				self._id += 1
 				self._cur_num += 1
 			except GitCommandError as e:
@@ -124,6 +129,8 @@ class GitUpstream(object):
 		try:
 			for i in commits:
 				git.cherry_pick(i)
+				self._save_repo_state(i)
+				git.checkout(self._rebased)
 		except GitCommandError as e:
 			self._log(e.stderr)
 			return
@@ -159,7 +166,7 @@ class GitUpstream(object):
 		self._log(self._fixup_editpatch_message(''.join(tmp_file.readlines())))
 		self._save_state(PULL_FILE)
 
-	def create(self, remote, current, upstream, rebased):
+	def create(self, remote, current, upstream, rebased, patches='patches'):
 		git = self._repo.git
 		try:
 			self._repo.branches[upstream]
@@ -173,12 +180,24 @@ class GitUpstream(object):
 			self._repo.delete_head(self._repo.branches[rebased])
 		except:
 			pass
+		try:
+			self._repo.branches[patches]
+		except:
+			self._repo.create_head(patches)
+			git.checkout(patches)
+			shutil.rmtree(GITUM_PATCHES_DIR, ignore_errors=True)
+			os.mkdir(GITUM_PATCHES_DIR)
+			with open(GITUM_PATCHES_DIR + '/_upstream_commit_', 'w') as f:
+				f.write(self._repo.branches[upstream].commit.hexsha)
+			git.add(GITUM_PATCHES_DIR)
+			git.commit('-m', 'gitum-patches: begin')
 		git.checkout(current)
 		with open(CONFIG_FILE, 'w') as f:
 			f.write('remote = %s\n' % remote)
 			f.write('current = %s\n' % current)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
+			f.write('patches = %s\n' % patches)
 		self._repo.create_head(rebased)
 
 	def remove_branches(self):
@@ -186,6 +205,7 @@ class GitUpstream(object):
 		self._repo.git.checkout(self._upstream, '-f')
 		self._repo.delete_head(self._current, '-D')
 		self._repo.delete_head(self._rebased, '-D')
+		self._repo.delete_head(self._patches, '-D')
 
 	def remove_config_files(self):
 		try:
@@ -197,6 +217,55 @@ class GitUpstream(object):
 	def remove_all(self):
 		self.remove_branches()
 		self.remove_config_files()
+
+	def _save_repo_state(self, commit):
+		if self._repo.git.diff(self._rebased, self._current) != '':
+			self._log('%s and %s work trees are not equal - can\'t save state!' % (self._rebased, self._current))
+			return
+		# create tmp dir
+		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
+		os.mkdir(GITUM_TMP_DIR)
+		git = self._repo.git
+		# generate new patches
+		for i in os.listdir(os.getcwd()):
+			if i.endswith('.patch'):
+				os.unlink(os.getcwd() + '/' + i)
+		git.format_patch('%s..%s' % (self._upstream, self._rebased))
+		# move patches to tmp dir
+		for i in os.listdir(os.getcwd()):
+			if i.endswith('.patch'):
+				shutil.move(os.getcwd() + '/' + i, GITUM_TMP_DIR + '/' + i)
+		# get current branch commit
+		if commit:
+			git.format_patch('%s^..%s' % (commit, commit))
+		else:
+			with open('_current.patch', 'w') as f:
+				pass
+		# move it to tmp dir
+		for i in os.listdir(os.getcwd()):
+			if i.endswith('.patch'):
+				shutil.move(os.getcwd() + '/' + i, GITUM_TMP_DIR + '/_current_patch_')
+		git.checkout(self._patches, '-f')
+		patches_dir = os.getcwd()+'/'+GITUM_PATCHES_DIR
+		# remove old patches from patches branch
+		git.rm(patches_dir + '/' + '*.patch', '--ignore-unmatch')
+		# move new patches from tmp dir to patches branch
+		for i in os.listdir(GITUM_TMP_DIR):
+			if i.endswith('.patch'):
+				shutil.move(GITUM_TMP_DIR + '/' + i, patches_dir + '/' + i)
+		shutil.move(GITUM_TMP_DIR + '/_current_patch_', GITUM_PATCHES_DIR + '/_current_patch_')
+		# update upstream head
+		with open(GITUM_PATCHES_DIR + '/_upstream_commit_', 'w') as f:
+			f.write(self._repo.branches[self._upstream].commit.hexsha)
+		# commit the result
+		git.add(GITUM_PATCHES_DIR)
+		if commit:
+			mess = self._repo.commit(commit).message
+			author = self._repo.commit(commit).author
+			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
+		else:
+			git.commit('-m', '%s branch updated without code changes' % self._rebased)
+		git.checkout(self._current)
 
 	def _fixup_editpatch_message(self, mess):
 		mess = mess.replace('git rebase --continue', 'gitum editpatch --continue')
@@ -221,6 +290,7 @@ class GitUpstream(object):
 		self._upstream = 'upstream'
 		self._rebased = 'rebased'
 		self._current = 'current'
+		self._patches = 'patches'
 		self._remote = 'origin/master'
 		# load config
 		with open(filename, 'r') as f:
@@ -240,6 +310,8 @@ class GitUpstream(object):
 				self._current = parts[2]
 			elif parts[0] == 'remote':
 				self._remote = parts[2]
+			elif parts[0] == 'patches':
+				self._patches = parts[2]
 
 	def _restore_branches(self):
 		git = self._repo.git
@@ -249,12 +321,15 @@ class GitUpstream(object):
 		git.reset(self._saved_branches[self._rebased], '--hard')
 		git.checkout(self._current, '-f')
 		git.reset(self._saved_branches[self._current], '--hard')
+		git.checkout(self._patches, '-f')
+		git.reset(self._saved_branches[self._patches], '--hard')
 
 	def _save_branches(self):
 		git = self._repo.git
 		self._saved_branches[self._upstream] = self._repo.branches[self._upstream].commit.hexsha
 		self._saved_branches[self._rebased] = self._repo.branches[self._rebased].commit.hexsha
 		self._saved_branches[self._current] = self._repo.branches[self._current].commit.hexsha
+		self._saved_branches[self._patches] = self._repo.branches[self._patches].commit.hexsha
 		self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 
 	def _get_commits(self):
@@ -274,9 +349,11 @@ class GitUpstream(object):
 			tmp_file.seek(0)
 			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
+			return
 		except PatchError as e:
 			self._save_state(PULL_FILE)
 			self._log(e.message)
+			return
 		except:
 			self._save_state(PULL_FILE)
 			raise
@@ -288,6 +365,7 @@ class GitUpstream(object):
 		self._stage1(commit)
 		diff_str = self._stage2(commit, output)
 		self._stage3(commit, diff_str)
+		self._save_repo_state(self._repo.branches[self._current].commit.hexsha if diff_str else '')
 
 	def _patch_tree(self, diff_str):
 		status = 0
@@ -363,9 +441,11 @@ class GitUpstream(object):
 		try:
 			diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
 			self._stage3('editpatch result', diff_str, True)
+			self._save_repo_state(self._repo.branches[self._current].commit.hexsha if diff_str else '')
 		except PatchError as e:
 			self._save_state(PULL_FILE)
 			self._log(e.message)
+			return
 		except:
 			self._save_state(PULL_FILE)
 			raise
@@ -375,6 +455,7 @@ class GitUpstream(object):
 			f.write(self._saved_branches[self._upstream] + '\n')
 			f.write(self._saved_branches[self._rebased] + '\n')
 			f.write(self._saved_branches[self._current] + '\n')
+			f.write(self._saved_branches[self._patches] + '\n')
 			f.write(self._saved_branches['prev_head'] + '\n')
 			f.write(str(self._state) + '\n')
 			f.write(str(self._all_num) + '\n')
@@ -394,16 +475,17 @@ class GitUpstream(object):
 	def _load_state_raised(self, filename, remove):
 		with open(filename, 'r') as f:
 			strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
-		if len(strs) < 5:
+		if len(strs) < 6:
 			raise IOError
 		self._saved_branches[self._upstream] = strs[0]
 		self._saved_branches[self._rebased] = strs[1]
 		self._saved_branches[self._current] = strs[2]
-		self._saved_branches['prev_head'] = strs[3]
-		self._state = int(strs[4])
-		self._all_num = int(strs[5])
-		self._cur_num = int(strs[6])
-		for i in xrange(7, len(strs)):
+		self._saved_branches[self._patches] = strs[3]
+		self._saved_branches['prev_head'] = strs[4]
+		self._state = int(strs[5])
+		self._all_num = int(strs[6])
+		self._cur_num = int(strs[7])
+		for i in xrange(8, len(strs)):
 			self._commits.append(strs[i])
 		if remove:
 			os.unlink(filename)

@@ -57,7 +57,7 @@ def simple_test(dirname, remove=True):
 
 	# crete gitum repo
 	repo_um = GitUpstream(with_log=True)
-	repo_um.create('merge', 'dev', 'master', 'patches')
+	repo_um.create('merge', 'dev', 'master', 'rebased')
 	repo.git.checkout('dev')
 	print('OK')
 
@@ -74,7 +74,7 @@ def simple_test(dirname, remove=True):
 	print('OK')
 
 	# update patches branch
-	print('updating patches branch...')
+	print('updating rebased branch...')
 	repo_um.update(2)
 	print('OK')
 
