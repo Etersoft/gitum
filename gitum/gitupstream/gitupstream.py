@@ -177,7 +177,7 @@ class GitUpstream(object):
 		except:
 			self._repo.create_head(current)
 		try:
-			self._repo.delete_head(self._repo.branches[rebased])
+			self._repo.delete_head(self._repo.branches[rebased], '-D')
 		except:
 			pass
 		git.checkout(current)
