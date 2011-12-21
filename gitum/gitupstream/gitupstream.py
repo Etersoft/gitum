@@ -135,7 +135,7 @@ class GitUpstream(object):
 		if command == '--abort':
 			return self.abort()
 		self._init_pull()
-		if self._repo.is_dirty():
+		if not command and self._repo.is_dirty():
 			self._log('Repository is dirty - can not edit patch!')
 			return
 		self._load_config(CONFIG_FILE)
