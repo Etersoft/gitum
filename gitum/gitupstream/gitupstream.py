@@ -166,7 +166,7 @@ class GitUpstream(object):
 		self._log(self._fixup_editpatch_message(''.join(tmp_file.readlines())))
 		self._save_state(PULL_FILE)
 
-	def create(self, remote, current, upstream, rebased, patches='patches'):
+	def create(self, remote, current, upstream, rebased, patches):
 		git = self._repo.git
 		try:
 			self._repo.branches[upstream]
@@ -213,7 +213,7 @@ class GitUpstream(object):
 		self.remove_branches()
 		self.remove_config_files()
 
-	def create_from_branch(self, remote, current, upstream, rebased, patches):
+	def restore(self, remote, current, upstream, rebased, patches):
 		allcommits = [q for q in self._repo.iter_commits(patches)]
 		commits = []
 		ok = False

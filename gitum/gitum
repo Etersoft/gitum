@@ -43,6 +43,7 @@ def main():
 	create_p.add_argument('--current', metavar='branch', help='current development branch')
 	create_p.add_argument('--upstream', metavar='branch', help='copy of tracked upstream branch')
 	create_p.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
+	create_p.add_argument('--patches', metavar='branch', help='branch consists of our patches as files')
 
 	remove_p = subparsers.add_parser('remove')
 	remove_p.add_argument('--full', action='store_true', help='remove branches and config files (default)')
@@ -94,29 +95,7 @@ def main():
 			repo.edit_patch('--commit')
 		else:
 			repo.edit_patch()
-	elif args['command_name'] == 'create':
-		# default branch names
-		upstream_branch = 'upstream'
-		rebased_branch = 'rebased'
-		current_branch = 'current'
-		remote_branch = 'origin/master'
-		if args['remote']:
-			remote_branch = args['remote']
-		if args['current']:
-			current_branch = args['current']
-		if args['upstream']:
-			upstream_branch = args['upstream']
-		if args['rebased']:
-			rebased_branch = args['rebased']
-		repo.create(remote_branch, current_branch, upstream_branch, rebased_branch)
-	elif args['command_name'] == 'remove':
-		if args['branches']:
-			repo.remove_branches()
-		elif args['configfiles']:
-			repo.remove_config_files()
-		else:
-			repo.remove_all()
-	elif args['command_name'] == 'restore':
+	elif args['command_name'] in ['create', 'restore']:
 		# default branch names
 		upstream_branch = 'upstream'
 		rebased_branch = 'rebased'
@@ -133,7 +112,17 @@ def main():
 			rebased_branch = args['rebased']
 		if args['patches']:
 			rebased_branch = args['patches']
-		repo.create_from_branch(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+		if args['command_name'] == 'create':
+			repo.create(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+		else:
+			repo.restore(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+	elif args['command_name'] == 'remove':
+		if args['branches']:
+			repo.remove_branches()
+		elif args['configfiles']:
+			repo.remove_config_files()
+		else:
+			repo.remove_all()
 
 if __name__ == "__main__":
 	main()
