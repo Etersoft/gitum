@@ -56,6 +56,13 @@ def main():
 	gr_editpatch.add_argument('--abort', action='store_true', help='abort a editpatch process')
 	gr_editpatch.add_argument('--commit', action='store_true', help='commit changes into current development branch')
 
+	restore_p = subparsers.add_parser('restore')
+	restore_p.add_argument('--remote', metavar='server/branch', help='remote branch to track with')
+	restore_p.add_argument('--current', metavar='branch', help='current development branch')
+	restore_p.add_argument('--upstream', metavar='branch', help='copy of tracked upstream branch')
+	restore_p.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
+	restore_p.add_argument('--patches', metavar='branch', help='branch consists of our patches as files')
+
 	args = vars(parser.parse_args(sys.argv[1:]))
 
 	repo = GitUpstream(with_log=True)
@@ -109,6 +116,24 @@ def main():
 			repo.remove_config_files()
 		else:
 			repo.remove_all()
+	elif args['command_name'] == 'restore':
+		# default branch names
+		upstream_branch = 'upstream'
+		rebased_branch = 'rebased'
+		current_branch = 'current'
+		remote_branch = 'origin/master'
+		patches_branch = 'patches'
+		if args['remote']:
+			remote_branch = args['remote']
+		if args['current']:
+			current_branch = args['current']
+		if args['upstream']:
+			upstream_branch = args['upstream']
+		if args['rebased']:
+			rebased_branch = args['rebased']
+		if args['patches']:
+			rebased_branch = args['patches']
+		repo.create_from_branch(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
 
 if __name__ == "__main__":
 	main()

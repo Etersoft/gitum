@@ -180,6 +180,8 @@ class GitUpstream(object):
 			self._repo.delete_head(self._repo.branches[rebased])
 		except:
 			pass
+		git.checkout(current)
+		self._repo.create_head(rebased)
 		try:
 			self._repo.branches[patches]
 		except:
@@ -191,14 +193,7 @@ class GitUpstream(object):
 				f.write(self._repo.branches[upstream].commit.hexsha)
 			git.add(GITUM_PATCHES_DIR)
 			git.commit('-m', 'gitum-patches: begin')
-		git.checkout(current)
-		with open(CONFIG_FILE, 'w') as f:
-			f.write('remote = %s\n' % remote)
-			f.write('current = %s\n' % current)
-			f.write('upstream = %s\n' % upstream)
-			f.write('rebased = %s\n' % rebased)
-			f.write('patches = %s\n' % patches)
-		self._repo.create_head(rebased)
+		self._save_config(remote, current, upstream, rebased, patches)
 
 	def remove_branches(self):
 		self._load_config(CONFIG_FILE)
@@ -218,9 +213,83 @@ class GitUpstream(object):
 		self.remove_branches()
 		self.remove_config_files()
 
+	def create_from_branch(self, remote, current, upstream, rebased, patches):
+		allcommits = [q for q in self._repo.iter_commits(patches)]
+		commits = []
+		ok = False
+		for i in allcommits:
+			commits.append(i.hexsha)
+			if i.message.startswith('gitum-patches: begin'):
+				ok = True
+				break
+		if not ok:
+			self._log('broken %s branch' % patches)
+			return
+		commits.reverse()
+		git = self._repo.git
+		start = commits[0]
+		commits = commits[1:]
+		git.checkout(start)
+		with open(GITUM_PATCHES_DIR + '/_upstream_commit_') as f:
+			tmp_list = f.readlines()
+			if len(tmp_list) > 1:
+				self._log('broken upstream commit file')
+				return
+			upstream_commit = tmp_list[0]
+		git.checkout(upstream_commit)
+		self._repo.create_head(current)
+		for i in commits:
+			git.checkout(i)
+			shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
+			os.mkdir(GITUM_TMP_DIR)
+			for j in os.listdir(GITUM_PATCHES_DIR):
+				if j.endswith('.patch'):
+					shutil.copy(GITUM_PATCHES_DIR + '/' + j, GITUM_TMP_DIR + '/' + j)
+			shutil.copy(GITUM_PATCHES_DIR + '/_current_patch_', GITUM_TMP_DIR + '/_current_patch_')
+			with open(GITUM_PATCHES_DIR + '/_upstream_commit_') as f:
+				tmp_list = f.readlines()
+				if len(tmp_list) > 1:
+					self._log('broken upstream commit file')
+					return
+				upstream_commit = tmp_list[0]
+			git.checkout(current)
+			patch_exists = False
+			with open(GITUM_TMP_DIR + '/_current_patch_') as f:
+				if f.readlines():
+					patch_exists = True
+			if patch_exists:
+				git.am(GITUM_TMP_DIR + '/_current_patch_')
+			os.unlink(GITUM_TMP_DIR + '/_current_patch_')
+		git.checkout(upstream_commit)
+		try:
+			self._repo.delete_head(upstream, '-D')
+		except:
+			pass
+		try:
+			self._repo.delete_head(rebased, '-D')
+		except:
+			pass
+		self._repo.create_head(upstream)
+		self._repo.create_head(rebased)
+		git.checkout(rebased)
+		for i in os.listdir(GITUM_TMP_DIR):
+			if i.endswith('.patch'):
+				git.am(GITUM_TMP_DIR + '/' + i)
+		git.checkout(current)
+		self._save_config(remote, current, upstream, rebased, patches)
+
+	def _save_config(self, remote, current, upstream, rebased, patches):
+		with open(CONFIG_FILE, 'w') as f:
+			f.write('remote = %s\n' % remote)
+			f.write('current = %s\n' % current)
+			f.write('upstream = %s\n' % upstream)
+			f.write('rebased = %s\n' % rebased)
+			f.write('patches = %s\n' % patches)
+
 	def _save_repo_state(self, commit):
-		if self._repo.git.diff(self._rebased, self._current) != '':
-			self._log('%s and %s work trees are not equal - can\'t save state!' % (self._rebased, self._current))
+		cur = commit if commit else self._current
+		if self._repo.git.diff(self._rebased, cur) != '':
+			self._log('%s and %s work trees are not equal - can\'t save state!' % (self._rebased, cur))
 			return
 		# create tmp dir
 		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
