@@ -214,10 +214,9 @@ class GitUpstream(object):
 		self.remove_config_files()
 
 	def restore(self, remote, current, upstream, rebased, patches):
-		allcommits = [q for q in self._repo.iter_commits(patches)]
 		commits = []
 		ok = False
-		for i in allcommits:
+		for i in self._repo.iter_commits(patches):
 			commits.append(i.hexsha)
 			if i.message.startswith('gitum-patches: begin'):
 				ok = True
