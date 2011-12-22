@@ -352,7 +352,7 @@ class GitUpstream(object):
 		try:
 			self._load_config_raised(filename)
 		except IOError:
-			self._log('%s missing, using default branch names...' % filename)
+			self._log('config file is missed!')
 			raise NoConfigFile
 
 	def _load_config_raised(self, filename):
