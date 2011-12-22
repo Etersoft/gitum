@@ -69,32 +69,41 @@ def main():
 	repo = GitUpstream(with_log=True)
 
 	if args['command_name'] == 'pull':
-		if args['continue']:
-			repo.continue_pull('--continue')
-		elif args['skip']:
-			repo.continue_pull('--skip')
-		elif args['abort']:
-			repo.abort()
-		elif args['branch']:
-			repo.pull(args['branch'])
-		else:
-			repo.pull()
+		try:
+			if args['continue']:
+				repo.continue_pull('--continue')
+			elif args['skip']:
+				repo.continue_pull('--skip')
+			elif args['abort']:
+				repo.abort()
+			elif args['branch']:
+				repo.pull(args['branch'])
+			else:
+				repo.pull()
+		except GitUmException:
+			pass
 	elif args['command_name'] == 'update':
-		if args['number']:
-			repo.update(int(args['number']))
-		elif args['range']:
-			repo.update_range(args['range'])
+		try:
+			if args['number']:
+				repo.update(int(args['number']))
+			elif args['range']:
+				repo.update_range(args['range'])
+		except GitUmException:
+			pass
 	elif args['command_name'] == 'editpatch':
-		if args['continue']:
-			repo.edit_patch('--continue')
-		elif args['skip']:
-			repo.edit_patch('--skip')
-		elif args['abort']:
-			repo.edit_patch('--abort')
-		elif args['commit']:
-			repo.edit_patch('--commit')
-		else:
-			repo.edit_patch()
+		try:
+			if args['continue']:
+				repo.edit_patch('--continue')
+			elif args['skip']:
+				repo.edit_patch('--skip')
+			elif args['abort']:
+				repo.edit_patch('--abort')
+			elif args['commit']:
+				repo.edit_patch('--commit')
+			else:
+				repo.edit_patch()
+		except GitUmException:
+			pass
 	elif args['command_name'] in ['create', 'restore']:
 		# default branch names
 		upstream_branch = 'upstream'
@@ -112,17 +121,23 @@ def main():
 			rebased_branch = args['rebased']
 		if args['patches']:
 			rebased_branch = args['patches']
-		if args['command_name'] == 'create':
-			repo.create(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
-		else:
-			repo.restore(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+		try:
+			if args['command_name'] == 'create':
+				repo.create(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+			else:
+				repo.restore(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+		except GitUmException:
+			pass
 	elif args['command_name'] == 'remove':
-		if args['branches']:
-			repo.remove_branches()
-		elif args['configfiles']:
-			repo.remove_config_files()
-		else:
-			repo.remove_all()
+		try:
+			if args['branches']:
+				repo.remove_branches()
+			elif args['configfiles']:
+				repo.remove_config_files()
+			else:
+				repo.remove_all()
+		except GitUmException:
+			pass
 
 if __name__ == "__main__":
 	main()

@@ -19,7 +19,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import git
-from gitupstream import GitUpstream
+from gitupstream import *
 import os
 import shutil
 
@@ -98,25 +98,45 @@ def simple_test(dirname, remove=True):
 	# gitum pull
 	print('doing gitum pull...')
 	repo.git.checkout('dev')
-	repo_um.pull()
+	try:
+		repo_um.pull()
+		print 'not raised after rebase!'
+		return
+	except GitUmException:
+		pass
 
 	# 1st fail
 	with open('testfile', 'w') as f:
 		f.write('ab\nd')
 	repo.git.add('testfile')
-	repo_um.continue_pull('--continue')
+	try:
+		repo_um.continue_pull('--continue')
+		print 'not raised after rebase!'
+		return
+	except GitUmException:
+		pass
 
 	# 2nd fail
 	with open('testfile', 'w') as f:
 		f.write('abc\nd')
 	repo.git.add('testfile')
-	repo_um.continue_pull('--continue')
+	try:
+		repo_um.continue_pull('--continue')
+		print 'not raised after rebase!'
+		return
+	except GitUmException:
+		pass
 
 	# 3rd fail
 	with open('testfile', 'w') as f:
 		f.write('sb\nd')
 	repo.git.add('testfile')
-	repo_um.continue_pull('--continue')
+	try:
+		repo_um.continue_pull('--continue')
+		print 'not raised after rebase!'
+		return
+	except GitUmException:
+		pass
 
 	# 4th fail
 	with open('testfile', 'w') as f:

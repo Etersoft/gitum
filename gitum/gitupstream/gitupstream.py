@@ -24,6 +24,7 @@ import os
 import tempfile
 import sys
 import shutil
+from errors import *
 
 START_ST = 0
 MERGE_ST = 1
@@ -51,11 +52,11 @@ class GitUpstream(object):
 		self._init_pull()
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not pull!')
-			return
+			raise RepoIsDirty
 		self._load_config(CONFIG_FILE)
 		if self._repo.git.diff(self._rebased, self._current) != '':
 			self._log('%s and %s work trees are not equal - can not pull!' % (self._rebased, self._current))
-			return
+			raise NotUptodate
 		if branch:
 			self._remote = branch
 		if len(self._remote.split('/')) == 2:
@@ -70,7 +71,7 @@ class GitUpstream(object):
 		self._init_pull()
 		self._load_config(CONFIG_FILE)
 		if not self._load_state(PULL_FILE):
-			return
+			raise NoStateFile
 		try:
 			self._repo.git.rebase('--abort')
 		except:
@@ -81,7 +82,7 @@ class GitUpstream(object):
 		self._init_pull()
 		self._load_config(CONFIG_FILE)
 		if not self._load_state(PULL_FILE):
-			return
+			raise NoStateFile
 		if self._state == REBASE_ST:
 			tmp_file = tempfile.TemporaryFile()
 			try:
@@ -95,17 +96,17 @@ class GitUpstream(object):
 				tmp_file.seek(0)
 				self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
 				self._log(e.stderr)
-				return
+				raise RebaseFailed
 			except PatchError as e:
 				self._save_state(PULL_FILE)
 				self._log(e.message)
-				return
+				raise PatchFailed
 			except:
 				self._save_state(PULL_FILE)
 				raise
 		elif self._state != MERGE_ST:
 			self._log("Don't support continue not from merge or rebase mode!")
-			return
+			raise NotSupported
 		self._process_commits()
 
 	def update(self, num):
@@ -114,12 +115,12 @@ class GitUpstream(object):
 	def update_range(self, commit_range):
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not update!')
-			return
+			raise RepoIsDirty
 		since, to = commit_range.split(':')
 		self._load_config(CONFIG_FILE)
 		if self._repo.git.diff(self._rebased, self._current) == '':
 			self._log('%s and %s work trees are equal - nothing to update!' % (self._rebased, self._current))
-			return
+			raise NotUptodate
 		git = self._repo.git
 		since = self._repo.commit(since).hexsha
 		to = self._repo.commit(to).hexsha
@@ -133,7 +134,7 @@ class GitUpstream(object):
 				git.checkout(self._rebased)
 		except GitCommandError as e:
 			self._log(e.stderr)
-			return
+			raise CherryPickFailed
 		git.checkout(self._current)
 
 	def edit_patch(self, command=None):
@@ -144,16 +145,16 @@ class GitUpstream(object):
 		self._init_pull()
 		if not command and self._repo.is_dirty():
 			self._log('Repository is dirty - can not edit patch!')
-			return
+			raise RepoIsDirty
 		self._load_config(CONFIG_FILE)
 		if self._repo.git.diff(self._rebased, self._current) != '':
 			self._log('%s and %s work trees are not equal - can not edit patch!' % (self._rebased, self._current))
-			return
+			raise NotUptodate
 		if not command:
 			self._save_branches()
 			self._save_state(PULL_FILE)
 		elif not self._load_state(PULL_FILE, False):
-			return
+			raise NoStateFile
 		tmp_file = tempfile.TemporaryFile()
 		try:
 			self._stage2(self._upstream, tmp_file, command, True)
@@ -223,7 +224,7 @@ class GitUpstream(object):
 				break
 		if not ok:
 			self._log('broken %s branch' % patches)
-			return
+			raise BrokenRepo
 		commits.reverse()
 		git = self._repo.git
 		start = commits[0]
@@ -233,7 +234,7 @@ class GitUpstream(object):
 			tmp_list = f.readlines()
 			if len(tmp_list) > 1:
 				self._log('broken upstream commit file')
-				return
+				raise BrokenRepo
 			upstream_commit = tmp_list[0]
 		git.checkout(upstream_commit)
 		self._repo.create_head(current)
@@ -249,7 +250,7 @@ class GitUpstream(object):
 				tmp_list = f.readlines()
 				if len(tmp_list) > 1:
 					self._log('broken upstream commit file')
-					return
+					raise BrokenRepo
 				upstream_commit = tmp_list[0]
 			git.checkout(current)
 			patch_exists = False
@@ -289,7 +290,7 @@ class GitUpstream(object):
 		cur = commit if commit else self._current
 		if self._repo.git.diff(self._rebased, cur) != '':
 			self._log('%s and %s work trees are not equal - can\'t save state!' % (self._rebased, cur))
-			return
+			raise NotUptodate
 		# create tmp dir
 		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
 		os.mkdir(GITUM_TMP_DIR)
@@ -352,6 +353,7 @@ class GitUpstream(object):
 			self._load_config_raised(filename)
 		except IOError:
 			self._log('%s missing, using default branch names...' % filename)
+			raise NoConfigFile
 
 	def _load_config_raised(self, filename):
 		# set defaults
@@ -417,11 +419,11 @@ class GitUpstream(object):
 			tmp_file.seek(0)
 			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
-			return
+			raise RebaseFailed
 		except PatchError as e:
 			self._save_state(PULL_FILE)
 			self._log(e.message)
-			return
+			raise PatchFailed
 		except:
 			self._save_state(PULL_FILE)
 			raise
@@ -513,7 +515,7 @@ class GitUpstream(object):
 		except PatchError as e:
 			self._save_state(PULL_FILE)
 			self._log(e.message)
-			return
+			raise PatchFailed
 		except:
 			self._save_state(PULL_FILE)
 			raise
@@ -559,7 +561,7 @@ class GitUpstream(object):
 			os.unlink(filename)
 
 	def _log(self, mess):
-		if self._with_log:
+		if self._with_log and mess:
 			print(mess)
 
 	def _init_pull(self):
