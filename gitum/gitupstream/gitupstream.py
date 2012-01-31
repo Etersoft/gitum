@@ -45,8 +45,11 @@ class PatchError(Exception):
 		return repr(self.message)
 
 class GitUpstream(object):
-	def __init__(self, repo_path='.', with_log=False):
-		self._repo = Repo(repo_path)
+	def __init__(self, repo_path='.', with_log=False, new_repo=False):
+		if new_repo:
+			self._repo = Repo.init(repo_path)
+		else:
+			self._repo = Repo(repo_path)
 		self._with_log = with_log
 
 	def merge(self, branch=None):
@@ -287,6 +290,16 @@ class GitUpstream(object):
 			self._repo.create_head(CONFIG_BRANCH)
 		self._save_config(remote, current, upstream, rebased, patches)
 		git.checkout(current)
+
+	def clone(self, remote_repo):
+		self._repo.git.remote('add', 'origin', remote_repo)
+		self._repo.git.fetch('origin')
+		self._repo.git.checkout('-b', 'gitum-config', 'origin/gitum-config')
+		self._load_config()
+		self._repo.git.checkout('-b', self._rebased, 'origin/' + self._rebased)
+		self._repo.git.checkout('-b', self._upstream, 'origin/' + self._upstream)
+		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
+		self._repo.git.checkout('-b', self._current, 'origin/' + self._current)
 
 	def _save_config(self, remote, current, upstream, rebased, patches):
 		self._repo.git.checkout(CONFIG_BRANCH)

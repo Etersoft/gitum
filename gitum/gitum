@@ -64,9 +64,14 @@ def main():
 	restore_p.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
 	restore_p.add_argument('--patches', metavar='branch', help='branch consists of our patches as files')
 
+	clone_p = subparsers.add_parser('clone')
+	clone_p.add_argument('git-repo', help='git repo to clone from')
+	clone_p.add_argument('repo-dir', help='directory to clone to')
+
 	args = vars(parser.parse_args(sys.argv[1:]))
 
-	repo = GitUpstream(with_log=True)
+	if not args['command_name'] == 'clone':
+		repo = GitUpstream(with_log=True)
 
 	if args['command_name'] == 'merge':
 		try:
@@ -138,6 +143,8 @@ def main():
 				repo.remove_all()
 		except GitUmException:
 			pass
+	elif args['command_name'] == 'clone':
+		GitUpstream(repo_path=args['repo-dir'], with_log=True, new_repo=True).clone(args['git-repo'])
 
 if __name__ == "__main__":
 	main()
