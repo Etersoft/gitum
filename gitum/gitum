@@ -26,12 +26,12 @@ def main():
 	parser = argparse.ArgumentParser(description='Git Upstream Manager')
 	subparsers = parser.add_subparsers(dest='command_name')
 
-	pull_p = subparsers.add_parser('pull')
-	gr = pull_p.add_mutually_exclusive_group()
-	gr.add_argument('--continue', action='store_true', help='continue a pull process')
-	gr.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a pull process')
-	gr.add_argument('--abort', action='store_true', help='abort a pull process')
-	gr.add_argument('--branch', help='local/remote branch to pull from')
+	merge_p = subparsers.add_parser('merge')
+	gr = merge_p.add_mutually_exclusive_group()
+	gr.add_argument('--continue', action='store_true', help='continue a merge process')
+	gr.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a merge process')
+	gr.add_argument('--abort', action='store_true', help='abort a merge process')
+	gr.add_argument('--branch', help='local/remote branch to merge from')
 
 	update_p = subparsers.add_parser('update')
 	gr_update = update_p.add_mutually_exclusive_group()
@@ -68,18 +68,18 @@ def main():
 
 	repo = GitUpstream(with_log=True)
 
-	if args['command_name'] == 'pull':
+	if args['command_name'] == 'merge':
 		try:
 			if args['continue']:
-				repo.continue_pull('--continue')
+				repo.continue_merge('--continue')
 			elif args['skip']:
-				repo.continue_pull('--skip')
+				repo.continue_merge('--skip')
 			elif args['abort']:
 				repo.abort()
 			elif args['branch']:
-				repo.pull(args['branch'])
+				repo.merge(args['branch'])
 			else:
-				repo.pull()
+				repo.merge()
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'update':

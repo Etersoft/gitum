@@ -31,7 +31,7 @@ MERGE_ST = 1
 REBASE_ST = 2
 COMMIT_ST = 3
 
-PULL_FILE = '.git/um-pull'
+PULL_FILE = '.git/um-merge'
 CONFIG_FILE = '.gitum-config'
 CONFIG_BRANCH = 'gitum-config'
 
@@ -49,14 +49,14 @@ class GitUpstream(object):
 		self._repo = Repo(repo_path)
 		self._with_log = with_log
 
-	def pull(self, branch=None):
-		self._init_pull()
+	def merge(self, branch=None):
+		self._init_merge()
 		if self._repo.is_dirty():
-			self._log('Repository is dirty - can not pull!')
+			self._log('Repository is dirty - can not merge!')
 			raise RepoIsDirty
 		self._load_config()
 		if self._repo.git.diff(self._rebased, self._current) != '':
-			self._log('%s and %s work trees are not equal - can not pull!' % (self._rebased, self._current))
+			self._log('%s and %s work trees are not equal - can not merge!' % (self._rebased, self._current))
 			raise NotUptodate
 		if branch:
 			self._remote = branch
@@ -69,7 +69,7 @@ class GitUpstream(object):
 		self._process_commits()
 
 	def abort(self):
-		self._init_pull()
+		self._init_merge()
 		self._load_config()
 		if not self._load_state(PULL_FILE):
 			raise NoStateFile
@@ -79,8 +79,8 @@ class GitUpstream(object):
 			pass
 		self._restore_branches()
 
-	def continue_pull(self, rebase_cmd):
-		self._init_pull()
+	def continue_merge(self, rebase_cmd):
+		self._init_merge()
 		self._load_config()
 		if not self._load_state(PULL_FILE):
 			raise NoStateFile
@@ -95,7 +95,7 @@ class GitUpstream(object):
 			except GitCommandError as e:
 				self._save_state(PULL_FILE)
 				tmp_file.seek(0)
-				self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
+				self._log(self._fixup_merge_message(''.join(tmp_file.readlines())))
 				self._log(e.stderr)
 				raise RebaseFailed
 			except PatchError as e:
@@ -143,7 +143,7 @@ class GitUpstream(object):
 			return self._update_current()
 		if command == '--abort':
 			return self.abort()
-		self._init_pull()
+		self._init_merge()
 		if not command and self._repo.is_dirty():
 			self._log('Repository is dirty - can not edit patch!')
 			raise RepoIsDirty
@@ -355,10 +355,10 @@ class GitUpstream(object):
 		mess = mess.replace('git rebase --skip', 'gitum editpatch --skip')
 		return mess
 
-	def _fixup_pull_message(self, mess):
-		mess = mess.replace('git rebase --continue', 'gitum pull --continue')
-		mess = mess.replace('git rebase --abort', 'gitum pull --abort')
-		mess = mess.replace('git rebase --skip', 'gitum pull --skip')
+	def _fixup_merge_message(self, mess):
+		mess = mess.replace('git rebase --continue', 'gitum merge --continue')
+		mess = mess.replace('git rebase --abort', 'gitum merge --abort')
+		mess = mess.replace('git rebase --skip', 'gitum merge --skip')
 		return mess
 
 	def _load_config(self):
@@ -429,7 +429,7 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._save_state(PULL_FILE)
 			tmp_file.seek(0)
-			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
+			self._log(self._fixup_merge_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
 			raise RebaseFailed
 		except PatchError as e:
@@ -516,7 +516,7 @@ class GitUpstream(object):
 			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 
 	def _update_current(self):
-		self._init_pull()
+		self._init_merge()
 		self._load_config()
 		if not self._load_state(PULL_FILE):
 			return
@@ -576,7 +576,7 @@ class GitUpstream(object):
 		if self._with_log and mess:
 			print(mess)
 
-	def _init_pull(self):
+	def _init_merge(self):
 		self._state = START_ST
 		self._id = 0
 		self._cur_num = 0

@@ -95,11 +95,11 @@ def simple_test(dirname, remove=True):
 	repo.git.commit('-m', 'remote: r')
 	print('OK')
 
-	# gitum pull
-	print('doing gitum pull...')
+	# gitum merge
+	print('doing gitum merge...')
 	repo.git.checkout('dev')
 	try:
-		repo_um.pull()
+		repo_um.merge()
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
@@ -110,7 +110,7 @@ def simple_test(dirname, remove=True):
 		f.write('ab\nd')
 	repo.git.add('testfile')
 	try:
-		repo_um.continue_pull('--continue')
+		repo_um.continue_merge('--continue')
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
@@ -121,7 +121,7 @@ def simple_test(dirname, remove=True):
 		f.write('abc\nd')
 	repo.git.add('testfile')
 	try:
-		repo_um.continue_pull('--continue')
+		repo_um.continue_merge('--continue')
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
@@ -132,7 +132,7 @@ def simple_test(dirname, remove=True):
 		f.write('sb\nd')
 	repo.git.add('testfile')
 	try:
-		repo_um.continue_pull('--continue')
+		repo_um.continue_merge('--continue')
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
@@ -142,7 +142,7 @@ def simple_test(dirname, remove=True):
 	with open('testfile', 'w') as f:
 		f.write('sbc\nd')
 	repo.git.add('testfile')
-	repo_um.continue_pull('--continue')
+	repo_um.continue_merge('--continue')
 	print('OK')
 
 	if not remove:
