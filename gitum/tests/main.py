@@ -21,16 +21,12 @@
 import gitumtest
 import sys
 
+TEST_DIR = '/tmp/_gitum_test_dir_'
+
 if __name__ == "__main__":
-	if len(sys.argv) < 2:
-		print('specify a repo dir')
-		exit()
-
-	dirname = sys.argv[1]
-
-	if len(sys.argv) == 3 and sys.argv[2] == '--noremove':
+	if len(sys.argv) == 2 and sys.argv[1] == '--noremove':
 		remove = False
 	else:
 		remove = True
 
-	gitumtest.simple_test(dirname, remove)
+	gitumtest.simple_test(TEST_DIR, remove)
