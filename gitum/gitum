@@ -68,6 +68,12 @@ def main():
 	clone_p.add_argument('git-repo', help='git repo to clone from')
 	clone_p.add_argument('repo-dir', help='directory to clone to')
 
+	pull_p = subparsers.add_parser('pull')
+	gr_pull = pull_p.add_mutually_exclusive_group()
+	gr_pull.add_argument('--resolved', action='store_true', help='continue a pull process')
+	gr_pull.add_argument('--skip', action='store_true', help='skip the current patch and continue a pull process')
+	gr_pull.add_argument('--abort', action='store_true', help='abort a pull process')
+
 	args = vars(parser.parse_args(sys.argv[1:]))
 
 	if not args['command_name'] == 'clone':
@@ -145,6 +151,18 @@ def main():
 			pass
 	elif args['command_name'] == 'clone':
 		GitUpstream(repo_path=args['repo-dir'], with_log=True, new_repo=True).clone(args['git-repo'])
+	elif args['command_name'] == 'pull':
+		try:
+			if args['resolved']:
+				repo.continue_pull('--resolved')
+			elif args['skip']:
+				repo.continue_pull('--skip')
+			elif args['abort']:
+				repo.abort(am=True)
+			else:
+				repo.pull()
+		except GitUmException:
+			pass
 
 if __name__ == "__main__":
 	main()

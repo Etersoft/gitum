@@ -34,6 +34,7 @@ COMMIT_ST = 3
 PULL_FILE = '.git/um-merge'
 CONFIG_FILE = '.gitum-config'
 CONFIG_BRANCH = 'gitum-config'
+REMOTE_REPO = '.git/.gitum-remote'
 
 GITUM_TMP_DIR = '/tmp/gitum'
 GITUM_PATCHES_DIR = 'gitum-patches'
@@ -46,6 +47,7 @@ class PatchError(Exception):
 
 class GitUpstream(object):
 	def __init__(self, repo_path='.', with_log=False, new_repo=False):
+		self._path = repo_path
 		if new_repo:
 			self._repo = Repo.init(repo_path)
 		else:
@@ -71,13 +73,16 @@ class GitUpstream(object):
 		self._save_branches()
 		self._process_commits()
 
-	def abort(self):
+	def abort(self, am=False):
 		self._init_merge()
 		self._load_config()
 		if not self._load_state(PULL_FILE):
 			raise NoStateFile
 		try:
-			self._repo.git.rebase('--abort')
+			if not am:
+				self._repo.git.rebase('--abort')
+			else:
+				self._repo.git.am('--abort')
 		except:
 			pass
 		self._restore_branches()
@@ -300,6 +305,103 @@ class GitUpstream(object):
 		self._repo.git.checkout('-b', self._upstream, 'origin/' + self._upstream)
 		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
 		self._repo.git.checkout('-b', self._current, 'origin/' + self._current)
+		self._update_remote('origin')
+
+	def pull(self, remote=None):
+		self._load_config()
+		self._init_merge()
+		self._load_remote()
+		if remote:
+			self._remote_repo = remote
+		self._save_branches()
+		cur = self._repo.branches[self._patches].commit.hexsha
+		self._repo.git.fetch(self._remote_repo)
+		self._repo.git.checkout(self._upstream, '-f')
+		self._repo.git.reset(self._remote_repo + '/' + self._upstream, '--hard')
+		self._repo.git.checkout(self._rebased, '-f')
+		self._repo.git.reset(self._remote_repo + '/' + self._rebased, '--hard')
+		self._repo.git.checkout(self._patches, '-f')
+		self._repo.git.reset(self._remote_repo + '/' + self._patches, '--hard')
+		self._repo.git.checkout(self._current, '-f')
+		self._repo.git.reset(self._remote_repo + '/' + self._current, '--hard')
+		self._commits = [q.hexsha for q in self._repo.iter_commits(self._previd + '..' + cur)]
+		self._commits.reverse()
+		self._all_num = len(self._commits)
+		self._pull_commits()
+
+	def continue_pull(self, command):
+		self._load_config()
+		self._init_merge()
+		if not self._load_state(PULL_FILE):
+			raise NoStateFile
+		try:
+			tmp_file = tempfile.TemporaryFile()
+			self._repo.git.am(command, command, output_stream=tmp_file)
+			if command == '--skip':
+				self._repo.git.checkout('-f')
+			try:
+				self.update(1)
+			except:
+				pass
+			self._repo.git.checkout(self._upstream)
+			self._repo.git.merge(self._repo.git.show(self._commits[0] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'))
+			self._repo.git.checkout(self._current)
+			self._id += 1
+			self._cur_num += 1
+		except GitCommandError as e:
+			self._save_state(PULL_FILE)
+			tmp_file.seek(0)
+			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
+			self._log(e.stderr)
+			raise RebaseFailed
+		except:
+			self._save_state(PULL_FILE)
+			raise
+		self._load_remote()
+		self._pull_commits()
+
+	def _update_remote(self, remote):
+		with open(self._path + '/' + REMOTE_REPO, 'w') as f:
+			f.write('%s\n%s' % (remote, self._repo.remote(remote).refs[self._patches].object.hexsha))
+
+	def _load_remote(self):
+		try:
+			with open(REMOTE_REPO) as f:
+				self._remote_repo, self._previd = f.readlines()
+				self._remote_repo = self._remote_repo.split('\n')[0]
+		except IOError:
+			self._log('remote was not specified and no one to track with')
+			raise
+
+	def _pull_commits(self):
+		tmp_file = tempfile.TemporaryFile()
+		try:
+			for q in xrange(self._id, len(self._commits)):
+				lines = self._repo.git.show(self._commits[q] + ':' + GITUM_PATCHES_DIR + '/_current_patch_')
+				with open(GITUM_TMP_DIR + '/_current.patch', 'w') as f:
+					f.write(lines)
+				self._repo.git.am('-3', GITUM_TMP_DIR + '/_current.patch', output_stream=tmp_file)
+				try:
+					self.update(1)
+				except:
+					pass
+				self._repo.git.checkout(self._upstream)
+				self._repo.git.merge(self._repo.git.show(self._commits[0] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'))
+				self._repo.git.checkout(self._current)
+				tmp_file.close()
+				tmp_file = tempfile.TemporaryFile()
+				self._id += 1
+				self._cur_num += 1
+		except GitCommandError as e:
+			self._save_state(PULL_FILE)
+			tmp_file.seek(0)
+			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
+			self._log(e.stderr)
+			raise RebaseFailed
+		except:
+			self._save_state(PULL_FILE)
+			raise
+		self._update_remote(self._remote_repo)
 
 	def _save_config(self, remote, current, upstream, rebased, patches):
 		self._repo.git.checkout(CONFIG_BRANCH)
@@ -372,6 +474,12 @@ class GitUpstream(object):
 		mess = mess.replace('git rebase --continue', 'gitum merge --continue')
 		mess = mess.replace('git rebase --abort', 'gitum merge --abort')
 		mess = mess.replace('git rebase --skip', 'gitum merge --skip')
+		return mess
+
+	def _fixup_pull_message(self, mess):
+		mess = mess.replace('git am --resolved', 'gitum pull --resolved')
+		mess = mess.replace('git am --abort', 'gitum pull --abort')
+		mess = mess.replace('git am --skip', 'gitum pull --skip')
 		return mess
 
 	def _load_config(self):
