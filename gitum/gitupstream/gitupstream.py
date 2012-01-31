@@ -32,7 +32,8 @@ REBASE_ST = 2
 COMMIT_ST = 3
 
 PULL_FILE = '.git/um-pull'
-CONFIG_FILE = '.git/um-config'
+CONFIG_FILE = '.gitum-config'
+CONFIG_BRANCH = 'gitum-config'
 
 GITUM_TMP_DIR = '/tmp/gitum'
 GITUM_PATCHES_DIR = 'gitum-patches'
@@ -53,7 +54,7 @@ class GitUpstream(object):
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not pull!')
 			raise RepoIsDirty
-		self._load_config(CONFIG_FILE)
+		self._load_config()
 		if self._repo.git.diff(self._rebased, self._current) != '':
 			self._log('%s and %s work trees are not equal - can not pull!' % (self._rebased, self._current))
 			raise NotUptodate
@@ -69,7 +70,7 @@ class GitUpstream(object):
 
 	def abort(self):
 		self._init_pull()
-		self._load_config(CONFIG_FILE)
+		self._load_config()
 		if not self._load_state(PULL_FILE):
 			raise NoStateFile
 		try:
@@ -80,7 +81,7 @@ class GitUpstream(object):
 
 	def continue_pull(self, rebase_cmd):
 		self._init_pull()
-		self._load_config(CONFIG_FILE)
+		self._load_config()
 		if not self._load_state(PULL_FILE):
 			raise NoStateFile
 		if self._state == REBASE_ST:
@@ -117,7 +118,7 @@ class GitUpstream(object):
 			self._log('Repository is dirty - can not update!')
 			raise RepoIsDirty
 		since, to = commit_range.split(':')
-		self._load_config(CONFIG_FILE)
+		self._load_config()
 		if self._repo.git.diff(self._rebased, self._current) == '':
 			self._log('%s and %s work trees are equal - nothing to update!' % (self._rebased, self._current))
 			raise NotUptodate
@@ -146,7 +147,7 @@ class GitUpstream(object):
 		if not command and self._repo.is_dirty():
 			self._log('Repository is dirty - can not edit patch!')
 			raise RepoIsDirty
-		self._load_config(CONFIG_FILE)
+		self._load_config()
 		if self._repo.git.diff(self._rebased, self._current) != '':
 			self._log('%s and %s work trees are not equal - can not edit patch!' % (self._rebased, self._current))
 			raise NotUptodate
@@ -194,18 +195,23 @@ class GitUpstream(object):
 				f.write(self._repo.branches[upstream].commit.hexsha)
 			git.add(GITUM_PATCHES_DIR)
 			git.commit('-m', 'gitum-patches: begin')
+		try:
+			self._repo.branches[CONFIG_BRANCH]
+		except:
+			self._repo.create_head(CONFIG_BRANCH)
 		self._save_config(remote, current, upstream, rebased, patches)
+		git.checkout(current)
 
 	def remove_branches(self):
-		self._load_config(CONFIG_FILE)
+		self._load_config()
 		self._repo.git.checkout(self._upstream, '-f')
 		self._repo.delete_head(self._current, '-D')
 		self._repo.delete_head(self._rebased, '-D')
 		self._repo.delete_head(self._patches, '-D')
+		self._repo.delete_head(CONFIG_BRANCH, '-D')
 
 	def remove_config_files(self):
 		try:
-			os.unlink(CONFIG_FILE)
 			os.unlink(PULL_FILE)
 		except:
 			pass
@@ -275,16 +281,23 @@ class GitUpstream(object):
 		for i in os.listdir(GITUM_TMP_DIR):
 			if i.endswith('.patch'):
 				git.am(GITUM_TMP_DIR + '/' + i)
-		git.checkout(current)
+		try:
+			self._repo.branches[CONFIG_BRANCH]
+		except:
+			self._repo.create_head(CONFIG_BRANCH)
 		self._save_config(remote, current, upstream, rebased, patches)
+		git.checkout(current)
 
 	def _save_config(self, remote, current, upstream, rebased, patches):
+		self._repo.git.checkout(CONFIG_BRANCH)
 		with open(CONFIG_FILE, 'w') as f:
 			f.write('remote = %s\n' % remote)
 			f.write('current = %s\n' % current)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
 			f.write('patches = %s\n' % patches)
+		self._repo.git.add(CONFIG_FILE)
+		self._repo.git.commit('-m', 'Save config file')
 
 	def _save_repo_state(self, commit):
 		cur = commit if commit else self._current
@@ -348,14 +361,14 @@ class GitUpstream(object):
 		mess = mess.replace('git rebase --skip', 'gitum pull --skip')
 		return mess
 
-	def _load_config(self, filename):
+	def _load_config(self):
 		try:
-			self._load_config_raised(filename)
+			self._load_config_raised()
 		except IOError:
 			self._log('config file is missed!')
 			raise NoConfigFile
 
-	def _load_config_raised(self, filename):
+	def _load_config_raised(self):
 		# set defaults
 		self._upstream = 'upstream'
 		self._rebased = 'rebased'
@@ -363,10 +376,9 @@ class GitUpstream(object):
 		self._patches = 'patches'
 		self._remote = 'origin/master'
 		# load config
-		with open(filename, 'r') as f:
-			_strs = [q.split('\n')[0] for q in f.readlines()]
+		lines = self._repo.git.show(CONFIG_BRANCH + ':' + CONFIG_FILE).split('\n')
 		num = 0
-		for i in _strs:
+		for i in lines:
 			num += 1
 			parts = i.split('#')[0].strip().split(' ')
 			if len(parts) != 3 or parts[1] != '=':
@@ -505,7 +517,7 @@ class GitUpstream(object):
 
 	def _update_current(self):
 		self._init_pull()
-		self._load_config(CONFIG_FILE)
+		self._load_config()
 		if not self._load_state(PULL_FILE):
 			return
 		try:
