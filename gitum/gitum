@@ -74,6 +74,9 @@ def main():
 	gr_pull.add_argument('--skip', action='store_true', help='skip the current patch and continue a pull process')
 	gr_pull.add_argument('--abort', action='store_true', help='abort a pull process')
 
+	push_p = subparsers.add_parser('push')
+	push_p.add_argument('--remote', help='remote repo to push to')
+
 	args = vars(parser.parse_args(sys.argv[1:]))
 
 	if not args['command_name'] == 'clone':
@@ -163,6 +166,11 @@ def main():
 				repo.pull()
 		except GitUmException:
 			pass
+	elif args['command_name'] == 'push':
+		if args['remote']:
+			repo.push(args['remote'])
+		else:
+			repo.push()
 
 if __name__ == "__main__":
 	main()

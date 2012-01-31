@@ -360,6 +360,13 @@ class GitUpstream(object):
 		self._load_remote()
 		self._pull_commits()
 
+	def push(self, remote=None):
+		self._load_config()
+		if not remote:
+			self._load_remote()
+			remote = self._remote_repo
+		self._repo.git.push(remote, self._upstream, self._rebased, self._current, self._patches)
+
 	def _update_remote(self, remote):
 		with open(self._path + '/' + REMOTE_REPO, 'w') as f:
 			f.write('%s\n%s' % (remote, self._repo.remote(remote).refs[self._patches].object.hexsha))
