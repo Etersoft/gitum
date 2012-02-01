@@ -23,14 +23,6 @@ from gitupstream import *
 import os
 import shutil
 
-class Chdir:
-	def __init__(self, new_path):
-		self.saved_path = os.getcwd()
-		os.chdir(new_path)
-
-	def __del__(self):
-		os.chdir(self.saved_path)
-
 def simple_test(dirname, remove=True):
 	print('Simple test has started!')
 	if os.path.exists(dirname):
@@ -39,111 +31,107 @@ def simple_test(dirname, remove=True):
 
 	# create repo
 	print('creating git repo...')
-	git.Git().init(dirname)
-	ch = Chdir(dirname)
-	repo = git.Repo()
+	gitum_repo = GitUpstream(repo_path=dirname, with_log=True, new_repo=True)
 	print('OK')
 
 	# create file
 	print('creating file...')
-	with open('testfile', 'w') as f:
+	with open(dirname + '/testfile', 'w') as f:
 		f.write('a')
-	repo.git.add('testfile')
-	repo.git.commit('-m', 'initial')
+	gitum_repo.repo().git.add(dirname + '/testfile')
+	gitum_repo.repo().git.commit('-m', 'initial')
 	print('OK')
 
 	# create branch to merge with
 	print('creating gitum repo...')
-	repo.create_head('merge')
+	gitum_repo.repo().create_head('merge')
 
-	# crete gitum repo
-	repo_um = GitUpstream(with_log=True)
-	repo_um.create('merge', 'dev', 'master', 'rebased', 'patches')
-	repo.git.checkout('dev')
+	gitum_repo.create('merge', 'dev', 'master', 'rebased', 'patches')
+	gitum_repo.repo().git.checkout('dev')
 	print('OK')
 
 	# make local changes
 	print('making local changes...')
-	with open('testfile', 'a') as f:
+	with open(dirname + '/testfile', 'a') as f:
 		f.write('b')
-	repo.git.add('testfile')
-	repo.git.commit('-m', 'local: b')
-	with open('testfile', 'a') as f:
+	gitum_repo.repo().git.add(dirname + '/testfile')
+	gitum_repo.repo().git.commit('-m', 'local: b')
+	with open(dirname + '/testfile', 'a') as f:
 		f.write('c')
-	repo.git.add('testfile')
-	repo.git.commit('-m', 'local: c')
+	gitum_repo.repo().git.add(dirname + '/testfile')
+	gitum_repo.repo().git.commit('-m', 'local: c')
 	print('OK')
 
 	# update patches branch
 	print('updating rebased branch...')
-	repo_um.update(2)
+	gitum_repo.update(2)
 	print('OK')
 
 	# make upstream changes
 	print('making upstream changes...')
-	repo.git.checkout('merge')
-	with open('testfile', 'a') as f:
+	gitum_repo.repo().git.checkout('merge')
+	with open(dirname + '/testfile', 'a') as f:
 		f.write('\nd')
-	repo.git.add('testfile')
-	repo.git.commit('-m', 'remote: \nd')
-	with open('testfile', 'w') as f:
+	gitum_repo.repo().git.add(dirname + '/testfile')
+	gitum_repo.repo().git.commit('-m', 'remote: \nd')
+	with open(dirname + '/testfile', 'w') as f:
 		f.write('s\nd')
-	repo.git.add('testfile')
-	repo.git.commit('-m', 'remote: s')
-	with open('testfile', 'w') as f:
+	gitum_repo.repo().git.add(dirname + '/testfile')
+	gitum_repo.repo().git.commit('-m', 'remote: s')
+	with open(dirname + '/testfile', 'w') as f:
 		f.write('s\nd\n\n\n\n\n\n\nr\n')
-	repo.git.add('testfile')
-	repo.git.commit('-m', 'remote: r')
+	gitum_repo.repo().git.add(dirname + '/testfile')
+	gitum_repo.repo().git.commit('-m', 'remote: r')
 	print('OK')
 
 	# gitum merge
 	print('doing gitum merge...')
-	repo.git.checkout('dev')
+	gitum_repo.repo().git.checkout('dev')
 	try:
-		repo_um.merge()
+		gitum_repo.merge()
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
 		pass
 
 	# 1st fail
-	with open('testfile', 'w') as f:
+	with open(dirname + '/testfile', 'w') as f:
 		f.write('ab\nd')
-	repo.git.add('testfile')
+	gitum_repo.repo().git.add(dirname + '/testfile')
 	try:
-		repo_um.continue_merge('--continue')
+		gitum_repo.continue_merge('--continue')
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
 		pass
 
 	# 2nd fail
-	with open('testfile', 'w') as f:
+	with open(dirname + '/testfile', 'w') as f:
 		f.write('abc\nd')
-	repo.git.add('testfile')
+	gitum_repo.repo().git.add(dirname + '/testfile')
 	try:
-		repo_um.continue_merge('--continue')
+		gitum_repo.continue_merge('--continue')
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
 		pass
 
 	# 3rd fail
-	with open('testfile', 'w') as f:
+	with open(dirname + '/testfile', 'w') as f:
 		f.write('sb\nd')
-	repo.git.add('testfile')
+	gitum_repo.repo().git.add('testfile')
 	try:
-		repo_um.continue_merge('--continue')
+		gitum_repo.continue_merge('--continue')
 		print 'not raised after rebase!'
 		return
 	except GitUmException:
 		pass
 
 	# 4th fail
-	with open('testfile', 'w') as f:
+	with open(dirname + '/testfile', 'w') as f:
 		f.write('sbc\nd')
-	repo.git.add('testfile')
-	repo_um.continue_merge('--continue')
+	gitum_repo.repo().git.add(dirname + '/testfile')
+	gitum_repo.continue_merge('--continue')
 	print('OK')
 
 	if not remove:
@@ -151,12 +139,11 @@ def simple_test(dirname, remove=True):
 
 	# remove gitum repo
 	print('removing gitum repo...')
-	repo_um.remove_all()
+	gitum_repo.remove_all()
 	print('OK')
 
 	# remove repo
 	print('removing git repo...')
-	del ch
 	shutil.rmtree(dirname)
 	print('OK\ntest has finished!')
 
