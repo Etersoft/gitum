@@ -231,16 +231,17 @@ class GitUpstream(object):
 		self.remove_branches()
 		self.remove_config_files()
 
-	def restore(self, remote, current, upstream, rebased, patches):
+	def restore(self):
+		self._load_config()
 		commits = []
 		ok = False
-		for i in self._repo.iter_commits(patches):
+		for i in self._repo.iter_commits(self._patches):
 			commits.append(i.hexsha)
 			if i.message.startswith('gitum-patches: begin'):
 				ok = True
 				break
 		if not ok:
-			self._log('broken %s branch' % patches)
+			self._log('broken %s branch' % self._patches)
 			raise BrokenRepo
 		commits.reverse()
 		git = self._repo.git
@@ -254,7 +255,7 @@ class GitUpstream(object):
 				raise BrokenRepo
 			upstream_commit = tmp_list[0]
 		git.checkout(upstream_commit)
-		self._repo.create_head(current)
+		self._repo.create_head(self._current)
 		for i in commits:
 			git.checkout(i)
 			shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
@@ -269,7 +270,7 @@ class GitUpstream(object):
 					self._log('broken upstream commit file')
 					raise BrokenRepo
 				upstream_commit = tmp_list[0]
-			git.checkout(current)
+			git.checkout(self._current)
 			patch_exists = False
 			with open(GITUM_TMP_DIR + '/_current_patch_') as f:
 				if f.readlines():
@@ -286,9 +287,9 @@ class GitUpstream(object):
 			self._repo.delete_head(rebased, '-D')
 		except:
 			pass
-		self._repo.create_head(upstream)
-		self._repo.create_head(rebased)
-		git.checkout(rebased)
+		self._repo.create_head(self._upstream)
+		self._repo.create_head(self._rebased)
+		git.checkout(self._rebased)
 		patches_to_apply = [i for i in os.listdir(GITUM_TMP_DIR) if i.endswith('.patch')]
 		patches_to_apply.sort()
 		for i in patches_to_apply:
@@ -297,8 +298,7 @@ class GitUpstream(object):
 			self._repo.branches[CONFIG_BRANCH]
 		except:
 			self._repo.create_head(CONFIG_BRANCH)
-		self._save_config(remote, current, upstream, rebased, patches)
-		git.checkout(current)
+		git.checkout(self._current)
 
 	def clone(self, remote_repo):
 		self._repo.git.remote('add', 'origin', remote_repo)

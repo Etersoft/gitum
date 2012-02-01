@@ -59,11 +59,6 @@ def main():
 	gr_editpatch.add_argument('--commit', action='store_true', help='commit changes into current development branch')
 
 	restore_p = subparsers.add_parser('restore')
-	restore_p.add_argument('--remote', metavar='server/branch', help='remote branch to track with')
-	restore_p.add_argument('--current', metavar='branch', help='current development branch')
-	restore_p.add_argument('--upstream', metavar='branch', help='copy of tracked upstream branch')
-	restore_p.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
-	restore_p.add_argument('--patches', metavar='branch', help='branch consists of our patches as files')
 
 	clone_p = subparsers.add_parser('clone')
 	clone_p.add_argument('git-repo', help='git repo to clone from')
@@ -124,7 +119,7 @@ def main():
 				repo.edit_patch()
 		except GitUmException:
 			pass
-	elif args['command_name'] in ['create', 'restore']:
+	elif args['command_name'] == 'create':
 		# default branch names
 		upstream_branch = 'upstream'
 		rebased_branch = 'rebased'
@@ -142,10 +137,12 @@ def main():
 		if args['patches']:
 			rebased_branch = args['patches']
 		try:
-			if args['command_name'] == 'create':
-				repo.create(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
-			else:
-				repo.restore(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+			repo.create(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+		except GitUmException:
+			pass
+	elif args['command_name'] == 'restore':
+		try:
+			repo.restore()
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'remove':
