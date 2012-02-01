@@ -147,10 +147,10 @@ def simple_test(dirname, remove=True):
 	shutil.rmtree(dirname)
 	print('OK\ntest has finished!')
 
-def remote_work_test(dirname1, dirname2, remove=True):
+def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_'):
 	print('Remote work test has started!')
-	if os.path.exists(dirname1) or os.path.exists(dirname2):
-		print('directory exists')
+	if os.path.exists(dirname1) or os.path.exists(dirname2) or os.path.exists(baredir):
+		print('paths exist')
 		return
 
 	# create repo
@@ -192,6 +192,7 @@ def remote_work_test(dirname1, dirname2, remove=True):
 	gitum_local_repo.update(1)
 	print('OK')
 
+	# pull from the remote
 	print('pulling the remote side from the local one...')
 	try:
 		gitum_local_repo.pull('origin')
@@ -203,6 +204,13 @@ def remote_work_test(dirname1, dirname2, remove=True):
 		f.write('abc')
 	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
 	gitum_local_repo.continue_pull('--resolved')
+	print('OK')
+
+	# push to the remote
+	print('pushing to the remote side...')
+	bare = git.Repo.init(baredir, bare=True)
+	gitum_local_repo.repo().git.remote('add', 'new', baredir)
+	gitum_local_repo.push('new')
 	print('OK')
 
 	if not remove:
@@ -218,4 +226,5 @@ def remote_work_test(dirname1, dirname2, remove=True):
 	print('removing git repo...')
 	shutil.rmtree(dirname1)
 	shutil.rmtree(dirname2)
+	shutil.rmtree(baredir)
 	print('OK\ntest has finished!')
