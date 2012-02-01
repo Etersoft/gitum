@@ -607,7 +607,7 @@ class GitUpstream(object):
 		if rebase_cmd:
 			if interactive:
 				res = call(['git', '--git-dir=' + self._repo_path + '/.git/',
-					    '--work-tree=' + self._repo_path, 'rebase', rebase_cmd])
+					    '--work-tree=' + self._repo_path, 'rebase', rebase_cmd], stderr=output)
 				if res != 0:
 					raise GitCommandError('git rebase %s' % rebase_cmd, res, '')
 			else:
