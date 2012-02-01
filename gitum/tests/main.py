@@ -30,3 +30,5 @@ if __name__ == "__main__":
 		remove = True
 
 	gitumtest.simple_test(TEST_DIR, remove)
+	print('\n\n')
+	gitumtest.remote_work_test(TEST_DIR+'1', TEST_DIR+'2', remove)
