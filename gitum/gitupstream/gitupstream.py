@@ -31,9 +31,9 @@ MERGE_ST = 1
 REBASE_ST = 2
 COMMIT_ST = 3
 
-PULL_FILE = '.git/um-merge'
 CONFIG_FILE = '.gitum-config'
 CONFIG_BRANCH = 'gitum-config'
+STATE_FILE = '.git/.gitum-state'
 REMOTE_REPO = '.git/.gitum-remote'
 
 GITUM_TMP_DIR = '/tmp/gitum'
@@ -47,12 +47,15 @@ class PatchError(Exception):
 
 class GitUpstream(object):
 	def __init__(self, repo_path='.', with_log=False, new_repo=False):
-		self._path = repo_path
+		self._repo_path = repo_path
 		if new_repo:
 			self._repo = Repo.init(repo_path)
 		else:
 			self._repo = Repo(repo_path)
 		self._with_log = with_log
+
+	def repo(self):
+		return self._repo
 
 	def merge(self, branch=None):
 		self._init_merge()
@@ -76,7 +79,7 @@ class GitUpstream(object):
 	def abort(self, am=False):
 		self._init_merge()
 		self._load_config()
-		if not self._load_state(PULL_FILE):
+		if not self._load_state():
 			raise NoStateFile
 		try:
 			if not am:
@@ -90,7 +93,7 @@ class GitUpstream(object):
 	def continue_merge(self, rebase_cmd):
 		self._init_merge()
 		self._load_config()
-		if not self._load_state(PULL_FILE):
+		if not self._load_state():
 			raise NoStateFile
 		if self._state == REBASE_ST:
 			tmp_file = tempfile.TemporaryFile()
@@ -101,17 +104,17 @@ class GitUpstream(object):
 				self._id += 1
 				self._cur_num += 1
 			except GitCommandError as e:
-				self._save_state(PULL_FILE)
+				self._save_state()
 				tmp_file.seek(0)
 				self._log(self._fixup_merge_message(''.join(tmp_file.readlines())))
 				self._log(e.stderr)
 				raise RebaseFailed
 			except PatchError as e:
-				self._save_state(PULL_FILE)
+				self._save_state()
 				self._log(e.message)
 				raise PatchFailed
 			except:
-				self._save_state(PULL_FILE)
+				self._save_state()
 				raise
 		elif self._state != MERGE_ST:
 			self._log("Don't support continue not from merge or rebase mode!")
@@ -161,8 +164,8 @@ class GitUpstream(object):
 			raise NotUptodate
 		if not command:
 			self._save_branches()
-			self._save_state(PULL_FILE)
-		elif not self._load_state(PULL_FILE, False):
+			self._save_state()
+		elif not self._load_state(False):
 			raise NoStateFile
 		tmp_file = tempfile.TemporaryFile()
 		try:
@@ -170,11 +173,11 @@ class GitUpstream(object):
 		except GitCommandError as e:
 			self._log(e.stderr)
 		except:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			raise
 		tmp_file.seek(0)
 		self._log(self._fixup_editpatch_message(''.join(tmp_file.readlines())))
-		self._save_state(PULL_FILE)
+		self._save_state()
 
 	def create(self, remote, current, upstream, rebased, patches):
 		git = self._repo.git
@@ -197,11 +200,11 @@ class GitUpstream(object):
 		except:
 			self._repo.create_head(patches)
 			git.checkout(patches)
-			shutil.rmtree(GITUM_PATCHES_DIR, ignore_errors=True)
-			os.mkdir(GITUM_PATCHES_DIR)
-			with open(GITUM_PATCHES_DIR + '/_upstream_commit_', 'w') as f:
+			shutil.rmtree(self._repo_path + '/' + GITUM_PATCHES_DIR, ignore_errors=True)
+			os.mkdir(self._repo_path + '/' + GITUM_PATCHES_DIR)
+			with open(self._repo_path + '/' + GITUM_PATCHES_DIR + '/_upstream_commit_', 'w') as f:
 				f.write(self._repo.branches[upstream].commit.hexsha)
-			git.add(GITUM_PATCHES_DIR)
+			git.add(self._repo_path + '/' + GITUM_PATCHES_DIR)
 			git.commit('-m', 'gitum-patches: begin')
 		try:
 			self._repo.branches[CONFIG_BRANCH]
@@ -220,7 +223,7 @@ class GitUpstream(object):
 
 	def remove_config_files(self):
 		try:
-			os.unlink(PULL_FILE)
+			os.unlink(STATE_FILE)
 		except:
 			pass
 
@@ -244,7 +247,7 @@ class GitUpstream(object):
 		start = commits[0]
 		commits = commits[1:]
 		git.checkout(start)
-		with open(GITUM_PATCHES_DIR + '/_upstream_commit_') as f:
+		with open(self._repo_path + '/' + GITUM_PATCHES_DIR + '/_upstream_commit_') as f:
 			tmp_list = f.readlines()
 			if len(tmp_list) > 1:
 				self._log('broken upstream commit file')
@@ -256,11 +259,11 @@ class GitUpstream(object):
 			git.checkout(i)
 			shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
 			os.mkdir(GITUM_TMP_DIR)
-			for j in os.listdir(GITUM_PATCHES_DIR):
+			for j in os.listdir(self._repo_path + '/' + GITUM_PATCHES_DIR):
 				if j.endswith('.patch'):
-					shutil.copy(GITUM_PATCHES_DIR + '/' + j, GITUM_TMP_DIR + '/' + j)
-			shutil.copy(GITUM_PATCHES_DIR + '/_current_patch_', GITUM_TMP_DIR + '/_current_patch_')
-			with open(GITUM_PATCHES_DIR + '/_upstream_commit_') as f:
+					shutil.copy(self._repo_path + '/' + GITUM_PATCHES_DIR + '/' + j, GITUM_TMP_DIR + '/' + j)
+			shutil.copy(self._repo_path + '/' + GITUM_PATCHES_DIR + '/_current_patch_', GITUM_TMP_DIR + '/_current_patch_')
+			with open(self._repo_path + '/' + GITUM_PATCHES_DIR + '/_upstream_commit_') as f:
 				tmp_list = f.readlines()
 				if len(tmp_list) > 1:
 					self._log('broken upstream commit file')
@@ -332,7 +335,7 @@ class GitUpstream(object):
 	def continue_pull(self, command):
 		self._load_config()
 		self._init_merge()
-		if not self._load_state(PULL_FILE):
+		if not self._load_state():
 			raise NoStateFile
 		try:
 			tmp_file = tempfile.TemporaryFile()
@@ -349,13 +352,13 @@ class GitUpstream(object):
 			self._id += 1
 			self._cur_num += 1
 		except GitCommandError as e:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			tmp_file.seek(0)
 			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
 			raise RebaseFailed
 		except:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			raise
 		self._load_remote()
 		self._pull_commits()
@@ -368,12 +371,12 @@ class GitUpstream(object):
 		self._repo.git.push(remote, self._upstream, self._rebased, self._current, self._patches)
 
 	def _update_remote(self, remote):
-		with open(self._path + '/' + REMOTE_REPO, 'w') as f:
+		with open(self._repo_path + '/' + REMOTE_REPO, 'w') as f:
 			f.write('%s\n%s' % (remote, self._repo.remote(remote).refs[self._patches].object.hexsha))
 
 	def _load_remote(self):
 		try:
-			with open(REMOTE_REPO) as f:
+			with open(self._repo_path + '/' + REMOTE_REPO) as f:
 				self._remote_repo, self._previd = f.readlines()
 				self._remote_repo = self._remote_repo.split('\n')[0]
 		except IOError:
@@ -400,25 +403,25 @@ class GitUpstream(object):
 				self._id += 1
 				self._cur_num += 1
 		except GitCommandError as e:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			tmp_file.seek(0)
 			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
 			raise RebaseFailed
 		except:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			raise
 		self._update_remote(self._remote_repo)
 
 	def _save_config(self, remote, current, upstream, rebased, patches):
 		self._repo.git.checkout(CONFIG_BRANCH)
-		with open(CONFIG_FILE, 'w') as f:
+		with open(self._repo_path + '/' + CONFIG_FILE, 'w') as f:
 			f.write('remote = %s\n' % remote)
 			f.write('current = %s\n' % current)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
 			f.write('patches = %s\n' % patches)
-		self._repo.git.add(CONFIG_FILE)
+		self._repo.git.add(self._repo_path + '/' + CONFIG_FILE)
 		self._repo.git.commit('-m', 'Save config file')
 
 	def _save_repo_state(self, commit):
@@ -431,38 +434,38 @@ class GitUpstream(object):
 		os.mkdir(GITUM_TMP_DIR)
 		git = self._repo.git
 		# generate new patches
-		for i in os.listdir(os.getcwd()):
+		for i in os.listdir(self._repo_path):
 			if i.endswith('.patch'):
-				os.unlink(os.getcwd() + '/' + i)
+				os.unlink(self._repo_path + '/' + i)
 		git.format_patch('%s..%s' % (self._upstream, self._rebased))
 		# move patches to tmp dir
-		for i in os.listdir(os.getcwd()):
+		for i in os.listdir(self._repo_path):
 			if i.endswith('.patch'):
-				shutil.move(os.getcwd() + '/' + i, GITUM_TMP_DIR + '/' + i)
+				shutil.move(self._repo_path + '/' + i, GITUM_TMP_DIR + '/' + i)
 		# get current branch commit
 		if commit:
 			git.format_patch('%s^..%s' % (commit, commit))
 		else:
-			with open('_current.patch', 'w') as f:
+			with open(self._repo_path + '/_current.patch', 'w') as f:
 				pass
 		# move it to tmp dir
-		for i in os.listdir(os.getcwd()):
+		for i in os.listdir(self._repo_path):
 			if i.endswith('.patch'):
-				shutil.move(os.getcwd() + '/' + i, GITUM_TMP_DIR + '/_current_patch_')
+				shutil.move(self._repo_path + '/' + i, GITUM_TMP_DIR + '/_current_patch_')
 		git.checkout(self._patches, '-f')
-		patches_dir = os.getcwd()+'/'+GITUM_PATCHES_DIR
+		patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
 		# remove old patches from patches branch
 		git.rm(patches_dir + '/' + '*.patch', '--ignore-unmatch')
 		# move new patches from tmp dir to patches branch
 		for i in os.listdir(GITUM_TMP_DIR):
 			if i.endswith('.patch'):
 				shutil.move(GITUM_TMP_DIR + '/' + i, patches_dir + '/' + i)
-		shutil.move(GITUM_TMP_DIR + '/_current_patch_', GITUM_PATCHES_DIR + '/_current_patch_')
+		shutil.move(GITUM_TMP_DIR + '/_current_patch_', self._repo_path + '/' + GITUM_PATCHES_DIR + '/_current_patch_')
 		# update upstream head
-		with open(GITUM_PATCHES_DIR + '/_upstream_commit_', 'w') as f:
+		with open(self._repo_path + '/' + GITUM_PATCHES_DIR + '/_upstream_commit_', 'w') as f:
 			f.write(self._repo.branches[self._upstream].commit.hexsha)
 		# commit the result
-		git.add(GITUM_PATCHES_DIR)
+		git.add(self._repo_path + '/' + GITUM_PATCHES_DIR)
 		if commit:
 			mess = self._repo.commit(commit).message
 			author = self._repo.commit(commit).author
@@ -555,17 +558,17 @@ class GitUpstream(object):
 				tmp_file.close()
 				tmp_file = tempfile.TemporaryFile()
 		except GitCommandError as e:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			tmp_file.seek(0)
 			self._log(self._fixup_merge_message(''.join(tmp_file.readlines())))
 			self._log(e.stderr)
 			raise RebaseFailed
 		except PatchError as e:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			self._log(e.message)
 			raise PatchFailed
 		except:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			raise
 
 	def _process_commit(self, commit, output):
@@ -583,12 +586,12 @@ class GitUpstream(object):
 			out = sys.stdout
 		else:
 			out = open('/dev/null', 'w')
-		with open('__patch__.patch', 'w') as f:
+		with open(self._repo_path + '/__patch__.patch', 'w') as f:
 			f.write(diff_str + '\n')
-		with open('__patch__.patch', 'r') as f:
-			proc = Popen(['patch', '-p1'], stdin=f, stdout=out)
+		with open(self._repo_path + '/__patch__.patch', 'r') as f:
+			proc = Popen(['patch', '-d', self._repo_path, '-p1'], stdin=f, stdout=out)
 			status = proc.wait()
-		os.unlink('__patch__.patch')
+		os.unlink(self._repo_path + '/__patch__.patch')
 		return status
 
 	def _stage1(self, commit):
@@ -602,7 +605,8 @@ class GitUpstream(object):
 		self._state = REBASE_ST
 		if rebase_cmd:
 			if interactive:
-				res = call(['git', 'rebase', rebase_cmd])
+				res = call(['git', '--git-dir=' + self._repo_path + '/.git/',
+					    '--work-tree=' + self._repo_path, 'rebase', rebase_cmd])
 				if res != 0:
 					raise GitCommandError('git rebase %s' % rebase_cmd, res, '')
 			else:
@@ -611,7 +615,8 @@ class GitUpstream(object):
 			git.checkout(self._rebased)
 			self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 			if interactive:
-				res = call(['git', 'rebase', '-i', commit], stderr=output)
+				res = call(['git', '--git-dir=' + self._repo_path + '/.git/',
+					    '--work-tree=' + self._repo_path, 'rebase', '-i', commit], stderr=output)
 				if res != 0:
 					raise GitCommandError('git rebase', res, '')
 			else:
@@ -632,10 +637,11 @@ class GitUpstream(object):
 			self._state = MERGE_ST
 			raise PatchError('error occurs during applying %s\n'
 					 'fix error, commit and continue the process, please!' % commit)
-		git.add('-A')
+		git.add('-A', self._repo_path)
 		if interactive:
-			res = call(['git', 'commit', '-e', '-m',
-				   'place your comments for %s branch commit' % self._current])
+			res = call(['git', '--git-dir=' + self._repo_path + '/.git/',
+				    '--work-tree=' + self._repo_path, 'commit', '-e', '-m',
+				    'place your comments for %s branch commit' % self._current])
 			if res != 0:
 				raise GitCommandError('git commit', res, '')
 		else:
@@ -646,22 +652,22 @@ class GitUpstream(object):
 	def _update_current(self):
 		self._init_merge()
 		self._load_config()
-		if not self._load_state(PULL_FILE):
+		if not self._load_state():
 			return
 		try:
 			diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
 			self._stage3('editpatch result', diff_str, True)
 			self._save_repo_state(self._repo.branches[self._current].commit.hexsha if diff_str else '')
 		except PatchError as e:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			self._log(e.message)
 			raise PatchFailed
 		except:
-			self._save_state(PULL_FILE)
+			self._save_state()
 			raise
 
-	def _save_state(self, filename):
-		with open(filename, 'w') as f:
+	def _save_state(self):
+		with open(self._repo_path + '/' + STATE_FILE, 'w') as f:
 			f.write(self._saved_branches[self._upstream] + '\n')
 			f.write(self._saved_branches[self._rebased] + '\n')
 			f.write(self._saved_branches[self._current] + '\n')
@@ -673,17 +679,17 @@ class GitUpstream(object):
 			for i in xrange(self._id, len(self._commits)):
 				f.write(str(self._commits[i]) + '\n')
 
-	def _load_state(self, filename, remove=True):
+	def _load_state(self, remove=True):
 		ret = True
 		try:
-			self._load_state_raised(filename, remove)
+			self._load_state_raised(remove)
 		except IOError:
 			self._log('state file is missed or corrupted: nothing to continue!')
 			ret = False
 		return ret
 
-	def _load_state_raised(self, filename, remove):
-		with open(filename, 'r') as f:
+	def _load_state_raised(self, remove):
+		with open(self._repo_path + '/' + STATE_FILE, 'r') as f:
 			strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
 		if len(strs) < 6:
 			raise IOError
@@ -698,7 +704,7 @@ class GitUpstream(object):
 		for i in xrange(8, len(strs)):
 			self._commits.append(strs[i])
 		if remove:
-			os.unlink(filename)
+			os.unlink(self._repo_path + '/' + STATE_FILE)
 
 	def _log(self, mess):
 		if self._with_log and mess:
