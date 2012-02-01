@@ -231,17 +231,17 @@ class GitUpstream(object):
 		self.remove_branches()
 		self.remove_config_files()
 
-	def restore(self):
+	def restore(self, commit):
 		self._load_config()
 		commits = []
 		ok = False
-		for i in self._repo.iter_commits(self._patches):
+		for i in self._repo.iter_commits(commit):
 			commits.append(i.hexsha)
 			if i.message.startswith('gitum-patches: begin'):
 				ok = True
 				break
 		if not ok:
-			self._log('broken %s branch' % self._patches)
+			self._log('broken %s commit' % commit)
 			raise BrokenRepo
 		commits.reverse()
 		git = self._repo.git

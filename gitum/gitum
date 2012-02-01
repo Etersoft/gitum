@@ -59,6 +59,7 @@ def main():
 	gr_editpatch.add_argument('--commit', action='store_true', help='commit changes into current development branch')
 
 	restore_p = subparsers.add_parser('restore')
+	restore_p.add_argument('commit', help='commit to restore from')
 
 	clone_p = subparsers.add_parser('clone')
 	clone_p.add_argument('git-repo', help='git repo to clone from')
@@ -142,7 +143,7 @@ def main():
 			pass
 	elif args['command_name'] == 'restore':
 		try:
-			repo.restore()
+			repo.restore(args['commit'])
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'remove':
