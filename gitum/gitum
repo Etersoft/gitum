@@ -24,6 +24,7 @@ import argparse
 
 def main():
 	parser = argparse.ArgumentParser(description='Git Upstream Manager')
+	parser.add_argument('--repo', help='path to the gitum repo (does not take affect in clone command)')
 	subparsers = parser.add_subparsers(dest='command_name')
 
 	merge_p = subparsers.add_parser('merge')
@@ -79,8 +80,13 @@ def main():
 
 	args = vars(parser.parse_args(sys.argv[1:]))
 
+	if args['repo']:
+		path = args['repo']
+	else:
+		path = '.'
+
 	if not args['command_name'] == 'clone':
-		repo = GitUpstream(with_log=True)
+		repo = GitUpstream(path, with_log=True)
 
 	if args['command_name'] == 'merge':
 		try:
