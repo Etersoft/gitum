@@ -289,9 +289,10 @@ class GitUpstream(object):
 		self._repo.create_head(upstream)
 		self._repo.create_head(rebased)
 		git.checkout(rebased)
-		for i in os.listdir(GITUM_TMP_DIR):
-			if i.endswith('.patch'):
-				git.am(GITUM_TMP_DIR + '/' + i)
+		patches_to_apply = [i for i in os.listdir(GITUM_TMP_DIR) if i.endswith('.patch')]
+		patches_to_apply.sort()
+		for i in patches_to_apply:
+			git.am(GITUM_TMP_DIR + '/' + i)
 		try:
 			self._repo.branches[CONFIG_BRANCH]
 		except:
