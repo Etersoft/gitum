@@ -365,7 +365,8 @@ class GitUpstream(object):
 		if not remote:
 			self._load_remote()
 			remote = self._remote_repo
-		self._repo.git.push(remote, self._upstream, self._rebased, self._current, self._patches)
+		self._repo.git.push(remote, self._upstream, self._current, self._patches)
+		self._repo.git.push(remote, self._rebased, '--force')
 
 	def _update_remote(self, remote):
 		with open(self._repo_path + '/' + REMOTE_REPO, 'w') as f:
