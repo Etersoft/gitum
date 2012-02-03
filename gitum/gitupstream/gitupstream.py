@@ -290,10 +290,6 @@ class GitUpstream(object):
 		patches_to_apply.sort()
 		for i in patches_to_apply:
 			git.am(GITUM_TMP_DIR + '/' + i)
-		try:
-			self._repo.branches[CONFIG_BRANCH]
-		except:
-			self._repo.create_head(CONFIG_BRANCH)
 		git.checkout(self._current)
 
 	def clone(self, remote_repo):
