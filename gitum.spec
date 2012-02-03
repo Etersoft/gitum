@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.3
+Version: 0.4
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -44,6 +44,13 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Fri Feb 03 2012 Pavel Shilovsky <piastry@altlinux.org> 0.4-alt1
+- Add restore command
+- Rename pull to merge
+- Add clone/pull/push commands for a remote work
+- Add --repo command line option to specify the repo path
+- Bugfixes
+
 * Wed Dec 14 2011 Pavel Shilovsky <piastry@altlinux.org> 0.3-alt1
 - Make update command interface smarter
 - Add editpatch command
