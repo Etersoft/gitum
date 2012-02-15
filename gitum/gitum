@@ -137,7 +137,7 @@ def main():
 		if args['rebased']:
 			rebased_branch = args['rebased']
 		if args['patches']:
-			rebased_branch = args['patches']
+			patches_branch = args['patches']
 		try:
 			repo.create(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
 		except GitUmException:
