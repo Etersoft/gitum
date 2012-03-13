@@ -346,7 +346,7 @@ class GitUpstream(object):
 			self._repo.git.checkout(self._upstream)
 			self._repo.git.merge(
 				self._repo.git.show(
-					self._commits[0] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
+					self._commits[self._id] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
 				)
 			)
 			self._repo.git.checkout(self._current)
@@ -402,7 +402,7 @@ class GitUpstream(object):
 				self._repo.git.checkout(self._upstream)
 				self._repo.git.merge(
 					self._repo.git.show(
-						self._commits[0] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
+						self._commits[q] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
 					)
 				)
 				self._repo.git.checkout(self._current)
