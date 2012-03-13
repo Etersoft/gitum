@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # git-um - Git Upstream Manager.
-# Copyright (C) 2011  Pavel Shilovsky <piastry@etersoft.ru>
+# Copyright (C) 2012  Pavel Shilovsky <piastry@etersoft.ru>
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -58,6 +58,7 @@ def main():
 
 	restore_p = subparsers.add_parser('restore')
 	restore_p.add_argument('commit', help='commit to restore from')
+	restore_p.add_argument('--rebasedonly', action='store_true', help='restore rebased branch only')
 
 	clone_p = subparsers.add_parser('clone')
 	clone_p.add_argument('git-repo', help='git repo to clone from')
@@ -139,8 +140,9 @@ def main():
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'restore':
+		rebased_only = True if args['rebasedonly'] else False
 		try:
-			repo.restore(args['commit'])
+			repo.restore(args['commit'], rebased_only)
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'remove':
