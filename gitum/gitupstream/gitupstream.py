@@ -392,13 +392,14 @@ class GitUpstream(object):
 				lines = self._repo.git.show(
 						self._commits[q] + ':' + GITUM_PATCHES_DIR + '/_current_patch_'
 					)
-				with open(GITUM_TMP_DIR + '/_current.patch', 'w') as f:
-					f.write(lines)
-				self._repo.git.am('-3', GITUM_TMP_DIR + '/_current.patch', output_stream=tmp_file)
-				try:
-					self.update(1)
-				except:
-					pass
+				if len(lines) > 0:
+					with open(GITUM_TMP_DIR + '/_current.patch', 'w') as f:
+						f.write(lines)
+					self._repo.git.am('-3', GITUM_TMP_DIR + '/_current.patch', output_stream=tmp_file)
+					try:
+						self.update(1)
+					except:
+						pass
 				self._repo.git.checkout(self._upstream)
 				self._repo.git.merge(
 					self._repo.git.show(
