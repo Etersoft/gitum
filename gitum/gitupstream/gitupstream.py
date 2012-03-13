@@ -125,26 +125,24 @@ class GitUpstream(object):
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not update!')
 			raise RepoIsDirty
+		self._init_merge()
 		self._load_config()
 		diff = self._repo.git.diff(self._current, self._rebased)
-		if diff == '':
-			self._log('%s and %s work trees are equal - nothing to update!' % \
-				  (self._rebased, self._current))
-			raise NotUptodate
-		git = self._repo.git
-		git.stash()
-		interactive = False if message else True
-		self._stage3('update result', diff, interactive, message)
-		self._save_repo_state(self._current)
-		git.checkout(self._rebased)
 		try:
-			git.stash('pop')
+			if diff:
+				interactive = False if message else True
+				self._stage3('update current', diff, interactive, message)
+		except PatchError as e:
+			self._save_state()
+			self._log(e.message)
+			raise PatchFailed
 		except:
-			pass
+			self._save_state()
+			raise
+		self._save_repo_state(self._current if diff else '')
+		self._repo.git.checkout(self._rebased)
 
 	def edit_patch(self, command=None):
-		if command == '--commit':
-			return self._update_current()
 		if command == '--abort':
 			return self.abort()
 		self._init_merge()
@@ -152,7 +150,7 @@ class GitUpstream(object):
 			self._log('Repository is dirty - can not edit patch!')
 			raise RepoIsDirty
 		self._load_config()
-		if self._repo.git.diff(self._rebased, self._current) != '':
+		if not command and self._repo.git.diff(self._rebased, self._current) != '':
 			self._log('%s and %s work trees are not equal - can not edit patch!' % \
 					(self._rebased, self._current))
 			raise NotUptodate
@@ -171,7 +169,6 @@ class GitUpstream(object):
 			raise
 		tmp_file.seek(0)
 		self._log(self._fixup_editpatch_message(''.join(tmp_file.readlines())))
-		self._save_state()
 
 	def create(self, remote, current, upstream, rebased, patches):
 		git = self._repo.git
@@ -681,23 +678,6 @@ class GitUpstream(object):
 				git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 			else:
 				git.commit('-m', message)
-
-	def _update_current(self):
-		self._init_merge()
-		self._load_config()
-		if not self._load_state():
-			return
-		try:
-			diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
-			self._stage3('editpatch result', diff_str, True)
-			self._save_repo_state(self._repo.branches[self._current].commit.hexsha if diff_str else '')
-		except PatchError as e:
-			self._save_state()
-			self._log(e.message)
-			raise PatchFailed
-		except:
-			self._save_state()
-			raise
 
 	def _save_state(self):
 		with open(self._repo_path + '/' + STATE_FILE, 'w') as f:

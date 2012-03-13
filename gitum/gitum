@@ -54,7 +54,6 @@ def main():
 	gr_editpatch.add_argument('--continue', action='store_true', help='continue a editpatch process')
 	gr_editpatch.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a editpatch process')
 	gr_editpatch.add_argument('--abort', action='store_true', help='abort a editpatch process')
-	gr_editpatch.add_argument('--commit', action='store_true', help='commit changes into current development branch')
 
 	restore_p = subparsers.add_parser('restore')
 	restore_p.add_argument('commit', help='commit to restore from')
@@ -112,8 +111,6 @@ def main():
 				repo.edit_patch('--skip')
 			elif args['abort']:
 				repo.edit_patch('--abort')
-			elif args['commit']:
-				repo.edit_patch('--commit')
 			else:
 				repo.edit_patch()
 		except GitUmException:
