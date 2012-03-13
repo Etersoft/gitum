@@ -301,10 +301,11 @@ class GitUpstream(object):
 		self._repo.git.fetch('origin')
 		self._repo.git.checkout('-b', 'gitum-config', 'origin/gitum-config')
 		self._load_config()
-		self._repo.git.checkout('-b', self._rebased, 'origin/' + self._rebased)
 		self._repo.git.checkout('-b', self._upstream, 'origin/' + self._upstream)
 		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
 		self._repo.git.checkout('-b', self._current, 'origin/' + self._current)
+		self._gen_rebased()
+		self._repo.git.checkout(self._current)
 		self._update_remote('origin')
 
 	def pull(self, remote=None):
@@ -318,12 +319,12 @@ class GitUpstream(object):
 		self._repo.git.fetch(self._remote_repo)
 		self._repo.git.checkout(self._upstream, '-f')
 		self._repo.git.reset(self._remote_repo + '/' + self._upstream, '--hard')
-		self._repo.git.checkout(self._rebased, '-f')
-		self._repo.git.reset(self._remote_repo + '/' + self._rebased, '--hard')
 		self._repo.git.checkout(self._patches, '-f')
 		self._repo.git.reset(self._remote_repo + '/' + self._patches, '--hard')
 		self._repo.git.checkout(self._current, '-f')
 		self._repo.git.reset(self._remote_repo + '/' + self._current, '--hard')
+		self._gen_rebased()
+		self._repo.git.checkout(self._current)
 		self._commits = [q.hexsha for q in self._repo.iter_commits(self._previd + '..' + cur)]
 		self._commits.reverse()
 		self._all_num = len(self._commits)
@@ -370,7 +371,30 @@ class GitUpstream(object):
 			self._load_remote()
 			remote = self._remote_repo
 		self._repo.git.push(remote, self._upstream, self._current, self._patches)
-		self._repo.git.push(remote, self._rebased, '--force')
+
+	def _gen_rebased(self, commit=''):
+		if not commit:
+			commit = self._patches
+		self._repo.git.checkout(commit)
+		patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
+		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
+		os.mkdir(GITUM_TMP_DIR)
+		for j in os.listdir(patches_dir):
+			if j.endswith('.patch'):
+				shutil.copy(patches_dir + '/' + j, GITUM_TMP_DIR + '/' + j)
+		try:
+			self._repo.git.branch('-D', self._rebased)
+		except:
+			pass
+		self._repo.git.checkout('-b', self._rebased,
+			self._repo.git.show(
+				commit + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
+			)
+		)
+		patches_to_apply = [i for i in os.listdir(GITUM_TMP_DIR) if i.endswith('.patch')]
+		patches_to_apply.sort()
+		for i in patches_to_apply:
+			self._repo.git.am(GITUM_TMP_DIR + '/' + i)
 
 	def _update_remote(self, remote):
 		with open(self._repo_path + '/' + REMOTE_REPO, 'w') as f:
