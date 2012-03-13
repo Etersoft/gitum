@@ -139,7 +139,7 @@ class GitUpstream(object):
 		except:
 			self._save_state()
 			raise
-		self._save_repo_state(self._current if diff else '')
+		self._save_repo_state(self._current if diff else '', message)
 		self._repo.git.checkout(self._rebased)
 
 	def edit_patch(self, command=None):
@@ -451,7 +451,7 @@ class GitUpstream(object):
 		self._repo.git.add(self._repo_path + '/' + CONFIG_FILE)
 		self._repo.git.commit('-m', 'Save config file')
 
-	def _save_repo_state(self, commit):
+	def _save_repo_state(self, commit, message=''):
 		cur = commit if commit else self._current
 		if self._repo.git.diff(self._rebased, cur) != '':
 			self._log('%s and %s work trees are not equal - can\'t save state!' % (self._rebased, cur))
@@ -493,12 +493,16 @@ class GitUpstream(object):
 			f.write(self._repo.branches[self._upstream].commit.hexsha)
 		# commit the result
 		git.add(patches_dir)
-		if commit:
+		mess = message
+		if not mess and commit:
 			mess = self._repo.commit(commit).message
+		if not mess:
+			mess = '%s branch updated without code changes' % self._rebased
+		if commit:
 			author = self._repo.commit(commit).author
 			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 		else:
-			git.commit('-m', '%s branch updated without code changes' % self._rebased)
+			git.commit('-m', mess)
 		git.checkout(self._rebased)
 
 	def _fixup_editpatch_message(self, mess):
