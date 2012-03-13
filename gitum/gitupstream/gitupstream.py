@@ -58,7 +58,8 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._load_config()
 		if self._repo.git.diff(self._rebased, self._current) != '':
-			self._log('%s and %s work trees are not equal - can not merge!' % (self._rebased, self._current))
+			self._log('%s and %s work trees are not equal - can not merge!' % \
+					(self._rebased, self._current))
 			raise NotUptodate
 		if branch:
 			self._remote = branch
@@ -94,7 +95,9 @@ class GitUpstream(object):
 			try:
 				diff_str = self._stage2(self._commits[self._id], tmp_file, rebase_cmd)
 				self._stage3(self._commits[self._id], diff_str)
-				self._save_repo_state(self._repo.branches[self._current].commit.hexsha if diff_str else '')
+				self._save_repo_state(
+					self._repo.branches[self._current].commit.hexsha if diff_str else ''
+				)
 				self._id += 1
 				self._cur_num += 1
 			except GitCommandError as e:
@@ -154,7 +157,8 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._load_config()
 		if self._repo.git.diff(self._rebased, self._current) != '':
-			self._log('%s and %s work trees are not equal - can not edit patch!' % (self._rebased, self._current))
+			self._log('%s and %s work trees are not equal - can not edit patch!' % \
+					(self._rebased, self._current))
 			raise NotUptodate
 		if not command:
 			self._save_branches()
