@@ -35,9 +35,7 @@ def main():
 	gr.add_argument('--branch', help='local/remote branch to merge from')
 
 	update_p = subparsers.add_parser('update')
-	gr_update = update_p.add_mutually_exclusive_group()
-	gr_update.add_argument('-n', '--number', metavar='N', help='number of commits to process')
-	gr_update.add_argument('--range', metavar='since:to', help='commit range to process')
+	update_p.add_argument('--message', metavar='text', help='specify the current branch commit message')
 
 	create_p = subparsers.add_parser('create')
 	create_p.add_argument('--remote', metavar='server/branch', help='remote branch to track with')
@@ -100,11 +98,9 @@ def main():
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'update':
+		message = args['message'] if args['message'] else ''
 		try:
-			if args['number']:
-				repo.update(int(args['number']))
-			elif args['range']:
-				repo.update_range(args['range'])
+			repo.update(message)
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'editpatch':

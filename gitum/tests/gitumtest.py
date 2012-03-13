@@ -47,7 +47,7 @@ def simple_test(dirname, remove=True):
 	gitum_repo.repo().create_head('merge')
 
 	gitum_repo.create('merge', 'dev', 'master', 'rebased', 'patches')
-	gitum_repo.repo().git.checkout('dev')
+	gitum_repo.repo().git.checkout('rebased')
 	print('OK')
 
 	# make local changes
@@ -56,15 +56,21 @@ def simple_test(dirname, remove=True):
 		f.write('b')
 	gitum_repo.repo().git.add(dirname + '/testfile')
 	gitum_repo.repo().git.commit('-m', 'local: b')
+	print('OK')
+
+	print('updating current branch...')
+	gitum_repo.update('local: b')
+	print('OK')
+
+	print('making local changes...')
 	with open(dirname + '/testfile', 'a') as f:
 		f.write('c')
 	gitum_repo.repo().git.add(dirname + '/testfile')
 	gitum_repo.repo().git.commit('-m', 'local: c')
 	print('OK')
 
-	# update patches branch
-	print('updating rebased branch...')
-	gitum_repo.update(2)
+	print('updating current branch...')
+	gitum_repo.update('local: c')
 	print('OK')
 
 	# make upstream changes
@@ -86,7 +92,7 @@ def simple_test(dirname, remove=True):
 
 	# gitum merge
 	print('doing gitum merge...')
-	gitum_repo.repo().git.checkout('dev')
+	gitum_repo.repo().git.checkout('rebased')
 	try:
 		gitum_repo.merge()
 		print 'not raised after rebase!'
@@ -165,7 +171,7 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 	gitum_repo.repo().git.add(dirname1 + '/testfile')
 	gitum_repo.repo().git.commit('-m', 'a')
 	gitum_repo.create('merge', 'dev', 'master', 'rebased', 'patches')
-	gitum_repo.repo().git.checkout('dev')
+	gitum_repo.repo().git.checkout('rebased')
 	print('OK')
 
 	# clone repo
@@ -180,7 +186,7 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 		f.write('ab')
 	gitum_repo.repo().git.add(dirname1 + '/testfile')
 	gitum_repo.repo().git.commit('-m', 'ab')
-	gitum_repo.update(1)
+	gitum_repo.update('ab')
 	print('OK')
 
 	# write the file from the local side
@@ -189,7 +195,7 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 		f.write('ac')
 	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
 	gitum_local_repo.repo().git.commit('-m', 'ac')
-	gitum_local_repo.update(1)
+	gitum_local_repo.update('ac')
 	print('OK')
 
 	# pull from the remote

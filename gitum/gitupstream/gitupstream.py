@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # git-um - Git Upstream Manager.
-# Copyright (C) 2011  Pavel Shilovsky <piastry@etersoft.ru>
+# Copyright (C) 2012  Pavel Shilovsky <piastry@etersoft.ru>
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -70,6 +70,7 @@ class GitUpstream(object):
 		self._all_num = len(self._commits)
 		self._save_branches()
 		self._process_commits()
+		self._repo.git.checkout(self._rebased)
 
 	def abort(self, am=False):
 		self._init_merge()
@@ -84,6 +85,7 @@ class GitUpstream(object):
 		except:
 			pass
 		self._restore_branches()
+		self._repo.git.checkout(self._rebased)
 
 	def continue_merge(self, rebase_cmd):
 		self._init_merge()
@@ -117,34 +119,28 @@ class GitUpstream(object):
 			self._log("Don't support continue not from merge or rebase mode!")
 			raise NotSupported
 		self._process_commits()
+		self._repo.git.checkout(self._rebased)
 
-	def update(self, num):
-		self.update_range('HEAD~'+str(num)+':HEAD')
-
-	def update_range(self, commit_range):
+	def update(self, message=''):
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not update!')
 			raise RepoIsDirty
-		since, to = commit_range.split(':')
 		self._load_config()
-		if self._repo.git.diff(self._rebased, self._current) == '':
-			self._log('%s and %s work trees are equal - nothing to update!' % (self._rebased, self._current))
+		diff = self._repo.git.diff(self._current, self._rebased)
+		if diff == '':
+			self._log('%s and %s work trees are equal - nothing to update!' % \
+				  (self._rebased, self._current))
 			raise NotUptodate
 		git = self._repo.git
-		since = self._repo.commit(since).hexsha
-		to = self._repo.commit(to).hexsha
-		git.checkout(self._rebased, '-f')
-		commits = [q.hexsha for q in self._repo.iter_commits(since + '..' + to)]
-		commits.reverse()
+		git.stash()
+		interactive = False if message else True
+		self._stage3('update result', diff, interactive, message)
+		self._save_repo_state(self._current)
+		git.checkout(self._rebased)
 		try:
-			for i in commits:
-				git.cherry_pick(i)
-				self._save_repo_state(i)
-				git.checkout(self._rebased)
-		except GitCommandError as e:
-			self._log(e.stderr)
-			raise CherryPickFailed
-		git.checkout(self._current)
+			git.stash('pop')
+		except:
+			pass
 
 	def edit_patch(self, command=None):
 		if command == '--commit':
@@ -210,7 +206,7 @@ class GitUpstream(object):
 		except:
 			self._repo.create_head(CONFIG_BRANCH)
 		self._save_config(remote, current, upstream, rebased, patches)
-		git.checkout(current)
+		git.checkout(rebased)
 
 	def remove_branches(self):
 		self._load_config()
@@ -294,7 +290,7 @@ class GitUpstream(object):
 		patches_to_apply.sort()
 		for i in patches_to_apply:
 			git.am(GITUM_TMP_DIR + '/' + i)
-		git.checkout(self._current)
+		git.checkout(self._rebased)
 
 	def clone(self, remote_repo):
 		self._repo.git.remote('add', 'origin', remote_repo)
@@ -305,7 +301,6 @@ class GitUpstream(object):
 		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
 		self._repo.git.checkout('-b', self._current, 'origin/' + self._current)
 		self._gen_rebased()
-		self._repo.git.checkout(self._current)
 		self._update_remote('origin')
 
 	def pull(self, remote=None):
@@ -329,6 +324,7 @@ class GitUpstream(object):
 		self._commits.reverse()
 		self._all_num = len(self._commits)
 		self._pull_commits()
+		self._repo.git.checkout(self._rebased)
 
 	def continue_pull(self, command):
 		self._load_config()
@@ -340,10 +336,9 @@ class GitUpstream(object):
 			self._repo.git.am(command, command, output_stream=tmp_file)
 			if command == '--skip':
 				self._repo.git.checkout('-f')
-			try:
-				self.update(1)
-			except:
-				pass
+			self._repo.git.checkout(self._rebased)
+			self._repo.git.cherry_pick(self._current)
+			self._save_repo_state(self._current)
 			self._repo.git.checkout(self._upstream)
 			self._repo.git.merge(
 				self._repo.git.show(
@@ -364,6 +359,7 @@ class GitUpstream(object):
 			raise
 		self._load_remote()
 		self._pull_commits()
+		self._repo.git.checkout(self._rebased)
 
 	def push(self, remote=None):
 		self._load_config()
@@ -420,10 +416,9 @@ class GitUpstream(object):
 					with open(GITUM_TMP_DIR + '/_current.patch', 'w') as f:
 						f.write(lines)
 					self._repo.git.am('-3', GITUM_TMP_DIR + '/_current.patch', output_stream=tmp_file)
-					try:
-						self.update(1)
-					except:
-						pass
+					self._repo.git.checkout(self._rebased)
+					self._repo.git.cherry_pick(self._current)
+					self._save_repo_state(self._current)
 				self._repo.git.checkout(self._upstream)
 				self._repo.git.merge(
 					self._repo.git.show(
@@ -505,7 +500,7 @@ class GitUpstream(object):
 			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 		else:
 			git.commit('-m', '%s branch updated without code changes' % self._rebased)
-		git.checkout(self._current)
+		git.checkout(self._rebased)
 
 	def _fixup_editpatch_message(self, mess):
 		mess = mess.replace('git rebase --continue', 'gitum editpatch --continue')
@@ -657,7 +652,7 @@ class GitUpstream(object):
 		diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
 		return diff_str
 
-	def _stage3(self, commit, diff_str, interactive=False):
+	def _stage3(self, commit, diff_str, interactive=False, message=''):
 		git = self._repo.git
 		self._state = COMMIT_ST
 		git.checkout(self._current)
@@ -678,9 +673,12 @@ class GitUpstream(object):
 			if res != 0:
 				raise GitCommandError('git commit', res, '')
 		else:
-			mess = self._repo.commit(commit).message
-			author = self._repo.commit(commit).author
-			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
+			if not message:
+				mess = self._repo.commit(commit).message
+				author = self._repo.commit(commit).author
+				git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
+			else:
+				git.commit('-m', message)
 
 	def _update_current(self):
 		self._init_merge()
