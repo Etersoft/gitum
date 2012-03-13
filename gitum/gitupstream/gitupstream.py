@@ -201,8 +201,7 @@ class GitUpstream(object):
 		try:
 			self._repo.branches[CONFIG_BRANCH]
 		except:
-			self._repo.create_head(CONFIG_BRANCH)
-		self._save_config(remote, current, upstream, rebased, patches)
+			self._save_config(remote, current, upstream, rebased, patches)
 		git.checkout(rebased)
 
 	def remove_branches(self):
@@ -441,15 +440,46 @@ class GitUpstream(object):
 		self._update_remote(self._remote_repo)
 
 	def _save_config(self, remote, current, upstream, rebased, patches):
-		self._repo.git.checkout(CONFIG_BRANCH)
-		with open(self._repo_path + '/' + CONFIG_FILE, 'w') as f:
+		# create blob
+		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
+		os.mkdir(GITUM_TMP_DIR)
+		with open(GITUM_TMP_DIR + '/' + CONFIG_FILE, 'w') as f:
 			f.write('remote = %s\n' % remote)
 			f.write('current = %s\n' % current)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
 			f.write('patches = %s\n' % patches)
-		self._repo.git.add(self._repo_path + '/' + CONFIG_FILE)
-		self._repo.git.commit('-m', 'Save config file')
+		blob = self._repo.git.hash_object('-w', GITUM_TMP_DIR + '/' + CONFIG_FILE)
+		# create tree
+		in_file = tempfile.TemporaryFile()
+		out_file = tempfile.TemporaryFile()
+		in_file.write('100644 blob %s\t.gitum-config' % blob)
+		in_file.seek(0)
+		proc = Popen(['git', '--git-dir=' + self._repo_path + '/.git/',
+			      '--work-tree=' + self._repo_path, 'mktree'],
+			      stdin=in_file, stdout=out_file)
+		status = proc.wait()
+		if status != 0:
+			self._log(status)
+		out_file.seek(0)
+		tree=out_file.readline().strip()
+		in_file.close()
+		out_file.close()
+		# create commit
+		in_file = tempfile.TemporaryFile()
+		in_file.write('Save config file')
+		in_file.seek(0)
+		out_file = tempfile.TemporaryFile()
+		proc = Popen(['git', '--git-dir=' + self._repo_path + '/.git/',
+			      '--work-tree=' + self._repo_path, 'commit-tree', tree],
+			      stdin=in_file, stdout=out_file)
+		status = proc.wait()
+		if status != 0:
+			self._log(status)
+		out_file.seek(0)
+		commit=out_file.readline().strip()
+		self._repo.git.branch(CONFIG_BRANCH, commit)
+		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
 
 	def _save_repo_state(self, commit, message=''):
 		cur = commit if commit else self._current
