@@ -56,8 +56,8 @@ def main():
 	gr_editpatch.add_argument('--abort', action='store_true', help='abort a editpatch process')
 
 	restore_p = subparsers.add_parser('restore')
-	restore_p.add_argument('commit', help='commit to restore from')
-	restore_p.add_argument('--rebasedonly', action='store_true', help='restore rebased branch only')
+	restore_p.add_argument('--commit', metavar='commit/branch', help='restore rebased branch to a given commit')
+	restore_p.add_argument('--full', action='store_true', help='restore full repository branches')
 
 	clone_p = subparsers.add_parser('clone')
 	clone_p.add_argument('git-repo', help='git repo to clone from')
@@ -137,9 +137,10 @@ def main():
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'restore':
-		rebased_only = True if args['rebasedonly'] else False
+		rebased_only = True if not args['full'] else False
+		commit = args['commit'] if args['commit'] else None
 		try:
-			repo.restore(args['commit'], rebased_only)
+			repo.restore(commit, rebased_only)
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'remove':

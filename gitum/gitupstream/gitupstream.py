@@ -222,8 +222,10 @@ class GitUpstream(object):
 		self.remove_branches()
 		self.remove_config_files()
 
-	def restore(self, commit, rebased_only=False):
+	def restore(self, commit=None, rebased_only=False):
 		self._load_config()
+		if not commit:
+			commit = self._patches
 		if rebased_only:
 			return self._gen_rebased(commit)
 		commits = []
