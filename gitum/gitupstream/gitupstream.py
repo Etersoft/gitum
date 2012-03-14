@@ -143,6 +143,11 @@ class GitUpstream(object):
 		self._repo.git.checkout(self._rebased)
 
 	def create(self, remote, current, upstream, rebased, patches):
+		config = True
+		if remote == REMOTE_BRANCH and upstream == UPSTREAM_BRANCH and \
+		   rebased == REBASED_BRANCH and current == CURRENT_BRANCH and \
+		   patches == PATCHES_BRANCH:
+			config = False
 		git = self._repo.git
 		try:
 			self._repo.branches[upstream]
@@ -170,10 +175,11 @@ class GitUpstream(object):
 				f.write(self._repo.branches[upstream].commit.hexsha)
 			git.add(patches_dir)
 			git.commit('-m', 'gitum-patches: begin')
-		try:
-			self._repo.branches[CONFIG_BRANCH]
-		except:
-			self._save_config(remote, current, upstream, rebased, patches)
+		if config:
+			try:
+				self._repo.branches[CONFIG_BRANCH]
+			except:
+				self._save_config(remote, current, upstream, rebased, patches)
 		git.checkout(rebased)
 
 	def remove_branches(self):
@@ -182,7 +188,11 @@ class GitUpstream(object):
 		self._repo.delete_head(self._current, '-D')
 		self._repo.delete_head(self._rebased, '-D')
 		self._repo.delete_head(self._patches, '-D')
-		self._repo.delete_head(CONFIG_BRANCH, '-D')
+		try:
+			self._repo.delete_head(CONFIG_BRANCH, '-D')
+		except:
+			pass
+
 
 	def remove_config_files(self):
 		try:
@@ -522,13 +532,6 @@ class GitUpstream(object):
 		return mess
 
 	def _load_config(self):
-		try:
-			self._load_config_raised()
-		except IOError:
-			self._log('config file is missed!')
-			raise NoConfigFile
-
-	def _load_config_raised(self):
 		# set defaults
 		self._upstream = 'upstream'
 		self._rebased = 'rebased'
@@ -536,7 +539,12 @@ class GitUpstream(object):
 		self._patches = 'patches'
 		self._remote = 'origin/master'
 		# load config
-		lines = self._repo.git.show(CONFIG_BRANCH + ':' + CONFIG_FILE).split('\n')
+		try:
+			lines = self._repo.git.show(
+				CONFIG_BRANCH + ':' + CONFIG_FILE
+			).split('\n')
+		except:
+			return
 		num = 0
 		for i in lines:
 			num += 1
