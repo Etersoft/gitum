@@ -293,7 +293,8 @@ class GitUpstream(object):
 	def pull(self, remote=None):
 		self._load_config()
 		self._init_merge()
-		self._load_remote()
+		if self._load_remote() == -1:
+			return
 		if remote:
 			self._remote_repo = remote
 		self._save_branches()
@@ -344,14 +345,16 @@ class GitUpstream(object):
 		except:
 			self._save_state()
 			raise
-		self._load_remote()
+		if self._load_remote() == -1:
+			return
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 
 	def push(self, remote=None):
 		self._load_config()
 		if not remote:
-			self._load_remote()
+			if self._load_remote() == -1:
+				return
 			remote = self._remote_repo
 		self._repo.git.push(remote, self._upstream, self._current, self._patches)
 		try:
@@ -359,6 +362,7 @@ class GitUpstream(object):
 			self._repo.git.push(CONFIG_BRANCH)
 		except:
 			pass
+		self._update_remote(remote)
 
 	def _gen_rebased(self, commit=''):
 		if not commit:
@@ -393,9 +397,10 @@ class GitUpstream(object):
 			with open(self._repo_path + '/' + REMOTE_REPO) as f:
 				self._remote_repo, self._previd = f.readlines()
 				self._remote_repo = self._remote_repo.split('\n')[0]
-		except IOError:
+		except:
 			self._log('remote was not specified and no one to track with')
-			raise
+			return -1
+		return 0
 
 	def _pull_commits(self):
 		tmp_file = tempfile.TemporaryFile()
