@@ -278,7 +278,11 @@ class GitUpstream(object):
 	def clone(self, remote_repo):
 		self._repo.git.remote('add', 'origin', remote_repo)
 		self._repo.git.fetch('origin')
-		self._repo.git.checkout('-b', 'gitum-config', 'origin/gitum-config')
+		try:
+			self._repo.remotes['origin'].refs[CONFIG_BRANCH]
+			self._repo.git.checkout('-b', CONFIG_BRANCH, 'origin/' + CONFIG_BRANCH)
+		except:
+			pass
 		self._load_config()
 		self._repo.git.checkout('-b', self._upstream, 'origin/' + self._upstream)
 		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
