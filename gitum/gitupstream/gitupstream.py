@@ -142,34 +142,6 @@ class GitUpstream(object):
 		self._save_repo_state(self._current if diff else '', message)
 		self._repo.git.checkout(self._rebased)
 
-	def edit_patch(self, command=None):
-		if command == '--abort':
-			return self.abort()
-		self._init_merge()
-		if not command and self._repo.is_dirty():
-			self._log('Repository is dirty - can not edit patch!')
-			raise RepoIsDirty
-		self._load_config()
-		if not command and self._repo.git.diff(self._rebased, self._current) != '':
-			self._log('%s and %s work trees are not equal - can not edit patch!' % \
-					(self._rebased, self._current))
-			raise NotUptodate
-		if not command:
-			self._save_branches()
-			self._save_state()
-		elif not self._load_state(False):
-			raise NoStateFile
-		tmp_file = tempfile.TemporaryFile()
-		try:
-			self._stage2(self._upstream, tmp_file, command, True)
-		except GitCommandError as e:
-			self._log(e.stderr)
-		except:
-			self._save_state()
-			raise
-		tmp_file.seek(0)
-		self._log(self._fixup_editpatch_message(''.join(tmp_file.readlines())))
-
 	def create(self, remote, current, upstream, rebased, patches):
 		git = self._repo.git
 		try:
@@ -536,12 +508,6 @@ class GitUpstream(object):
 		else:
 			git.commit('-m', mess)
 		git.checkout(self._rebased)
-
-	def _fixup_editpatch_message(self, mess):
-		mess = mess.replace('git rebase --continue', 'gitum editpatch --continue')
-		mess = mess.replace('git rebase --abort', 'gitum editpatch --abort')
-		mess = mess.replace('git rebase --skip', 'gitum editpatch --skip')
-		return mess
 
 	def _fixup_merge_message(self, mess):
 		mess = mess.replace('git rebase --continue', 'gitum merge --continue')
