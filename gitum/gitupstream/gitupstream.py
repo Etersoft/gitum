@@ -354,6 +354,11 @@ class GitUpstream(object):
 			self._load_remote()
 			remote = self._remote_repo
 		self._repo.git.push(remote, self._upstream, self._current, self._patches)
+		try:
+			self._repo.branches[CONFIG_BRANCH]
+			self._repo.git.push(CONFIG_BRANCH)
+		except:
+			pass
 
 	def _gen_rebased(self, commit=''):
 		if not commit:
