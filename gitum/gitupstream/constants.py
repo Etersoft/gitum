@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # git-um - Git Upstream Manager.
@@ -17,6 +18,8 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from gitupstream import GitUpstream
-from errors import *
-from constants import *
+REMOTE_BRANCH = 'origin/master'
+UPSTREAM_BRANCH = 'upstream'
+REBASED_BRANCH = 'rebased'
+CURRENT_BRANCH = 'mainline'
+PATCHES_BRANCH = 'patches'

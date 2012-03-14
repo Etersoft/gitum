@@ -98,24 +98,13 @@ def main():
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'create':
-		# default branch names
-		upstream_branch = 'upstream'
-		rebased_branch = 'rebased'
-		current_branch = 'current'
-		remote_branch = 'origin/master'
-		patches_branch = 'patches'
-		if args['remote']:
-			remote_branch = args['remote']
-		if args['current']:
-			current_branch = args['current']
-		if args['upstream']:
-			upstream_branch = args['upstream']
-		if args['rebased']:
-			rebased_branch = args['rebased']
-		if args['patches']:
-			patches_branch = args['patches']
+		remote = args['remote'] if args['remote'] else REMOTE_BRANCH
+		upstream = args['upstream'] if args['upstream'] else UPSTREAM_BRANCH
+		rebased = args['rebased'] if args['rebased'] else REBASED_BRANCH
+		current = args['current'] if args['current'] else CURRENT_BRANCH
+		patches = args['patches'] if args['patches'] else PATCHES_BRANCH
 		try:
-			repo.create(remote_branch, current_branch, upstream_branch, rebased_branch, patches_branch)
+			repo.create(remote, current, upstream, rebased, patches)
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'restore':

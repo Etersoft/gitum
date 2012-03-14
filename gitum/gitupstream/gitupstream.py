@@ -25,6 +25,7 @@ import tempfile
 import sys
 import shutil
 from errors import *
+from constants import *
 
 START_ST = 0
 MERGE_ST = 1
@@ -533,11 +534,11 @@ class GitUpstream(object):
 
 	def _load_config(self):
 		# set defaults
-		self._upstream = 'upstream'
-		self._rebased = 'rebased'
-		self._current = 'current'
-		self._patches = 'patches'
-		self._remote = 'origin/master'
+		self._remote = REMOTE_BRANCH
+		self._upstream = UPSTREAM_BRANCH
+		self._rebased = REBASED_BRANCH
+		self._current = CURRENT_BRANCH
+		self._patches = PATCHES_BRANCH
 		# load config
 		try:
 			lines = self._repo.git.show(
