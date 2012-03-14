@@ -1,12 +1,12 @@
 Name: gitum
-Version: 0.4.2
+Version: 0.5.0
 Release: alt1
 
 Summary: Git Upstream Manager
 License: GPLv2
 Group: Development/Other
 
-# git clone git://git.etersoft.ru/people/piastry/packages/git-um.git
+# git clone git://git.etersoft.ru/people/piastry/packages/gitum.git
 
 Url: http://www.etersoft.ru
 Packager: Pavel Shilovsky <piastry@etersoft.ru>
@@ -44,6 +44,23 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Wed Mar 14 2012 Pavel Shilovsky <piastry@altlinux.org> 0.5.0-alt1
+- Fix push command
+- Fix clone command in the no config branch case
+- Reorder parameters in create call
+- Change default name for current branch to mainline
+- Let gitum work with default branches if a config is missed
+- Eliminate editpatch command
+- Change restore command
+- Save config file in an empty branch
+- Use specified message of update command in patches branch
+- Simplify update command
+- Allow optional restore for rebased branch only
+- Work in rebased branch rather than current
+- Make rebased branch local only
+- Fix bugs in pull
+- Minor code style fixes
+
 * Wed Feb 15 2012 Pavel Shilovsky <piastry@altlinux.org> 0.4.2-alt1
 - Fix the argument parsing bug
 
