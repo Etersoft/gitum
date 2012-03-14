@@ -120,7 +120,7 @@ def main():
 		current = args['current'] if args['current'] else CURRENT_BRANCH
 		patches = args['patches'] if args['patches'] else PATCHES_BRANCH
 		try:
-			repo.create(remote, current, upstream, rebased, patches)
+			repo.create(remote, upstream, rebased, current, patches)
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'restore':

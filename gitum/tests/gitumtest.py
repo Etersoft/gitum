@@ -46,7 +46,7 @@ def simple_test(dirname, remove=True):
 	print('creating gitum repo...')
 	gitum_repo.repo().create_head('merge')
 
-	gitum_repo.create('merge', 'dev', 'master', 'rebased', 'patches')
+	gitum_repo.create('merge', 'master' , 'rebased', 'dev', 'patches')
 	gitum_repo.repo().git.checkout('rebased')
 	print('OK')
 
@@ -170,7 +170,7 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 		f.write('a')
 	gitum_repo.repo().git.add(dirname1 + '/testfile')
 	gitum_repo.repo().git.commit('-m', 'a')
-	gitum_repo.create('merge', 'dev', 'master', 'rebased', 'patches')
+	gitum_repo.create('merge', 'master', 'rebased', 'dev', 'patches')
 	gitum_repo.repo().git.checkout('rebased')
 	print('OK')
 

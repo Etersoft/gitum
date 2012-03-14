@@ -143,7 +143,7 @@ class GitUpstream(object):
 		self._save_repo_state(self._current if diff else '', message)
 		self._repo.git.checkout(self._rebased)
 
-	def create(self, remote, current, upstream, rebased, patches):
+	def create(self, remote, upstream, rebased, current, patches):
 		config = True
 		if remote == REMOTE_BRANCH and upstream == UPSTREAM_BRANCH and \
 		   rebased == REBASED_BRANCH and current == CURRENT_BRANCH and \
