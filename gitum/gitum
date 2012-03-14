@@ -24,34 +24,47 @@ import argparse
 
 def main():
 	parser = argparse.ArgumentParser(description='Git Upstream Manager')
-	parser.add_argument('--repo', help='path to the gitum repo (does not take affect in clone command)')
+	parser.add_argument('--repo',
+		help='path to the gitum repo (does not take affect in clone command)')
 	subparsers = parser.add_subparsers(dest='command_name')
 
 	merge_p = subparsers.add_parser('merge')
 	gr = merge_p.add_mutually_exclusive_group()
 	gr.add_argument('--continue', action='store_true', help='continue a merge process')
-	gr.add_argument('--skip', action='store_true', help='skip the current patch in rebase and continue a merge process')
+	gr.add_argument('--skip', action='store_true',
+		help='skip the current patch in rebase and continue a merge process')
 	gr.add_argument('--abort', action='store_true', help='abort a merge process')
 	gr.add_argument('--branch', help='local/remote branch to merge from')
 
 	update_p = subparsers.add_parser('update')
-	update_p.add_argument('--message', metavar='text', help='specify the current branch commit message')
+	update_p.add_argument('--message', metavar='text',
+			help='specify the current branch commit message')
 
 	create_p = subparsers.add_parser('create')
-	create_p.add_argument('--remote', metavar='server/branch', help='remote branch to track with')
-	create_p.add_argument('--current', metavar='branch', help='current development branch')
-	create_p.add_argument('--upstream', metavar='branch', help='copy of tracked upstream branch')
-	create_p.add_argument('--rebased', metavar='branch', help='branch with our patches on top')
-	create_p.add_argument('--patches', metavar='branch', help='branch consists of our patches as files')
+	create_p.add_argument('--remote', metavar='server/branch',
+				help='remote branch to track with')
+	create_p.add_argument('--current', metavar='branch',
+				help='current development branch')
+	create_p.add_argument('--upstream', metavar='branch',
+				help='copy of tracked upstream branch')
+	create_p.add_argument('--rebased', metavar='branch',
+				help='branch with our patches on top')
+	create_p.add_argument('--patches', metavar='branch',
+				help='branch consists of our patches as files')
 
 	remove_p = subparsers.add_parser('remove')
-	remove_p.add_argument('--full', action='store_true', help='remove branches and config files (default)')
-	remove_p.add_argument('--branches', action='store_true', help='remove branches')
-	remove_p.add_argument('--configfiles', action='store_true', help='remove config files')
+	remove_p.add_argument('--full', action='store_true',
+				help='remove branches and config files (default)')
+	remove_p.add_argument('--branches', action='store_true',
+				help='remove branches')
+	remove_p.add_argument('--configfiles', action='store_true',
+				help='remove config files')
 
 	restore_p = subparsers.add_parser('restore')
-	restore_p.add_argument('--commit', metavar='commit/branch', help='restore rebased branch to a given commit')
-	restore_p.add_argument('--full', action='store_true', help='restore full repository branches')
+	restore_p.add_argument('--commit', metavar='commit/branch',
+			help='restore rebased branch to a given commit')
+	restore_p.add_argument('--full', action='store_true',
+				help='restore full repository branches')
 
 	clone_p = subparsers.add_parser('clone')
 	clone_p.add_argument('git-repo', help='git repo to clone from')
@@ -60,9 +73,12 @@ def main():
 	pull_p = subparsers.add_parser('pull')
 	pull_p.add_argument('--remote', help='remote repo to pull from')
 	gr_pull = pull_p.add_mutually_exclusive_group()
-	gr_pull.add_argument('--resolved', action='store_true', help='continue a pull process')
-	gr_pull.add_argument('--skip', action='store_true', help='skip the current patch and continue a pull process')
-	gr_pull.add_argument('--abort', action='store_true', help='abort a pull process')
+	gr_pull.add_argument('--resolved', action='store_true',
+				help='continue a pull process')
+	gr_pull.add_argument('--skip', action='store_true',
+				help='skip the current patch and continue a pull process')
+	gr_pull.add_argument('--abort', action='store_true',
+				help='abort a pull process')
 
 	push_p = subparsers.add_parser('push')
 	push_p.add_argument('--remote', help='remote repo to push to')
