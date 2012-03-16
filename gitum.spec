@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.5.0
+Version: 0.5.1
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -44,6 +44,9 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Fri Mar 16 2012 Pavel Shilovsky <piastry@altlinux.org> 0.5.1-alt1
+- Fix push config branch bug
+
 * Wed Mar 14 2012 Pavel Shilovsky <piastry@altlinux.org> 0.5.0-alt1
 - Fix push command
 - Fix clone command in the no config branch case
