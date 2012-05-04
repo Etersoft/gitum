@@ -176,6 +176,12 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 
 	# clone repo
 	print('cloning the repo...')
+	gitum_repo2 = GitUpstream(repo_path=dirname1+'_', with_log=True, new_repo=True)
+	gitum_repo2.clone(dirname1)
+	print('OK')
+
+	# clone repo
+	print('cloning the repo...')
 	gitum_local_repo = GitUpstream(repo_path=dirname2, with_log=True, new_repo=True)
 	gitum_local_repo.clone(dirname1)
 	print('OK')
@@ -187,6 +193,15 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 	gitum_repo.repo().git.add(dirname1 + '/testfile')
 	gitum_repo.repo().git.commit('-m', 'ab')
 	gitum_repo.update('ab')
+	print('OK')
+
+	# write the file from the remote2 side
+	print('updating the file on the remote2 side...')
+	with open(dirname1 + '_/testfile', 'w') as f:
+		f.write('af')
+	gitum_repo2.repo().git.add(dirname1 + '_/testfile')
+	gitum_repo2.repo().git.commit('-m', 'af')
+	gitum_repo2.update('af')
 	print('OK')
 
 	# write the file from the local side
@@ -210,6 +225,31 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 		f.write('abc')
 	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
 	gitum_local_repo.continue_pull('--resolved')
+	print('OK')
+
+	# pull from the remote2
+	print('pulling the remote2 side from the local one...')
+	gitum_local_repo.repo().git.remote('add', 'origin2', dirname1+'_')
+	try:
+		gitum_local_repo.pull('origin2')
+		print 'not raised after am!'
+		return
+	except GitUmException:
+		pass
+	with open(dirname2 + '/testfile', 'w') as f:
+		f.write('abf')
+	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
+	try:
+		gitum_local_repo.continue_pull('--resolved')
+		print 'not raised after am!'
+		return
+	except GitUmException:
+		pass
+	with open(dirname2 + '/testfile', 'w') as f:
+		f.write('abcf')
+	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
+	gitum_local_repo.continue_pull('--resolved')
+
 	print('OK')
 
 	# push to the remote
