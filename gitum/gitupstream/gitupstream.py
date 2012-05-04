@@ -397,18 +397,24 @@ class GitUpstream(object):
 	def _find_ca(self, remote, cur):
 		return self._repo.git.merge_base(remote + '/' + self._patches, cur)
 
+	def _save_parm(self, filename, parm):
+		with open(self._repo_path + '/' + filename, 'w') as f:
+			f.write(parm)
+
+	def _load_parm(self, filename):
+		with open(self._repo_path + '/' + filename) as f:
+			parm = f.readline().strip()
+		return parm
+
 	def _save_remote(self, remote):
-		with open(self._repo_path + '/' + REMOTE_REPO, 'w') as f:
-			f.write(remote)
+		self._save_parm(REMOTE_REPO, remote)
 
 	def _load_remote(self):
 		try:
-			with open(self._repo_path + '/' + REMOTE_REPO) as f:
-				remote = f.readline().strip()
+			return self._load_parm(REMOTE_REPO)
 		except:
-			self._log('Specify remote gitum repository, please!')
+			self._log('Specify a remote gitum repository, please!')
 			raise NoGitumRemote
-		return remote
 
 	def _pull_commits(self):
 		tmp_file = tempfile.TemporaryFile()
