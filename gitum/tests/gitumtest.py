@@ -265,12 +265,14 @@ def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_
 	# remove gitum repo
 	print('removing gitum repos...')
 	gitum_repo.remove_all()
+	gitum_repo2.remove_all()
 	gitum_local_repo.remove_all()
 	print('OK')
 
 	# remove repo
 	print('removing git repo...')
 	shutil.rmtree(dirname1)
+	shutil.rmtree(dirname1+'_')
 	shutil.rmtree(dirname2)
 	shutil.rmtree(baredir)
 	print('OK\ntest has finished!')
