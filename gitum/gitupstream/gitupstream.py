@@ -36,6 +36,7 @@ CONFIG_FILE = '.gitum-config'
 CONFIG_BRANCH = 'gitum-config'
 STATE_FILE = '.git/.gitum-state'
 REMOTE_REPO = '.git/.gitum-remote'
+MERGE_BRANCH = '.git/.gitum-mbranch'
 
 GITUM_TMP_DIR = '/tmp/gitum'
 GITUM_PATCHES_DIR = 'gitum-patches'
@@ -52,7 +53,7 @@ class GitUpstream(object):
 	def repo(self):
 		return self._repo
 
-	def merge(self, branch=None):
+	def merge(self, mbranch=None):
 		self._init_merge()
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not merge!')
@@ -62,11 +63,11 @@ class GitUpstream(object):
 			self._log('%s and %s work trees are not equal - can not merge!' % \
 					(self._rebased, self._current))
 			raise NotUptodate
-		if branch:
-			self._remote = branch
-		if len(self._remote.split('/')) == 2:
-			self._repo.git.fetch(self._remote.split('/')[0])
-		self._commits = self._get_commits()
+		if not mbranch:
+			mbranch = self._load_mbranch()
+		if len(mbranch.split('/')) == 2:
+			self._repo.git.fetch(mbranch.split('/')[0])
+		self._commits = self._get_commits(mbranch)
 		self._commits.reverse()
 		self._all_num = len(self._commits)
 		self._save_branches()
@@ -180,7 +181,8 @@ class GitUpstream(object):
 			try:
 				self._repo.branches[CONFIG_BRANCH]
 			except:
-				self._save_config(remote, current, upstream, rebased, patches)
+				self._save_config(current, upstream, rebased, patches)
+		self._save_mbranch(remote)
 		git.checkout(rebased)
 
 	def remove_branches(self):
@@ -416,6 +418,16 @@ class GitUpstream(object):
 			self._log('Specify a remote gitum repository, please!')
 			raise NoGitumRemote
 
+	def _save_mbranch(self, mbranch):
+		self._save_parm(MERGE_BRANCH, mbranch)
+
+	def _load_mbranch(self):
+		try:
+			return self._load_parm(MERGE_BRANCH)
+		except:
+			self._log('Specify a merge branch, please!')
+			raise NoMergeBranch
+
 	def _pull_commits(self):
 		tmp_file = tempfile.TemporaryFile()
 		try:
@@ -451,12 +463,11 @@ class GitUpstream(object):
 			self._save_state()
 			raise
 
-	def _save_config(self, remote, current, upstream, rebased, patches):
+	def _save_config(self, current, upstream, rebased, patches):
 		# create blob
 		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
 		os.mkdir(GITUM_TMP_DIR)
 		with open(GITUM_TMP_DIR + '/' + CONFIG_FILE, 'w') as f:
-			f.write('remote = %s\n' % remote)
 			f.write('current = %s\n' % current)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
@@ -561,7 +572,6 @@ class GitUpstream(object):
 
 	def _load_config(self):
 		# set defaults
-		self._remote = REMOTE_BRANCH
 		self._upstream = UPSTREAM_BRANCH
 		self._rebased = REBASED_BRANCH
 		self._current = CURRENT_BRANCH
@@ -586,8 +596,6 @@ class GitUpstream(object):
 				self._rebased = parts[2]
 			elif parts[0] == 'current':
 				self._current = parts[2]
-			elif parts[0] == 'remote':
-				self._remote = parts[2]
 			elif parts[0] == 'patches':
 				self._patches = parts[2]
 
@@ -610,8 +618,8 @@ class GitUpstream(object):
 		self._saved_branches[self._patches] = self._repo.branches[self._patches].commit.hexsha
 		self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 
-	def _get_commits(self):
-		return [q.hexsha for q in self._repo.iter_commits(self._upstream + '..' + self._remote)]
+	def _get_commits(self, upstream_repo):
+		return [q.hexsha for q in self._repo.iter_commits(self._upstream + '..' + upstream_repo)]
 
 	def _process_commits(self):
 		tmp_file = tempfile.TemporaryFile()

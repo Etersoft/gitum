@@ -56,3 +56,6 @@ class BrokenRepo(GitUmException):
 
 class NoGitumRemote(GitUmException):
 	pass
+
+class NoMergeBranch(GitUmException):
+	pass
