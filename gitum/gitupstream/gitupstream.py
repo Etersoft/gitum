@@ -278,7 +278,7 @@ class GitUpstream(object):
 	def clone(self, remote_repo):
 		if not remote_repo:
 			self._log('Specify remote repo, please')
-			return
+			raise NoGitumRemote
 		if remote_repo[0] != '/':
 			remote_repo = os.getcwd() + '/' + remote_repo
 		self._repo.git.remote('add', 'origin', remote_repo)
@@ -298,25 +298,23 @@ class GitUpstream(object):
 	def pull(self, remote=None, track_with=None):
 		self._load_config()
 		self._init_merge()
-		if not remote and self._load_remote() == -1:
-			return
-		elif remote:
-			self._remote_repo = remote
+		if not remote:
+			remote = self._load_remote()
 		if track_with:
-			self._save_remote(self._remote_repo)
+			self._save_remote(remote)
 		self._save_branches()
 		cur = self._repo.branches[self._patches].commit.hexsha
-		self._repo.git.fetch(self._remote_repo)
+		self._repo.git.fetch(remote)
 		self._repo.git.checkout(self._upstream, '-f')
-		self._repo.git.reset(self._remote_repo + '/' + self._upstream, '--hard')
+		self._repo.git.reset(remote + '/' + self._upstream, '--hard')
 		self._repo.git.checkout(self._patches, '-f')
-		self._repo.git.reset(self._remote_repo + '/' + self._patches, '--hard')
+		self._repo.git.reset(remote + '/' + self._patches, '--hard')
 		self._repo.git.checkout(self._current, '-f')
-		self._repo.git.reset(self._remote_repo + '/' + self._current, '--hard')
+		self._repo.git.reset(remote + '/' + self._current, '--hard')
 		self._gen_rebased()
 		self._repo.git.checkout(self._current)
-		self._previd = self._find_ca(self._remote_repo, cur)
-		self._commits = [q.hexsha for q in self._repo.iter_commits(self._previd + '..' + cur)]
+		previd = self._find_ca(remote, cur)
+		self._commits = [q.hexsha for q in self._repo.iter_commits(previd + '..' + cur)]
 		self._commits.reverse()
 		self._all_num = len(self._commits)
 		self._pull_commits()
@@ -359,9 +357,7 @@ class GitUpstream(object):
 	def push(self, remote=None, track_with=None):
 		self._load_config()
 		if not remote:
-			if self._load_remote() == -1:
-				return
-			remote = self._remote_repo
+			remote = self._load_remote()
 		if track_with:
 			self._save_remote(remote)
 		self._repo.git.push(remote, self._upstream, self._current, self._patches)
@@ -408,11 +404,11 @@ class GitUpstream(object):
 	def _load_remote(self):
 		try:
 			with open(self._repo_path + '/' + REMOTE_REPO) as f:
-				self._remote_repo = f.readline().strip()
+				remote = f.readline().strip()
 		except:
-			self._log('remote was not specified and no one to track with')
-			return -1
-		return 0
+			self._log('Specify remote gitum repository, please!')
+			raise NoGitumRemote
+		return remote
 
 	def _pull_commits(self):
 		tmp_file = tempfile.TemporaryFile()

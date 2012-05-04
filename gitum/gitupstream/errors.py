@@ -53,3 +53,6 @@ class NoConfigFile(GitUmException):
 
 class BrokenRepo(GitUmException):
 	pass
+
+class NoGitumRemote(GitUmException):
+	pass
