@@ -298,9 +298,9 @@ class GitUpstream(object):
 	def pull(self, remote=None):
 		self._load_config()
 		self._init_merge()
-		if self._load_remote() == -1:
+		if not remote and self._load_remote() == -1:
 			return
-		if remote:
+		elif remote:
 			self._remote_repo = remote
 		self._save_branches()
 		cur = self._repo.branches[self._patches].commit.hexsha
