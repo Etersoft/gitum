@@ -29,12 +29,13 @@ def main():
 	subparsers = parser.add_subparsers(dest='command_name')
 
 	merge_p = subparsers.add_parser('merge')
-	gr = merge_p.add_mutually_exclusive_group()
-	gr.add_argument('--continue', action='store_true', help='continue a merge process')
-	gr.add_argument('--skip', action='store_true',
+	gr_merge = merge_p.add_mutually_exclusive_group()
+	merge_p.add_argument('--track', action='store_true', help='save the branch to use by default')
+	gr_merge.add_argument('--continue', action='store_true', help='continue a merge process')
+	gr_merge.add_argument('--skip', action='store_true',
 		help='skip the current patch in rebase and continue a merge process')
-	gr.add_argument('--abort', action='store_true', help='abort a merge process')
-	gr.add_argument('--branch', help='local/remote branch to merge from')
+	gr_merge.add_argument('--abort', action='store_true', help='abort a merge process')
+	gr_merge.add_argument('--branch', help='local/remote branch to merge from')
 
 	update_p = subparsers.add_parser('update')
 	update_p.add_argument('--message', metavar='text',
@@ -98,6 +99,7 @@ def main():
 		repo = GitUpstream(path, with_log=True)
 
 	if args['command_name'] == 'merge':
+		track = args['track']
 		try:
 			if args['continue']:
 				repo.continue_merge('--continue')
@@ -106,9 +108,9 @@ def main():
 			elif args['abort']:
 				repo.abort()
 			elif args['branch']:
-				repo.merge(args['branch'])
+				repo.merge(args['branch'], track_with=track)
 			else:
-				repo.merge()
+				repo.merge(track_with=track)
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'update':

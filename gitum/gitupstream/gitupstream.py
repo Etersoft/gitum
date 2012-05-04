@@ -53,7 +53,7 @@ class GitUpstream(object):
 	def repo(self):
 		return self._repo
 
-	def merge(self, mbranch=None):
+	def merge(self, mbranch=None, track_with=None):
 		self._init_merge()
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not merge!')
@@ -65,6 +65,8 @@ class GitUpstream(object):
 			raise NotUptodate
 		if not mbranch:
 			mbranch = self._load_mbranch()
+		if track_with:
+			self._save_urbranch(urbranch)
 		if len(mbranch.split('/')) == 2:
 			self._repo.git.fetch(mbranch.split('/')[0])
 		self._commits = self._get_commits(mbranch)
