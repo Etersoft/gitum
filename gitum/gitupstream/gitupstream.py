@@ -276,6 +276,11 @@ class GitUpstream(object):
 		git.checkout(self._rebased)
 
 	def clone(self, remote_repo):
+		if not remote_repo:
+			self._log('Specify remote repo, please')
+			return
+		if remote_repo[0] != '/':
+			remote_repo = os.getcwd() + '/' + remote_repo
 		self._repo.git.remote('add', 'origin', remote_repo)
 		self._repo.git.fetch('origin')
 		try:
