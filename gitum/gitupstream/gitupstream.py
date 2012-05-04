@@ -313,6 +313,7 @@ class GitUpstream(object):
 		self._repo.git.reset(self._remote_repo + '/' + self._current, '--hard')
 		self._gen_rebased()
 		self._repo.git.checkout(self._current)
+		self._previd = self._find_ca(self._remote_repo, cur)
 		self._commits = [q.hexsha for q in self._repo.iter_commits(self._previd + '..' + cur)]
 		self._commits.reverse()
 		self._all_num = len(self._commits)
@@ -396,15 +397,17 @@ class GitUpstream(object):
 		for i in patches_to_apply:
 			self._repo.git.am(GITUM_TMP_DIR + '/' + i)
 
+	def _find_ca(self, remote, cur):
+		return self._repo.git.merge_base(remote + '/' + self._patches, cur)
+
 	def _update_remote(self, remote):
 		with open(self._repo_path + '/' + REMOTE_REPO, 'w') as f:
-			f.write('%s\n%s' % (remote, self._repo.remote(remote).refs[self._patches].object.hexsha))
+			f.write(remote)
 
 	def _load_remote(self):
 		try:
 			with open(self._repo_path + '/' + REMOTE_REPO) as f:
-				self._remote_repo, self._previd = f.readlines()
-				self._remote_repo = self._remote_repo.split('\n')[0]
+				self._remote_repo = f.readline().strip()
 		except:
 			self._log('remote was not specified and no one to track with')
 			return -1
