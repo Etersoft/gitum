@@ -293,15 +293,17 @@ class GitUpstream(object):
 		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
 		self._repo.git.checkout('-b', self._current, 'origin/' + self._current)
 		self._gen_rebased()
-		self._update_remote('origin')
+		self._save_remote('origin')
 
-	def pull(self, remote=None):
+	def pull(self, remote=None, track_with=None):
 		self._load_config()
 		self._init_merge()
 		if not remote and self._load_remote() == -1:
 			return
 		elif remote:
 			self._remote_repo = remote
+		if track_with:
+			self._save_remote(self._remote_repo)
 		self._save_branches()
 		cur = self._repo.branches[self._patches].commit.hexsha
 		self._repo.git.fetch(self._remote_repo)
@@ -351,17 +353,17 @@ class GitUpstream(object):
 		except:
 			self._save_state()
 			raise
-		if self._load_remote() == -1:
-			return
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 
-	def push(self, remote=None):
+	def push(self, remote=None, track_with=None):
 		self._load_config()
 		if not remote:
 			if self._load_remote() == -1:
 				return
 			remote = self._remote_repo
+		if track_with:
+			self._save_remote(remote)
 		self._repo.git.push(remote, self._upstream, self._current, self._patches)
 		exist = False
 		try:
@@ -371,7 +373,6 @@ class GitUpstream(object):
 			pass
 		if exist:
 			self._repo.git.push(remote, CONFIG_BRANCH)
-		self._update_remote(remote)
 
 	def _gen_rebased(self, commit=''):
 		if not commit:
@@ -400,7 +401,7 @@ class GitUpstream(object):
 	def _find_ca(self, remote, cur):
 		return self._repo.git.merge_base(remote + '/' + self._patches, cur)
 
-	def _update_remote(self, remote):
+	def _save_remote(self, remote):
 		with open(self._repo_path + '/' + REMOTE_REPO, 'w') as f:
 			f.write(remote)
 
@@ -447,7 +448,6 @@ class GitUpstream(object):
 		except:
 			self._save_state()
 			raise
-		self._update_remote(self._remote_repo)
 
 	def _save_config(self, remote, current, upstream, rebased, patches):
 		# create blob

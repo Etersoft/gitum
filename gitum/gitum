@@ -72,6 +72,8 @@ def main():
 
 	pull_p = subparsers.add_parser('pull')
 	pull_p.add_argument('--remote', help='remote repo to pull from')
+	pull_p.add_argument('--track', action='store_true',
+				help='save the remote to use by default')
 	gr_pull = pull_p.add_mutually_exclusive_group()
 	gr_pull.add_argument('--resolved', action='store_true',
 				help='continue a pull process')
@@ -82,6 +84,8 @@ def main():
 
 	push_p = subparsers.add_parser('push')
 	push_p.add_argument('--remote', help='remote repo to push to')
+	push_p.add_argument('--track', action='store_true',
+				help='save the remote to use by default')
 
 	args = vars(parser.parse_args(sys.argv[1:]))
 
@@ -143,6 +147,7 @@ def main():
 	elif args['command_name'] == 'clone':
 		GitUpstream(repo_path=args['repo-dir'], with_log=True, new_repo=True).clone(args['git-repo'])
 	elif args['command_name'] == 'pull':
+		track = args['track']
 		try:
 			if args['resolved']:
 				repo.continue_pull('--resolved')
@@ -152,16 +157,17 @@ def main():
 				repo.abort(am=True)
 			else:
 				if args['remote']:
-					repo.pull(args['remote'])
+					repo.pull(args['remote'], track_with=track)
 				else:
-					repo.pull()
+					repo.pull(track_with=track)
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'push':
+		track = args['track']
 		if args['remote']:
-			repo.push(args['remote'])
+			repo.push(args['remote'], track_with=track)
 		else:
-			repo.push()
+			repo.push(track_with=track)
 
 if __name__ == "__main__":
 	main()
