@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.5.1
+Version: 0.6.0
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -44,6 +44,14 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Sat May 05 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.0-alt1
+- Add --track option for merge to save branch to defaults
+- Save merge branch locally
+- Add --track option for pull/push to save remote to defaults
+- Fix pull without a saved remote
+- Add support for several gitum remotes
+- Add relative path support for clone
+
 * Fri Mar 16 2012 Pavel Shilovsky <piastry@altlinux.org> 0.5.1-alt1
 - Fix push config branch bug
 
