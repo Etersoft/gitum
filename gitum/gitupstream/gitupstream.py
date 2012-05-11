@@ -331,13 +331,12 @@ class GitUpstream(object):
 			raise NoStateFile
 		try:
 			tmp_file = tempfile.TemporaryFile()
-			self._repo.git.am(command, command, output_stream=tmp_file)
-			if command == '--skip':
-				self._repo.git.checkout('-f')
-			self._repo.git.checkout(self._rebased)
-			self._repo.git.cherry_pick(self._current)
-			self._save_repo_state(self._current)
-			self._repo.git.checkout(self._upstream)
+			self._repo.git.am(command, output_stream=tmp_file)
+			if command == '--resolved':
+				self._repo.git.checkout(self._rebased)
+				self._repo.git.cherry_pick(self._current)
+				self._save_repo_state(self._current)
+			self._repo.git.checkout(self._upstream, '-f')
 			self._repo.git.merge(
 				self._repo.git.show(
 					self._commits[self._id] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
