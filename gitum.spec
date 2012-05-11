@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.6.0
+Version: 0.6.1
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -44,6 +44,11 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Fri May 11 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.1-alt1
+- Fix bug in pull
+- Fix bug in merge
+- Change version in setup.py
+
 * Sat May 05 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.0-alt1
 - Add --track option for merge to save branch to defaults
 - Save merge branch locally
