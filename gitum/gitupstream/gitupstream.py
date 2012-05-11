@@ -66,7 +66,7 @@ class GitUpstream(object):
 		if not mbranch:
 			mbranch = self._load_mbranch()
 		if track_with:
-			self._save_urbranch(urbranch)
+			self._save_mbranch(mbranch)
 		if len(mbranch.split('/')) == 2:
 			self._repo.git.fetch(mbranch.split('/')[0])
 		self._commits = self._get_commits(mbranch)
