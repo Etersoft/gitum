@@ -131,7 +131,7 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._init_merge()
 		self._load_config()
-		diff = self._repo.git.diff(self._current, self._rebased)
+		diff = self._repo.git.diff('--full-index', self._current, self._rebased)
 		try:
 			if diff:
 				interactive = False if message else True
@@ -660,17 +660,12 @@ class GitUpstream(object):
 
 	def _patch_tree(self, diff_str):
 		status = 0
-		if self._with_log:
-			out = sys.stdout
-		else:
-			out = open('/dev/null', 'w')
-		with open(self._repo_path + '/__patch__.patch', 'w') as f:
+		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
+		os.mkdir(GITUM_TMP_DIR)
+		with open(GITUM_TMP_DIR + '/__patch__.patch', 'w') as f:
 			f.write(diff_str + '\n')
-		with open(self._repo_path + '/__patch__.patch', 'r') as f:
-			proc = Popen(['patch', '-d', self._repo_path, '-p1'], stdin=f, stdout=out)
-			status = proc.wait()
-		os.unlink(self._repo_path + '/__patch__.patch')
-		return status
+		self._repo.git.apply(GITUM_TMP_DIR + '/__patch__.patch')
+		os.unlink(GITUM_TMP_DIR + '/__patch__.patch')
 
 	def _stage1(self, commit):
 		git = self._repo.git
@@ -699,7 +694,7 @@ class GitUpstream(object):
 					raise GitCommandError('git rebase', res, '')
 			else:
 				git.rebase(commit, output_stream=output)
-		diff_str = self._repo.git.diff(self._saved_branches['prev_head'], self._rebased)
+		diff_str = self._repo.git.diff('--full-index', self._saved_branches['prev_head'], self._rebased)
 		return diff_str
 
 	def _stage3(self, commit, diff_str, interactive=False, message=''):
@@ -710,7 +705,9 @@ class GitUpstream(object):
 			self._log('nothing to commit in branch current, skipping %s commit' % commit)
 			return
 		git.clean('-d', '-f')
-		if self._patch_tree(diff_str) != 0:
+		try:
+			self._patch_tree(diff_str)
+		except:
 			self._id += 1
 			self._state = MERGE_ST
 			raise PatchError('error occurs during applying %s\n'
