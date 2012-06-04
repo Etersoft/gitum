@@ -198,7 +198,6 @@ class GitUpstream(object):
 		except:
 			pass
 
-
 	def remove_config_files(self):
 		try:
 			os.unlink(STATE_FILE)
@@ -283,7 +282,7 @@ class GitUpstream(object):
 		if not remote_repo:
 			self._log('Specify remote repo, please')
 			raise NoGitumRemote
-		if remote_repo[0] != '/':
+		if remote_repo[0] != '/' and not self._has_hostname(remote_repo):
 			remote_repo = os.getcwd() + '/' + remote_repo
 		self._repo.git.remote('add', 'origin', remote_repo)
 		self._repo.git.fetch('origin')
@@ -372,6 +371,11 @@ class GitUpstream(object):
 			pass
 		if exist:
 			self._repo.git.push(remote, CONFIG_BRANCH)
+
+	def _has_hostname(self, repo_path):
+		if repo_path.find(':') == -1:
+			return False
+		return True
 
 	def _gen_rebased(self, commit=''):
 		if not commit:
