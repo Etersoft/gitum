@@ -156,9 +156,8 @@ class GitUpstream(object):
 
 	def create(self, remote, upstream, rebased, current, patches):
 		config = True
-		if remote == REMOTE_BRANCH and upstream == UPSTREAM_BRANCH and \
-		   rebased == REBASED_BRANCH and current == CURRENT_BRANCH and \
-		   patches == PATCHES_BRANCH:
+		if upstream == UPSTREAM_BRANCH and rebased == REBASED_BRANCH \
+		   and current == CURRENT_BRANCH and patches == PATCHES_BRANCH:
 			config = False
 		git = self._repo.git
 		try:
