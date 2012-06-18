@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.6.2
+Version: 0.6.3
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -44,6 +44,10 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Mon Jun 18 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.3-alt1
+- Fix creating config branch
+- Fix missing merge branch
+
 * Mon Jun 04 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.2-alt1
 - Fix binary files problem
 - Fix clone with a remote repo
