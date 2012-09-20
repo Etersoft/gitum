@@ -38,7 +38,6 @@ STATE_FILE = '.git/.gitum-state'
 REMOTE_REPO = '.git/.gitum-remote'
 MERGE_BRANCH = '.git/.gitum-mbranch'
 
-GITUM_TMP_DIR = '/tmp/gitum'
 GITUM_PATCHES_DIR = 'gitum-patches'
 
 class GitUpstream(object):
@@ -245,14 +244,13 @@ class GitUpstream(object):
 			upstream_commit = tmp_list[0]
 		git.checkout(upstream_commit)
 		self._repo.create_head(self._current)
+		tmp_dir = tempfile.mkdtemp()
 		for i in commits:
 			git.checkout(i)
-			shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
-			os.mkdir(GITUM_TMP_DIR)
 			for j in os.listdir(patches_dir):
 				if j.endswith('.patch'):
-					shutil.copy(patches_dir + '/' + j, GITUM_TMP_DIR + '/' + j)
-			shutil.copy(patches_dir + '/_current_patch_', GITUM_TMP_DIR + '/_current_patch_')
+					shutil.copy(patches_dir + '/' + j, tmp_dir + '/' + j)
+			shutil.copy(patches_dir + '/_current_patch_', tmp_dir + '/_current_patch_')
 			with open(patches_dir + '/_upstream_commit_') as f:
 				tmp_list = f.readlines()
 				if len(tmp_list) > 1:
@@ -261,12 +259,12 @@ class GitUpstream(object):
 				upstream_commit = tmp_list[0]
 			git.checkout(self._current)
 			patch_exists = False
-			with open(GITUM_TMP_DIR + '/_current_patch_') as f:
+			with open(tmp_dir + '/_current_patch_') as f:
 				if f.readlines():
 					patch_exists = True
 			if patch_exists:
-				git.am(GITUM_TMP_DIR + '/_current_patch_')
-			os.unlink(GITUM_TMP_DIR + '/_current_patch_')
+				git.am(tmp_dir + '/_current_patch_')
+			os.unlink(tmp_dir + '/_current_patch_')
 		git.checkout(upstream_commit)
 		try:
 			self._repo.delete_head(upstream, '-D')
@@ -279,11 +277,12 @@ class GitUpstream(object):
 		self._repo.create_head(self._upstream)
 		self._repo.create_head(self._rebased)
 		git.checkout(self._rebased)
-		patches_to_apply = [i for i in os.listdir(GITUM_TMP_DIR) if i.endswith('.patch')]
+		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
 		patches_to_apply.sort()
 		for i in patches_to_apply:
-			git.am(GITUM_TMP_DIR + '/' + i)
+			git.am(tmp_dir + '/' + i)
 		git.checkout(self._rebased)
+		shutil.rmtree(tmp_dir)
 
 	def clone(self, remote_repo):
 		if not remote_repo:
@@ -389,11 +388,10 @@ class GitUpstream(object):
 			commit = self._patches
 		self._repo.git.checkout(commit)
 		patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
-		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
-		os.mkdir(GITUM_TMP_DIR)
+		tmp_dir = tempfile.mkdtemp()
 		for j in os.listdir(patches_dir):
 			if j.endswith('.patch'):
-				shutil.copy(patches_dir + '/' + j, GITUM_TMP_DIR + '/' + j)
+				shutil.copy(patches_dir + '/' + j, tmp_dir + '/' + j)
 		try:
 			self._repo.git.branch('-D', self._rebased)
 		except:
@@ -403,10 +401,11 @@ class GitUpstream(object):
 				commit + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
 			)
 		)
-		patches_to_apply = [i for i in os.listdir(GITUM_TMP_DIR) if i.endswith('.patch')]
+		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
 		patches_to_apply.sort()
 		for i in patches_to_apply:
-			self._repo.git.am(GITUM_TMP_DIR + '/' + i)
+			self._repo.git.am(tmp_dir + '/' + i)
+		shutil.rmtree(tmp_dir)
 
 	def _find_ca(self, remote, cur):
 		return self._repo.git.merge_base(remote + '/' + self._patches, cur)
@@ -448,12 +447,14 @@ class GitUpstream(object):
 						self._commits[q] + ':' + GITUM_PATCHES_DIR + '/_current_patch_'
 					)
 				if len(lines) > 0:
-					with open(GITUM_TMP_DIR + '/_current.patch', 'w') as f:
+					tmp_dir = tempfile.mkdtemp()
+					with open(tmp_dir + '/_current.patch', 'w') as f:
 						f.write(lines)
-					self._repo.git.am('-3', GITUM_TMP_DIR + '/_current.patch', output_stream=tmp_file)
+					self._repo.git.am('-3', tmp_dir + '/_current.patch', output_stream=tmp_file)
 					self._repo.git.checkout(self._rebased)
 					self._repo.git.cherry_pick(self._current)
 					self._save_repo_state(self._current)
+					shutil.rmtree(tmp_dir)
 				self._repo.git.checkout(self._upstream)
 				self._repo.git.merge(
 					self._repo.git.show(
@@ -477,14 +478,13 @@ class GitUpstream(object):
 
 	def _save_config(self, current, upstream, rebased, patches):
 		# create blob
-		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
-		os.mkdir(GITUM_TMP_DIR)
-		with open(GITUM_TMP_DIR + '/' + CONFIG_FILE, 'w') as f:
+		tmp_dir = tempfile.mkdtemp()
+		with open(tmp_dir + '/' + CONFIG_FILE, 'w') as f:
 			f.write('current = %s\n' % current)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
 			f.write('patches = %s\n' % patches)
-		blob = self._repo.git.hash_object('-w', GITUM_TMP_DIR + '/' + CONFIG_FILE)
+		blob = self._repo.git.hash_object('-w', tmp_dir + '/' + CONFIG_FILE)
 		# create tree
 		in_file = tempfile.TemporaryFile()
 		out_file = tempfile.TemporaryFile()
@@ -514,7 +514,7 @@ class GitUpstream(object):
 		out_file.seek(0)
 		commit=out_file.readline().strip()
 		self._repo.git.branch(CONFIG_BRANCH, commit)
-		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
+		shutil.rmtree(tmp_dir)
 
 	def _save_repo_state(self, commit, message=''):
 		cur = commit if commit else self._current
@@ -522,8 +522,7 @@ class GitUpstream(object):
 			self._log('%s and %s work trees are not equal - can\'t save state!' % (self._rebased, cur))
 			raise NotUptodate
 		# create tmp dir
-		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
-		os.mkdir(GITUM_TMP_DIR)
+		tmp_dir = tempfile.mkdtemp()
 		git = self._repo.git
 		# generate new patches
 		for i in os.listdir(self._repo_path):
@@ -533,7 +532,8 @@ class GitUpstream(object):
 		# move patches to tmp dir
 		for i in os.listdir(self._repo_path):
 			if i.endswith('.patch'):
-				shutil.move(self._repo_path + '/' + i, GITUM_TMP_DIR + '/' + i)
+				shutil.move(self._repo_path + '/' + i,
+					    tmp_dir + '/' + i)
 		# get current branch commit
 		if commit:
 			git.format_patch('%s^..%s' % (commit, commit))
@@ -543,16 +543,18 @@ class GitUpstream(object):
 		# move it to tmp dir
 		for i in os.listdir(self._repo_path):
 			if i.endswith('.patch'):
-				shutil.move(self._repo_path + '/' + i, GITUM_TMP_DIR + '/_current_patch_')
+				shutil.move(self._repo_path + '/' + i,
+					    tmp_dir + '/_current_patch_')
 		git.checkout(self._patches, '-f')
 		patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
 		# remove old patches from patches branch
 		git.rm(patches_dir + '/*.patch', '--ignore-unmatch')
 		# move new patches from tmp dir to patches branch
-		for i in os.listdir(GITUM_TMP_DIR):
+		for i in os.listdir(tmp_dir):
 			if i.endswith('.patch'):
-				shutil.move(GITUM_TMP_DIR + '/' + i, patches_dir + '/' + i)
-		shutil.move(GITUM_TMP_DIR + '/_current_patch_', patches_dir + '/_current_patch_')
+				shutil.move(tmp_dir + '/' + i, patches_dir + '/' + i)
+		shutil.move(tmp_dir + '/_current_patch_',
+			    patches_dir + '/_current_patch_')
 		# update upstream head
 		with open(patches_dir + '/_upstream_commit_', 'w') as f:
 			f.write(self._repo.branches[self._upstream].commit.hexsha)
@@ -569,6 +571,7 @@ class GitUpstream(object):
 		else:
 			git.commit('-m', mess)
 		git.checkout(self._rebased)
+		shutil.rmtree(tmp_dir)
 
 	def _fixup_merge_message(self, mess):
 		mess = mess.replace('git rebase --continue', 'gitum merge --continue')
@@ -667,12 +670,11 @@ class GitUpstream(object):
 
 	def _patch_tree(self, diff_str):
 		status = 0
-		shutil.rmtree(GITUM_TMP_DIR, ignore_errors=True)
-		os.mkdir(GITUM_TMP_DIR)
-		with open(GITUM_TMP_DIR + '/__patch__.patch', 'w') as f:
+		tmp_dir = tempfile.mkdtemp()
+		with open(tmp_dir + '/__patch__.patch', 'w') as f:
 			f.write(diff_str + '\n')
-		self._repo.git.apply(GITUM_TMP_DIR + '/__patch__.patch')
-		os.unlink(GITUM_TMP_DIR + '/__patch__.patch')
+		self._repo.git.apply(tmp_dir + '/__patch__.patch')
+		shutil.rmtree(tmp_dir)
 
 	def _stage1(self, commit):
 		git = self._repo.git
