@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.6.3
+Version: 0.6.4
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -18,7 +18,7 @@ BuildArch: noarch
 BuildRequires: python-module-setuptools
 
 Requires: git-core >= 1.7
-Requires: python-module-GitPython = 0.3.0
+Requires: python-module-GitPython >= 0.3.0
 
 Provides: gitum
 
@@ -44,6 +44,10 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Thu Sep 20 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.4-alt1
+- Use random temporary directory rather hardcoded one
+- Fix python-module-GitPython dependence
+
 * Mon Jun 18 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.3-alt1
 - Fix creating config branch
 - Fix missing merge branch
