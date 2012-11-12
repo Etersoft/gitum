@@ -511,7 +511,7 @@ class GitUpstream(object):
 		# create tree
 		in_file = tempfile.TemporaryFile()
 		out_file = tempfile.TemporaryFile()
-		in_file.write('100644 blob %s\t.gitum-config' % blob)
+		in_file.write(('100644 blob %s\t' + CONFIG_FILE) % blob)
 		in_file.seek(0)
 		proc = Popen(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
 			      '--work-tree=' + self._repo.working_tree_dir, 'mktree'],
