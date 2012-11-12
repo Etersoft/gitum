@@ -223,8 +223,7 @@ class GitUpstream(object):
 		start = commits[0]
 		commits = commits[1:]
 		git.checkout(start)
-		patches_dir = self._repo.working_tree_dir
-		with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
+		with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
 			tmp_list = f.readlines()
 			if len(tmp_list) > 1:
 				self._log('broken upstream commit file')
@@ -235,11 +234,11 @@ class GitUpstream(object):
 		tmp_dir = tempfile.mkdtemp()
 		for i in commits:
 			git.checkout(i)
-			for j in os.listdir(patches_dir):
+			for j in os.listdir(self._repo.working_tree_dir):
 				if j.endswith('.patch'):
-					shutil.copy(patches_dir + '/' + j, tmp_dir + '/' + j)
-			shutil.copy(patches_dir + '/' + LAST_PATCH_FILE, tmp_dir + '/' + LAST_PATCH_FILE)
-			with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
+					shutil.copy(self._repo.working_tree_dir + '/' + j, tmp_dir + '/' + j)
+			shutil.copy(self._repo.working_tree_dir + '/' + LAST_PATCH_FILE, tmp_dir + '/' + LAST_PATCH_FILE)
+			with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
 				tmp_list = f.readlines()
 				if len(tmp_list) > 1:
 					self._log('broken upstream commit file')
@@ -375,11 +374,10 @@ class GitUpstream(object):
 		if not commit:
 			commit = self._patches
 		self._repo.git.checkout(commit)
-		patches_dir = self._repo.working_tree_dir
 		tmp_dir = tempfile.mkdtemp()
-		for j in os.listdir(patches_dir):
+		for j in os.listdir(self._repo.working_tree_dir):
 			if j.endswith('.patch'):
-				shutil.copy(patches_dir + '/' + j, tmp_dir + '/' + j)
+				shutil.copy(self._repo.working_tree_dir + '/' + j, tmp_dir + '/' + j)
 		try:
 			self._repo.git.branch('-D', self._rebased)
 		except:
@@ -571,20 +569,19 @@ class GitUpstream(object):
 				shutil.move(self._repo.working_tree_dir + '/' + i,
 					    tmp_dir + '/' + LAST_PATCH_FILE)
 		git.checkout(self._patches, '-f')
-		patches_dir = self._repo.working_tree_dir
 		# remove old patches from patches branch
-		git.rm(patches_dir + '/*.patch', '--ignore-unmatch')
+		git.rm(self._repo.working_tree_dir + '/*.patch', '--ignore-unmatch')
 		# move new patches from tmp dir to patches branch
 		for i in os.listdir(tmp_dir):
 			if i.endswith('.patch'):
-				shutil.move(tmp_dir + '/' + i, patches_dir + '/' + i)
+				shutil.move(tmp_dir + '/' + i, self._repo.working_tree_dir + '/' + i)
 		shutil.move(tmp_dir + '/' + LAST_PATCH_FILE,
-			    patches_dir + '/' + LAST_PATCH_FILE)
+			    self._repo.working_tree_dir + '/' + LAST_PATCH_FILE)
 		# update upstream head
-		with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE, 'w') as f:
+		with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE, 'w') as f:
 			f.write(self._repo.branches[self._upstream].commit.hexsha)
 		# commit the result
-		git.add(patches_dir)
+		git.add(self._repo.working_tree_dir)
 		mess = message
 		if not mess and commit:
 			mess = self._repo.commit(commit).message
