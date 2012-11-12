@@ -42,7 +42,6 @@ GITUM_PATCHES_DIR = 'gitum-patches'
 
 class GitUpstream(object):
 	def __init__(self, repo_path='.', with_log=False, new_repo=False):
-		self._repo_path = repo_path
 		if new_repo:
 			self._repo = Repo.init(repo_path)
 		else:
@@ -178,7 +177,7 @@ class GitUpstream(object):
 		except:
 			self._repo.create_head(patches)
 			git.checkout(patches)
-			patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
+			patches_dir = self._repo.working_tree_dir + '/' + GITUM_PATCHES_DIR
 			shutil.rmtree(patches_dir, ignore_errors=True)
 			os.mkdir(patches_dir)
 			with open(patches_dir + '/_upstream_commit_', 'w') as f:
@@ -235,7 +234,7 @@ class GitUpstream(object):
 		start = commits[0]
 		commits = commits[1:]
 		git.checkout(start)
-		patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
+		patches_dir = self._repo.working_tree_dir + '/' + GITUM_PATCHES_DIR
 		with open(patches_dir + '/_upstream_commit_') as f:
 			tmp_list = f.readlines()
 			if len(tmp_list) > 1:
@@ -387,7 +386,7 @@ class GitUpstream(object):
 		if not commit:
 			commit = self._patches
 		self._repo.git.checkout(commit)
-		patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
+		patches_dir = self._repo.working_tree_dir + '/' + GITUM_PATCHES_DIR
 		tmp_dir = tempfile.mkdtemp()
 		for j in os.listdir(patches_dir):
 			if j.endswith('.patch'):
@@ -411,11 +410,11 @@ class GitUpstream(object):
 		return self._repo.git.merge_base(remote + '/' + self._patches, cur)
 
 	def _save_parm(self, filename, parm):
-		with open(self._repo_path + '/' + filename, 'w') as f:
+		with open(self._repo.working_dir + '/' + filename, 'w') as f:
 			f.write(parm)
 
 	def _load_parm(self, filename):
-		with open(self._repo_path + '/' + filename) as f:
+		with open(self._repo.working_dir + '/' + filename) as f:
 			parm = f.readline().strip()
 		return parm
 
@@ -490,8 +489,8 @@ class GitUpstream(object):
 		out_file = tempfile.TemporaryFile()
 		in_file.write('100644 blob %s\t.gitum-config' % blob)
 		in_file.seek(0)
-		proc = Popen(['git', '--git-dir=' + self._repo_path + '/.git/',
-			      '--work-tree=' + self._repo_path, 'mktree'],
+		proc = Popen(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
+			      '--work-tree=' + self._repo.working_tree_dir, 'mktree'],
 			      stdin=in_file, stdout=out_file)
 		status = proc.wait()
 		if status != 0:
@@ -505,8 +504,8 @@ class GitUpstream(object):
 		in_file.write('Save config file')
 		in_file.seek(0)
 		out_file = tempfile.TemporaryFile()
-		proc = Popen(['git', '--git-dir=' + self._repo_path + '/.git/',
-			      '--work-tree=' + self._repo_path, 'commit-tree', tree],
+		proc = Popen(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
+			      '--work-tree=' + self._repo.working_tree_dir, 'commit-tree', tree],
 			      stdin=in_file, stdout=out_file)
 		status = proc.wait()
 		if status != 0:
@@ -525,28 +524,28 @@ class GitUpstream(object):
 		tmp_dir = tempfile.mkdtemp()
 		git = self._repo.git
 		# generate new patches
-		for i in os.listdir(self._repo_path):
+		for i in os.listdir(self._repo.working_tree_dir):
 			if i.endswith('.patch'):
-				os.unlink(self._repo_path + '/' + i)
+				os.unlink(self._repo.working_tree_dir + '/' + i)
 		git.format_patch('%s..%s' % (self._upstream, self._rebased))
 		# move patches to tmp dir
-		for i in os.listdir(self._repo_path):
+		for i in os.listdir(self._repo.working_tree_dir):
 			if i.endswith('.patch'):
-				shutil.move(self._repo_path + '/' + i,
+				shutil.move(self._repo.working_tree_dir + '/' + i,
 					    tmp_dir + '/' + i)
 		# get current branch commit
 		if commit:
 			git.format_patch('%s^..%s' % (commit, commit))
 		else:
-			with open(self._repo_path + '/_current.patch', 'w') as f:
+			with open(self._repo.working_tree_dir + '/_current.patch', 'w') as f:
 				pass
 		# move it to tmp dir
-		for i in os.listdir(self._repo_path):
+		for i in os.listdir(self._repo.working_tree_dir):
 			if i.endswith('.patch'):
-				shutil.move(self._repo_path + '/' + i,
+				shutil.move(self._repo.working_tree_dir + '/' + i,
 					    tmp_dir + '/_current_patch_')
 		git.checkout(self._patches, '-f')
-		patches_dir = self._repo_path + '/' + GITUM_PATCHES_DIR
+		patches_dir = self._repo.working_tree_dir + '/' + GITUM_PATCHES_DIR
 		# remove old patches from patches branch
 		git.rm(patches_dir + '/*.patch', '--ignore-unmatch')
 		# move new patches from tmp dir to patches branch
@@ -687,8 +686,8 @@ class GitUpstream(object):
 		self._state = REBASE_ST
 		if rebase_cmd:
 			if interactive:
-				res = call(['git', '--git-dir=' + self._repo_path + '/.git/',
-					    '--work-tree=' + self._repo_path, 'rebase', rebase_cmd], stderr=output)
+				res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
+					    '--work-tree=' + self._repo.working_tree_dir, 'rebase', rebase_cmd], stderr=output)
 				if res != 0:
 					raise GitCommandError('git rebase %s' % rebase_cmd, res, '')
 			else:
@@ -697,8 +696,8 @@ class GitUpstream(object):
 			git.checkout(self._rebased)
 			self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 			if interactive:
-				res = call(['git', '--git-dir=' + self._repo_path + '/.git/',
-					    '--work-tree=' + self._repo_path, 'rebase', '-i', commit], stderr=output)
+				res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
+					    '--work-tree=' + self._repo.working_tree_dir, 'rebase', '-i', commit], stderr=output)
 				if res != 0:
 					raise GitCommandError('git rebase', res, '')
 			else:
@@ -721,10 +720,10 @@ class GitUpstream(object):
 			self._state = MERGE_ST
 			raise PatchError('error occurs during applying %s\n'
 					 'fix error, commit and continue the process, please!' % commit)
-		git.add('-A', self._repo_path)
+		git.add('-A', self._repo.working_tree_dir)
 		if interactive:
-			res = call(['git', '--git-dir=' + self._repo_path + '/.git/',
-				    '--work-tree=' + self._repo_path, 'commit', '-e', '-m',
+			res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
+				    '--work-tree=' + self._repo.working_tree_dir, 'commit', '-e', '-m',
 				    'place your comments for %s branch commit' % self._current])
 			if res != 0:
 				raise GitCommandError('git commit', res, '')
@@ -737,7 +736,7 @@ class GitUpstream(object):
 				git.commit('-m', message)
 
 	def _save_state(self):
-		with open(self._repo_path + '/' + STATE_FILE, 'w') as f:
+		with open(self._repo.working_dir + '/' + STATE_FILE, 'w') as f:
 			f.write(self._saved_branches[self._upstream] + '\n')
 			f.write(self._saved_branches[self._rebased] + '\n')
 			f.write(self._saved_branches[self._current] + '\n')
@@ -759,7 +758,7 @@ class GitUpstream(object):
 		return ret
 
 	def _load_state_raised(self, remove):
-		with open(self._repo_path + '/' + STATE_FILE, 'r') as f:
+		with open(self._repo.working_dir + '/' + STATE_FILE, 'r') as f:
 			strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
 		if len(strs) < 6:
 			raise IOError
@@ -774,7 +773,7 @@ class GitUpstream(object):
 		for i in xrange(8, len(strs)):
 			self._commits.append(strs[i])
 		if remove:
-			os.unlink(self._repo_path + '/' + STATE_FILE)
+			os.unlink(self._repo.working_dir + '/' + STATE_FILE)
 
 	def _log(self, mess):
 		if self._with_log and mess:
