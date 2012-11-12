@@ -171,9 +171,6 @@ class GitUpstream(object):
 		if upstream == UPSTREAM_BRANCH and rebased == REBASED_BRANCH \
 		   and current == CURRENT_BRANCH and patches == PATCHES_BRANCH:
 			config = False
-		if not self._has_branch(upstream):
-			self._log("upstream branch doesn't exist!")
-			raise BranchExists
 		if self._has_branch(current):
 			self._log("mainline branch exists!")
 			raise BranchExists
@@ -186,6 +183,9 @@ class GitUpstream(object):
 		if config and self._has_branch(CONFIG_BRANCH):
 			self._log("gitum-config branch exists!")
 			raise BranchExists
+		if not self._has_branch(upstream):
+			self._repo.git.branch('-m', upstream)
+		self._repo.git.checkout(upstream)
 		self._repo.create_head(current)
 		self._repo.create_head(rebased)
 		self._save_patches(patches, upstream)
