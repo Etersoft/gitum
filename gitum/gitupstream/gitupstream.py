@@ -171,29 +171,28 @@ class GitUpstream(object):
 		if upstream == UPSTREAM_BRANCH and rebased == REBASED_BRANCH \
 		   and current == CURRENT_BRANCH and patches == PATCHES_BRANCH:
 			config = False
-		git = self._repo.git
-		try:
-			self._repo.branches[upstream]
-		except:
-			self._repo.create_head(upstream)
-		try:
-			self._repo.branches[current]
-		except:
-			self._repo.create_head(current)
-		try:
-			self._repo.delete_head(self._repo.branches[rebased], '-D')
-		except:
-			pass
-		git.checkout(current)
+		if not self._has_branch(upstream):
+			self._log("upstream branch doesn't exist!")
+			raise BranchExists
+		if self._has_branch(current):
+			self._log("mainline branch exists!")
+			raise BranchExists
+		if self._has_branch(rebased):
+			self._log("rebased branch exists!")
+			raise BranchExists
+		if self._has_branch(patches):
+			self._log("patches branch exists!")
+			raise BranchExists
+		if config and self._has_branch(CONFIG_BRANCH):
+			self._log("gitum-config branch exists!")
+			raise BranchExists
+		self._repo.create_head(current)
 		self._repo.create_head(rebased)
 		self._save_patches(patches, upstream)
 		if config:
-			try:
-				self._repo.branches[CONFIG_BRANCH]
-			except:
-				self._save_config(current, upstream, rebased, patches)
+			self._save_config(current, upstream, rebased, patches)
 		self._save_mbranch(remote)
-		git.checkout(rebased)
+		self._repo.git.checkout(rebased)
 		self._save_current_rebased(rebased)
 
 	def remove_branches(self):
@@ -385,6 +384,9 @@ class GitUpstream(object):
 			pass
 		if exist:
 			self._repo.git.push(remote, CONFIG_BRANCH)
+
+	def _has_branch(self, head):
+		return self._repo.branches.count(Head(head, "refs/heads/" + head, True)) == 1
 
 	def _has_hostname(self, repo_path):
 		if repo_path.find(':') == -1:

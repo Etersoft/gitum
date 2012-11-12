@@ -59,3 +59,6 @@ class NoGitumRemote(GitUmException):
 
 class NoMergeBranch(GitUmException):
 	pass
+
+class BranchExists(GitUmException):
+	pass
