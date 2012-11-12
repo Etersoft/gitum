@@ -37,6 +37,7 @@ CONFIG_BRANCH = 'gitum-config'
 STATE_FILE = '.git/.gitum-state'
 REMOTE_REPO = '.git/.gitum-remote'
 MERGE_BRANCH = '.git/.gitum-mbranch'
+UPSTREAM_COMMIT_FILE = '_upstream_commit_'
 
 GITUM_PATCHES_DIR = 'gitum-patches'
 
@@ -180,7 +181,7 @@ class GitUpstream(object):
 			patches_dir = self._repo.working_tree_dir + '/' + GITUM_PATCHES_DIR
 			shutil.rmtree(patches_dir, ignore_errors=True)
 			os.mkdir(patches_dir)
-			with open(patches_dir + '/_upstream_commit_', 'w') as f:
+			with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE, 'w') as f:
 				f.write(self._repo.branches[upstream].commit.hexsha)
 			git.add(patches_dir)
 			git.commit('-m', 'gitum-patches: begin')
@@ -235,7 +236,7 @@ class GitUpstream(object):
 		commits = commits[1:]
 		git.checkout(start)
 		patches_dir = self._repo.working_tree_dir + '/' + GITUM_PATCHES_DIR
-		with open(patches_dir + '/_upstream_commit_') as f:
+		with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
 			tmp_list = f.readlines()
 			if len(tmp_list) > 1:
 				self._log('broken upstream commit file')
@@ -250,7 +251,7 @@ class GitUpstream(object):
 				if j.endswith('.patch'):
 					shutil.copy(patches_dir + '/' + j, tmp_dir + '/' + j)
 			shutil.copy(patches_dir + '/_current_patch_', tmp_dir + '/_current_patch_')
-			with open(patches_dir + '/_upstream_commit_') as f:
+			with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
 				tmp_list = f.readlines()
 				if len(tmp_list) > 1:
 					self._log('broken upstream commit file')
@@ -343,7 +344,7 @@ class GitUpstream(object):
 			self._repo.git.checkout(self._upstream, '-f')
 			self._repo.git.merge(
 				self._repo.git.show(
-					self._commits[self._id] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
+					self._commits[self._id] + ':' + GITUM_PATCHES_DIR + '/' + UPSTREAM_COMMIT_FILE
 				)
 			)
 			self._repo.git.checkout(self._current)
@@ -397,7 +398,7 @@ class GitUpstream(object):
 			pass
 		self._repo.git.checkout('-b', self._rebased,
 			self._repo.git.show(
-				commit + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
+				commit + ':' + GITUM_PATCHES_DIR + '/' + UPSTREAM_COMMIT_FILE
 			)
 		)
 		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
@@ -457,7 +458,7 @@ class GitUpstream(object):
 				self._repo.git.checkout(self._upstream)
 				self._repo.git.merge(
 					self._repo.git.show(
-						self._commits[q] + ':' + GITUM_PATCHES_DIR + '/_upstream_commit_'
+						self._commits[q] + ':' + GITUM_PATCHES_DIR + '/' + UPSTREAM_COMMIT_FILE
 					)
 				)
 				self._repo.git.checkout(self._current)
@@ -555,7 +556,7 @@ class GitUpstream(object):
 		shutil.move(tmp_dir + '/_current_patch_',
 			    patches_dir + '/_current_patch_')
 		# update upstream head
-		with open(patches_dir + '/_upstream_commit_', 'w') as f:
+		with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE, 'w') as f:
 			f.write(self._repo.branches[self._upstream].commit.hexsha)
 		# commit the result
 		git.add(patches_dir)
