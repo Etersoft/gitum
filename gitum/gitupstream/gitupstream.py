@@ -38,6 +38,7 @@ STATE_FILE = '.git/.gitum-state'
 REMOTE_REPO = '.git/.gitum-remote'
 MERGE_BRANCH = '.git/.gitum-mbranch'
 UPSTREAM_COMMIT_FILE = '_upstream_commit_'
+LAST_PATCH_FILE = '_current_patch_'
 
 GITUM_PATCHES_DIR = 'gitum-patches'
 
@@ -250,7 +251,7 @@ class GitUpstream(object):
 			for j in os.listdir(patches_dir):
 				if j.endswith('.patch'):
 					shutil.copy(patches_dir + '/' + j, tmp_dir + '/' + j)
-			shutil.copy(patches_dir + '/_current_patch_', tmp_dir + '/_current_patch_')
+			shutil.copy(patches_dir + '/' + LAST_PATCH_FILE, tmp_dir + '/' + LAST_PATCH_FILE)
 			with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
 				tmp_list = f.readlines()
 				if len(tmp_list) > 1:
@@ -259,12 +260,12 @@ class GitUpstream(object):
 				upstream_commit = tmp_list[0]
 			git.checkout(self._current)
 			patch_exists = False
-			with open(tmp_dir + '/_current_patch_') as f:
+			with open(tmp_dir + '/' + LAST_PATCH_FILE) as f:
 				if f.readlines():
 					patch_exists = True
 			if patch_exists:
-				git.am(tmp_dir + '/_current_patch_')
-			os.unlink(tmp_dir + '/_current_patch_')
+				git.am(tmp_dir + '/' + LAST_PATCH_FILE)
+			os.unlink(tmp_dir + '/' + LAST_PATCH_FILE)
 		git.checkout(upstream_commit)
 		try:
 			self._repo.delete_head(upstream, '-D')
@@ -444,7 +445,7 @@ class GitUpstream(object):
 		try:
 			for q in xrange(self._id, len(self._commits)):
 				lines = self._repo.git.show(
-						self._commits[q] + ':' + GITUM_PATCHES_DIR + '/_current_patch_'
+						self._commits[q] + ':' + GITUM_PATCHES_DIR + '/' + LAST_PATCH_FILE
 					)
 				if len(lines) > 0:
 					tmp_dir = tempfile.mkdtemp()
@@ -544,7 +545,7 @@ class GitUpstream(object):
 		for i in os.listdir(self._repo.working_tree_dir):
 			if i.endswith('.patch'):
 				shutil.move(self._repo.working_tree_dir + '/' + i,
-					    tmp_dir + '/_current_patch_')
+					    tmp_dir + '/' + LAST_PATCH_FILE)
 		git.checkout(self._patches, '-f')
 		patches_dir = self._repo.working_tree_dir + '/' + GITUM_PATCHES_DIR
 		# remove old patches from patches branch
@@ -553,8 +554,8 @@ class GitUpstream(object):
 		for i in os.listdir(tmp_dir):
 			if i.endswith('.patch'):
 				shutil.move(tmp_dir + '/' + i, patches_dir + '/' + i)
-		shutil.move(tmp_dir + '/_current_patch_',
-			    patches_dir + '/_current_patch_')
+		shutil.move(tmp_dir + '/' + LAST_PATCH_FILE,
+			    patches_dir + '/' + LAST_PATCH_FILE)
 		# update upstream head
 		with open(patches_dir + '/' + UPSTREAM_COMMIT_FILE, 'w') as f:
 			f.write(self._repo.branches[self._upstream].commit.hexsha)
