@@ -246,8 +246,8 @@ class GitUpstream(object):
 				raise BrokenRepo
 			upstream_commit = tmp_list[0]
 		git.checkout(upstream_commit)
-		self._repo.create_head(self._current)
 		tmp_dir = tempfile.mkdtemp()
+		saved_commit_id = self._repo.head.commit.hexsha
 		for i in commits:
 			git.checkout(i)
 			for j in os.listdir(self._repo.working_tree_dir):
@@ -260,7 +260,7 @@ class GitUpstream(object):
 					self._log('broken upstream commit file')
 					raise BrokenRepo
 				upstream_commit = tmp_list[0]
-			git.checkout(self._current)
+			git.checkout(saved_commit_id)
 			patch_exists = False
 			with open(tmp_dir + '/' + LAST_PATCH_FILE) as f:
 				if f.readlines():
@@ -268,16 +268,16 @@ class GitUpstream(object):
 			if patch_exists:
 				git.am(tmp_dir + '/' + LAST_PATCH_FILE)
 			os.unlink(tmp_dir + '/' + LAST_PATCH_FILE)
+			saved_commit_id = self._repo.head.commit.hexsha
+		if self._has_branch(self._current):
+			self._repo.delete_head(self._current, '-D')
+		self._repo.create_head(self._current)
 		git.checkout(upstream_commit)
-		try:
-			self._repo.delete_head(upstream, '-D')
-		except:
-			pass
-		try:
-			self._repo.delete_head(rebased, '-D')
-		except:
-			pass
+		if self._has_branch(self._upstream):
+			self._repo.delete_head(self._upstream, '-D')
 		self._repo.create_head(self._upstream)
+		if self._has_branch(self._rebased):
+			self._repo.delete_head(self._rebased, '-D')
 		self._repo.create_head(self._rebased)
 		git.checkout(self._rebased)
 		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
