@@ -44,6 +44,72 @@ class LocalWorkTest(unittest.TestCase):
 		else:
 			_log('dirname: %s' % self.dirname)
 
+	def test_restore(self):
+		_log('Resore test has started!')
+
+		_log('creating git repo...')
+		gitum_repo = GitUpstream(repo_path=self.dirname, with_log=_WITH_LOG, new_repo=True)
+		_log('OK')
+
+		_log('creating file...')
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('a')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'initial')
+		_log('OK')
+
+		# create branch to merge with
+		_log('creating gitum repo...')
+		gitum_repo.repo().create_head('merge')
+
+		gitum_repo.create('merge', 'master' , 'rebased', 'dev', 'patches')
+		gitum_repo.repo().git.checkout('rebased')
+		_log('OK')
+
+		_log('making local changes...')
+		with open(self.dirname + '/testfile', 'a') as f:
+			f.write('b')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'local: b')
+		_log('OK')
+
+		_log('restore rebased branch...')
+		gitum_repo.restore(rebased_only=True)
+		with open(self.dirname + '/testfile', 'r') as f:
+			data = f.read(2)
+		self.assertEqual(data, 'a')
+		self.assertEqual(gitum_repo.repo().git.diff('dev', 'rebased'), '')
+		_log('OK')
+
+		_log('making local changes...')
+		with open(self.dirname + '/testfile', 'a') as f:
+			f.write('c')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'local: c')
+		_log('OK')
+
+		_log('updating current branch...')
+		gitum_repo.update()
+		_log('OK')
+
+		_log('restore rebased branch...')
+		gitum_repo.restore(rebased_only=True)
+		with open(self.dirname + '/testfile', 'r') as f:
+			data = f.read(2)
+		self.assertEqual(data, 'ac')
+		self.assertEqual(gitum_repo.repo().git.diff('dev', 'rebased'), '')
+		_log('OK')
+
+		_log('restore gitum repo to the initial state...')
+		gitum_repo.restore(commit='patches^')
+		with open(self.dirname + '/testfile', 'r') as f:
+			data = f.read(2)
+		self.assertEqual(data, 'a')
+		self.assertEqual(gitum_repo.repo().git.diff('dev', 'rebased'), '')
+		_log('OK')
+
+		_log('Restore test has finished!')
+
 	def test_local_work(self):
 		_log('LocalWork test has started!')
 
