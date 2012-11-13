@@ -377,11 +377,8 @@ class GitUpstream(object):
 			self._save_remote(remote)
 		self._repo.git.push(remote, self._upstream, self._current, self._patches)
 		exist = False
-		try:
-			self._repo.branches[CONFIG_BRANCH]
+		if self._has_branch(CONFIG_BRANCH):
 			exist = True
-		except:
-			pass
 		if exist:
 			self._repo.git.push(remote, CONFIG_BRANCH)
 
@@ -401,10 +398,8 @@ class GitUpstream(object):
 		for j in os.listdir(self._repo.working_tree_dir):
 			if j.endswith('.patch'):
 				shutil.copy(self._repo.working_tree_dir + '/' + j, tmp_dir + '/' + j)
-		try:
-			self._repo.git.branch('-D', self._rebased)
-		except:
-			pass
+		if self._has_branch(self._rebased):
+			self._repo.delete_head(self._rebased, '-D')
 		self._repo.git.checkout('-b', self._rebased,
 			self._repo.git.show(
 				commit + ':' + UPSTREAM_COMMIT_FILE
