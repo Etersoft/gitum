@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.6.4
+Version: 0.7.0
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -16,6 +16,8 @@ Source: %name-%version.tar
 BuildArch: noarch
 
 BuildRequires: python-module-setuptools
+BuildRequires: python-module-GitPython >= 0.3.0
+BuildRequires: git-core >= 1.7
 
 Requires: git-core >= 1.7
 Requires: python-module-GitPython >= 0.3.0
@@ -39,11 +41,24 @@ and ready for a submission in the same time.
 %install
 %python_install
 
+%check
+%__python setup.py test
+
 %files
 %python_sitelibdir/*
 %_bindir/%name
 
 %changelog
+* Wed Nov 14 2012 Pavel Shilovsky <piastry@altlinux.org> 0.7.0-alt1
+- Let setup.py run tests
+- Improve restore command
+- Move tests to unittest
+- Rename current directory to upstream if the latter doesn't exist
+- Improve branch processing during create
+- Add capability for update to cherry-pick new commits
+- Start patches branch from an empty state
+- Make gitum commands work from non-root directory
+
 * Thu Sep 20 2012 Pavel Shilovsky <piastry@altlinux.org> 0.6.4-alt1
 - Use random temporary directory rather hardcoded one
 - Fix python-module-GitPython dependence
