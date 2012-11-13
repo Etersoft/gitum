@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# git-um - Git Upstream Manager.
-# Copyright (C) 2011  Pavel Shilovsky <piastry@etersoft.ru>
+# gitum - Git Upstream Manager.
+# Copyright (C) 2012  Pavel Shilovsky <piastry@etersoft.ru>
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -28,5 +28,6 @@ setup(
 	author_email = "piastry@etersoft.ru",
 	description = "Git Upstream Manager",
 	packages = ["gitupstream"],
-	scripts = ["gitum"]
+	scripts = ["gitum"],
+	test_suite = "tests.test_all"
 )
