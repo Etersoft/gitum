@@ -21,258 +21,230 @@
 import git
 from gitupstream import *
 import os
+import sys
 import shutil
+import unittest
+import tempfile
 
-def simple_test(dirname, remove=True):
-	print('Simple test has started!')
-	if os.path.exists(dirname):
-		print('directory exists')
-		return
+# set to True for debugging
+_WITH_LOG = False
+_NO_REMOVE = False
 
-	# create repo
-	print('creating git repo...')
-	gitum_repo = GitUpstream(repo_path=dirname, with_log=True, new_repo=True)
-	print('OK')
+def _log(string):
+	if _WITH_LOG:
+		sys.stderr.write(string + '\n')
 
-	# create file
-	print('creating file...')
-	with open(dirname + '/testfile', 'w') as f:
-		f.write('a')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'initial')
-	print('OK')
+class LocalWorkTest(unittest.TestCase):
+	def setUp(self):
+		self.dirname = tempfile.mkdtemp()
 
-	# create branch to merge with
-	print('creating gitum repo...')
-	gitum_repo.repo().create_head('merge')
+	def tearDown(self):
+		if not _NO_REMOVE:
+			shutil.rmtree(self.dirname)
+		else:
+			_log('dirname: %s' % self.dirname)
 
-	gitum_repo.create('merge', 'master' , 'rebased', 'dev', 'patches')
-	gitum_repo.repo().git.checkout('rebased')
-	print('OK')
+	def test_local_work(self):
+		_log('LocalWork test has started!')
 
-	# make local changes
-	print('making local changes...')
-	with open(dirname + '/testfile', 'a') as f:
-		f.write('b')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'local: b')
-	print('OK')
+		_log('creating git repo...')
+		gitum_repo = GitUpstream(repo_path=self.dirname, with_log=_WITH_LOG, new_repo=True)
+		_log('OK')
 
-	print('updating current branch...')
-	gitum_repo.update('local: b')
-	print('OK')
+		_log('creating file...')
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('a')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'initial')
+		_log('OK')
 
-	print('making local changes...')
-	with open(dirname + '/testfile', 'a') as f:
-		f.write('c')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'local: c')
-	print('OK')
+		# create branch to merge with
+		_log('creating gitum repo...')
+		gitum_repo.repo().create_head('merge')
 
-	print('updating current branch...')
-	gitum_repo.update('local: c')
-	print('OK')
+		gitum_repo.create('merge', 'master' , 'rebased', 'dev', 'patches')
+		gitum_repo.repo().git.checkout('rebased')
+		_log('OK')
 
-	# make upstream changes
-	print('making upstream changes...')
-	gitum_repo.repo().git.checkout('merge')
-	with open(dirname + '/testfile', 'a') as f:
-		f.write('\nd')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'remote: \nd')
-	with open(dirname + '/testfile', 'w') as f:
-		f.write('s\nd')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'remote: s')
-	with open(dirname + '/testfile', 'w') as f:
-		f.write('s\nd\n\n\n\n\n\n\nr\n')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'remote: r')
-	print('OK')
+		_log('making local changes...')
+		with open(self.dirname + '/testfile', 'a') as f:
+			f.write('b')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'local: b')
+		_log('OK')
 
-	# gitum merge
-	print('doing gitum merge...')
-	gitum_repo.repo().git.checkout('rebased')
-	try:
-		gitum_repo.merge()
-		print 'not raised after rebase!'
-		return
-	except GitUmException:
-		pass
+		_log('updating current branch...')
+		gitum_repo.update()
+		_log('OK')
 
-	# 1st fail
-	with open(dirname + '/testfile', 'w') as f:
-		f.write('ab\nd')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	try:
+		_log('making local changes...')
+		with open(self.dirname + '/testfile', 'a') as f:
+			f.write('c')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'local: c')
+		_log('OK')
+
+		_log('updating current branch...')
+		gitum_repo.update()
+		_log('OK')
+
+		_log('making upstream changes...')
+		gitum_repo.repo().git.checkout('merge')
+		with open(self.dirname + '/testfile', 'a') as f:
+			f.write('\nd')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'remote: \nd')
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('s\nd')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'remote: s')
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('s\nd\n\n\n\n\n\n\nr\n')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'remote: r')
+		_log('OK')
+
+		_log('doing gitum merge...')
+		gitum_repo.repo().git.checkout('rebased')
+		self.assertRaises(GitUmException, gitum_repo.merge, ())
+
+		# 1st fail
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('ab\nd')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		self.assertRaises(GitUmException, gitum_repo.continue_merge, ('--continue'))
+
+		# 2nd fail
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('abc\nd')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		self.assertRaises(GitUmException, gitum_repo.continue_merge, ('--continue'))
+
+		# 3rd fail
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('sb\nd')
+		gitum_repo.repo().git.add('testfile')
+		self.assertRaises(GitUmException, gitum_repo.continue_merge, ('--continue'))
+
+		# 4th fail
+		with open(self.dirname + '/testfile', 'w') as f:
+			f.write('sbc\nd')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
 		gitum_repo.continue_merge('--continue')
-		print 'not raised after rebase!'
-		return
-	except GitUmException:
-		pass
+		_log('OK')
 
-	# 2nd fail
-	with open(dirname + '/testfile', 'w') as f:
-		f.write('abc\nd')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	try:
-		gitum_repo.continue_merge('--continue')
-		print 'not raised after rebase!'
-		return
-	except GitUmException:
-		pass
+		_log('removing gitum repo...')
+		gitum_repo.remove_all()
+		_log('OK')
 
-	# 3rd fail
-	with open(dirname + '/testfile', 'w') as f:
-		f.write('sb\nd')
-	gitum_repo.repo().git.add('testfile')
-	try:
-		gitum_repo.continue_merge('--continue')
-		print 'not raised after rebase!'
-		return
-	except GitUmException:
-		pass
+		_log('LocalWork test has finished!')
 
-	# 4th fail
-	with open(dirname + '/testfile', 'w') as f:
-		f.write('sbc\nd')
-	gitum_repo.repo().git.add(dirname + '/testfile')
-	gitum_repo.continue_merge('--continue')
-	print('OK')
+class RemoteWorkTest(unittest.TestCase):
+	def setUp(self):
+		self.dirname1 = tempfile.mkdtemp()
+		self.dirname2 = tempfile.mkdtemp()
+		self.dirname3 = tempfile.mkdtemp()
+		self.baredir = tempfile.mkdtemp()
 
-	if not remove:
-		return
+	def tearDown(self):
+		if not _NO_REMOVE:
+			shutil.rmtree(self.dirname1)
+			shutil.rmtree(self.dirname2)
+			shutil.rmtree(self.dirname3)
+			shutil.rmtree(self.baredir)
+		else:
+			_log('dirname1: %s' % self.dirname1)
+			_log('dirname2: %s' % self.dirname2)
+			_log('dirname3: %s' % self.dirname3)
+			_log('baredir: %s' % self.baredir)
 
-	# remove gitum repo
-	print('removing gitum repo...')
-	gitum_repo.remove_all()
-	print('OK')
+	def test_remote_work(self):
+		_log('RemoteWork test has started!')
 
-	# remove repo
-	print('removing git repo...')
-	shutil.rmtree(dirname)
-	print('OK\ntest has finished!')
+		_log('creating git repo...')
+		gitum_repo = GitUpstream(repo_path=self.dirname1, with_log=_WITH_LOG, new_repo=True)
+		_log('OK')
 
-def remote_work_test(dirname1, dirname2, remove=True, baredir='/tmp/_gitum_bare_'):
-	print('Remote work test has started!')
-	if os.path.exists(dirname1) or os.path.exists(dirname2) or os.path.exists(baredir):
-		print('paths exist')
-		return
+		_log('creating a file...')
+		with open(self.dirname1 + '/testfile', 'w') as f:
+			f.write('a')
+		gitum_repo.repo().git.add(self.dirname1 + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'a')
+		gitum_repo.create('merge', 'master', 'rebased', 'dev', 'patches')
+		gitum_repo.repo().git.checkout('rebased')
+		_log('OK')
 
-	# create repo
-	print('creating git repo...')
-	gitum_repo = GitUpstream(repo_path=dirname1, with_log=True, new_repo=True)
-	print('OK')
+		_log('cloning the repo...')
+		gitum_repo2 = GitUpstream(repo_path=self.dirname2, with_log=_WITH_LOG, new_repo=True)
+		gitum_repo2.clone(self.dirname1)
+		_log('OK')
 
-	# write a file
-	print('creating a file...')
-	with open(dirname1 + '/testfile', 'w') as f:
-		f.write('a')
-	gitum_repo.repo().git.add(dirname1 + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'a')
-	gitum_repo.create('merge', 'master', 'rebased', 'dev', 'patches')
-	gitum_repo.repo().git.checkout('rebased')
-	print('OK')
+		_log('cloning the repo...')
+		gitum_local_repo = GitUpstream(repo_path=self.dirname3, with_log=_WITH_LOG, new_repo=True)
+		gitum_local_repo.clone(self.dirname1)
+		_log('OK')
 
-	# clone repo
-	print('cloning the repo...')
-	gitum_repo2 = GitUpstream(repo_path=dirname1+'_', with_log=True, new_repo=True)
-	gitum_repo2.clone(dirname1)
-	print('OK')
+		_log('updating the file on the remote side...')
+		with open(self.dirname1 + '/testfile', 'w') as f:
+			f.write('ab')
+		gitum_repo.repo().git.add(self.dirname1 + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'ab')
+		gitum_repo.update()
+		_log('OK')
 
-	# clone repo
-	print('cloning the repo...')
-	gitum_local_repo = GitUpstream(repo_path=dirname2, with_log=True, new_repo=True)
-	gitum_local_repo.clone(dirname1)
-	print('OK')
+		_log('updating the file on the remote2 side...')
+		with open(self.dirname2 + '/testfile', 'w') as f:
+			f.write('af')
+		gitum_repo2.repo().git.add(self.dirname2 + '/testfile')
+		gitum_repo2.repo().git.commit('-m', 'af')
+		gitum_repo2.update()
+		_log('OK')
 
-	# write the file from the remote side
-	print('updating the file on the remote side...')
-	with open(dirname1 + '/testfile', 'w') as f:
-		f.write('ab')
-	gitum_repo.repo().git.add(dirname1 + '/testfile')
-	gitum_repo.repo().git.commit('-m', 'ab')
-	gitum_repo.update('ab')
-	print('OK')
+		_log('updating the file on the local side...')
+		with open(self.dirname3 + '/testfile', 'w') as f:
+			f.write('ac')
+		gitum_local_repo.repo().git.add(self.dirname3 + '/testfile')
+		gitum_local_repo.repo().git.commit('-m', 'ac')
+		gitum_local_repo.update()
+		_log('OK')
 
-	# write the file from the remote2 side
-	print('updating the file on the remote2 side...')
-	with open(dirname1 + '_/testfile', 'w') as f:
-		f.write('af')
-	gitum_repo2.repo().git.add(dirname1 + '_/testfile')
-	gitum_repo2.repo().git.commit('-m', 'af')
-	gitum_repo2.update('af')
-	print('OK')
+		_log('pulling the remote side from the local one...')
+		self.assertRaises(GitUmException, gitum_local_repo.pull, 'origin')
 
-	# write the file from the local side
-	print('updating the file on the local side...')
-	with open(dirname2 + '/testfile', 'w') as f:
-		f.write('ac')
-	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
-	gitum_local_repo.repo().git.commit('-m', 'ac')
-	gitum_local_repo.update('ac')
-	print('OK')
-
-	# pull from the remote
-	print('pulling the remote side from the local one...')
-	try:
-		gitum_local_repo.pull('origin')
-		print 'not raised after am!'
-		return
-	except GitUmException:
-		pass
-	with open(dirname2 + '/testfile', 'w') as f:
-		f.write('abc')
-	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
-	gitum_local_repo.continue_pull('--resolved')
-	print('OK')
-
-	# pull from the remote2
-	print('pulling the remote2 side from the local one...')
-	gitum_local_repo.repo().git.remote('add', 'origin2', dirname1+'_')
-	try:
-		gitum_local_repo.pull('origin2')
-		print 'not raised after am!'
-		return
-	except GitUmException:
-		pass
-	with open(dirname2 + '/testfile', 'w') as f:
-		f.write('abf')
-	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
-	try:
+		with open(self.dirname3 + '/testfile', 'w') as f:
+			f.write('abc')
+		gitum_local_repo.repo().git.add(self.dirname3 + '/testfile')
 		gitum_local_repo.continue_pull('--resolved')
-		print 'not raised after am!'
-		return
-	except GitUmException:
-		pass
-	with open(dirname2 + '/testfile', 'w') as f:
-		f.write('abcf')
-	gitum_local_repo.repo().git.add(dirname2 + '/testfile')
-	gitum_local_repo.continue_pull('--resolved')
+		_log('OK')
 
-	print('OK')
+		_log('pulling the remote2 side from the local one...')
+		gitum_local_repo.repo().git.remote('add', 'origin2', self.dirname2)
+		self.assertRaises(GitUmException, gitum_local_repo.pull, 'origin2')
 
-	# push to the remote
-	print('pushing to the remote side...')
-	bare = git.Repo.init(baredir, bare=True)
-	gitum_local_repo.repo().git.remote('add', 'new', baredir)
-	gitum_local_repo.push('new')
-	print('OK')
+		with open(self.dirname3 + '/testfile', 'w') as f:
+			f.write('abf')
+		gitum_local_repo.repo().git.add(self.dirname3 + '/testfile')
+		self.assertRaises(GitUmException, gitum_local_repo.continue_pull, '--resolved')
 
-	if not remove:
-		return
+		with open(self.dirname3 + '/testfile', 'w') as f:
+			f.write('abcf')
+		gitum_local_repo.repo().git.add(self.dirname3 + '/testfile')
+		gitum_local_repo.continue_pull('--resolved')
+		_log('OK')
 
-	# remove gitum repo
-	print('removing gitum repos...')
-	gitum_repo.remove_all()
-	gitum_repo2.remove_all()
-	gitum_local_repo.remove_all()
-	print('OK')
+		_log('pushing to the remote side...')
+		bare = git.Repo.init(self.baredir, bare=True)
+		gitum_local_repo.repo().git.remote('add', 'new', self.baredir)
+		gitum_local_repo.push('new')
+		_log('OK')
 
-	# remove repo
-	print('removing git repo...')
-	shutil.rmtree(dirname1)
-	shutil.rmtree(dirname1+'_')
-	shutil.rmtree(dirname2)
-	shutil.rmtree(baredir)
-	print('OK\ntest has finished!')
+		_log('removing gitum repos...')
+		gitum_repo.remove_all()
+		gitum_repo2.remove_all()
+		gitum_local_repo.remove_all()
+		_log('OK')
+
+		_log('RemoteWork test has finished!')
+
+if __name__ == "__main__":
+	unittest.main()

@@ -20,15 +20,9 @@
 
 import gitumtest
 import sys
-
-TEST_DIR = '/tmp/_gitum_test_dir_'
+import unittest
 
 if __name__ == "__main__":
-	if len(sys.argv) == 2 and sys.argv[1] == '--noremove':
-		remove = False
-	else:
-		remove = True
-
-	gitumtest.simple_test(TEST_DIR, remove)
-	print('\n\n')
-	gitumtest.remote_work_test(TEST_DIR+'1', TEST_DIR+'2', remove)
+	local_tests = unittest.TestLoader().loadTestsFromTestCase(gitumtest.LocalWorkTest)
+	remote_tests = unittest.TestLoader().loadTestsFromTestCase(gitumtest.RemoteWorkTest)
+	unittest.TextTestRunner(verbosity=1).run(unittest.TestSuite([local_tests, remote_tests]))
