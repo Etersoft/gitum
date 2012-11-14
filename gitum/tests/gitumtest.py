@@ -100,8 +100,34 @@ class LocalWorkTest(unittest.TestCase):
 		self.assertEqual(gitum_repo.repo().git.diff('dev', 'rebased'), '')
 		_log('OK')
 
-		_log('restore gitum repo to the initial state...')
+		_log('making local changes...')
+		with open(self.dirname + '/testfile', 'a') as f:
+			f.write('d')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'local: d')
+		_log('OK')
+
+		_log('making local changes...')
+		with open(self.dirname + '/testfile', 'a') as f:
+			f.write('e')
+		gitum_repo.repo().git.add(self.dirname + '/testfile')
+		gitum_repo.repo().git.commit('-m', 'local: e')
+		_log('OK')
+
+		_log('updating current branch...')
+		gitum_repo.update()
+		_log('OK')
+
+		_log('restore gitum repo to the state 2 changes before...')
 		gitum_repo.restore(commit='patches^')
+		with open(self.dirname + '/testfile', 'r') as f:
+			data = f.read(3)
+		self.assertEqual(data, 'acd')
+		self.assertEqual(gitum_repo.repo().git.diff('dev', 'rebased'), '')
+		_log('OK')
+
+		_log('restore gitum repo to the initial state...')
+		gitum_repo.restore(commit='patches^^^')
 		with open(self.dirname + '/testfile', 'r') as f:
 			data = f.read(2)
 		self.assertEqual(data, 'a')
