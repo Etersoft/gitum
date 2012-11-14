@@ -49,6 +49,8 @@ class LocalWorkTest(unittest.TestCase):
 
 		_log('creating git repo...')
 		gitum_repo = GitUpstream(repo_path=self.dirname, with_log=_WITH_LOG, new_repo=True)
+		gitum_repo.repo().git.config('user.name', '"tester"')
+		gitum_repo.repo().git.config('user.email', '"tester@localhost"')
 		_log('OK')
 
 		_log('creating file...')
@@ -141,6 +143,8 @@ class LocalWorkTest(unittest.TestCase):
 
 		_log('creating git repo...')
 		gitum_repo = GitUpstream(repo_path=self.dirname, with_log=_WITH_LOG, new_repo=True)
+		gitum_repo.repo().git.config('user.name', '"tester"')
+		gitum_repo.repo().git.config('user.email', '"tester@localhost"')
 		_log('OK')
 
 		_log('creating file...')
@@ -255,6 +259,8 @@ class RemoteWorkTest(unittest.TestCase):
 
 		_log('creating git repo...')
 		gitum_repo = GitUpstream(repo_path=self.dirname1, with_log=_WITH_LOG, new_repo=True)
+		gitum_repo.repo().git.config('user.name', '"tester1"')
+		gitum_repo.repo().git.config('user.email', '"tester1@localhost"')
 		_log('OK')
 
 		_log('creating a file...')
@@ -268,11 +274,15 @@ class RemoteWorkTest(unittest.TestCase):
 
 		_log('cloning the repo...')
 		gitum_repo2 = GitUpstream(repo_path=self.dirname2, with_log=_WITH_LOG, new_repo=True)
+		gitum_repo2.repo().git.config('user.name', '"tester2"')
+		gitum_repo2.repo().git.config('user.email', '"tester2@localhost"')
 		gitum_repo2.clone(self.dirname1)
 		_log('OK')
 
 		_log('cloning the repo...')
 		gitum_local_repo = GitUpstream(repo_path=self.dirname3, with_log=_WITH_LOG, new_repo=True)
+		gitum_local_repo.repo().git.config('user.name', '"tester3"')
+		gitum_local_repo.repo().git.config('user.email', '"tester3@localhost"')
 		gitum_local_repo.clone(self.dirname1)
 		_log('OK')
 
