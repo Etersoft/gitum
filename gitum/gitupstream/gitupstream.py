@@ -40,6 +40,7 @@ MERGE_BRANCH = '.git/.gitum-mbranch'
 CURRENT_REBASED = '.git/.curent_rebased'
 UPSTREAM_COMMIT_FILE = '_upstream_commit_'
 LAST_PATCH_FILE = '_current_patch_'
+TMP_LAST_PATCH_FILE = '_current.patch'
 
 class GitUpstream(object):
 	def __init__(self, repo_path='.', with_log=False, new_repo=False):
@@ -495,10 +496,11 @@ class GitUpstream(object):
 					)
 				if len(lines) > 0:
 					tmp_dir = tempfile.mkdtemp()
-					with open(tmp_dir + '/_current.patch', 'w') as f:
+					with open(tmp_dir + '/' + TMP_LAST_PATCH_FILE, 'w') as f:
 						f.write(lines)
 					self._log('Applying commit "%s"' % self._get_commit_name_from_patch(lines))
-					self._repo.git.am('-3', tmp_dir + '/_current.patch', output_stream=tmp_file)
+					self._repo.git.am('-3', tmp_dir + '/' + TMP_LAST_PATCH_FILE,
+							  output_stream=tmp_file)
 					self._repo.git.checkout(self._rebased)
 					self._repo.git.cherry_pick(self._current)
 					self._save_repo_state(self._current)
@@ -625,7 +627,7 @@ class GitUpstream(object):
 		if commit:
 			git.format_patch('%s^..%s' % (commit, commit))
 		else:
-			with open(self._repo.working_tree_dir + '/_current.patch', 'w') as f:
+			with open(self._repo.working_tree_dir + '/' + TMP_LAST_PATCH_FILE, 'w') as f:
 				pass
 		# move it to tmp dir
 		for i in os.listdir(self._repo.working_tree_dir):
