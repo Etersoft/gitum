@@ -138,6 +138,23 @@ class GitUpstream(object):
 		self._save_current_rebased(self._rebased)
 		self._log('gitum merge finished')
 
+	def status(self):
+		self._load_config()
+		diff = self._repo.git.diff('--full-index', self._current, self._rebased)
+		ca = self._find_ca(self._load_current_rebased(), self._rebased)
+		if self._load_current_rebased() == self._repo.branches[self._rebased].commit.hexsha:
+			self._log('Nothing to update')
+			return
+		if ca == self._load_current_rebased():
+			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
+			new_commits.reverse()
+			self._log('Repository has new commits, run gitum update to save them:')
+			for c_id in new_commits:
+				self._log('\t%s' % c_id.summary)
+		else:
+			self._log('Repository is modified by changing the existing commits')
+			self._log('The next gitum update will save the result diff:\n%s' % diff)
+
 	def update(self, message=''):
 		if self._repo.is_dirty():
 			self._log('Repository is dirty - can not update!')

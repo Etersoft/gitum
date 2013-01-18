@@ -88,6 +88,8 @@ def main():
 	push_p.add_argument('--track', action='store_true',
 				help='save the remote to use by default')
 
+	status_p = subparsers.add_parser('status')
+
 	args = vars(parser.parse_args(sys.argv[1:]))
 
 	if args['repo']:
@@ -170,6 +172,8 @@ def main():
 			repo.push(args['remote'], track_with=track)
 		else:
 			repo.push(track_with=track)
+	elif args['command_name'] == 'status':
+		repo.status()
 
 if __name__ == "__main__":
 	main()
