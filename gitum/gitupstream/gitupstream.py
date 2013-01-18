@@ -498,7 +498,7 @@ class GitUpstream(object):
 					tmp_dir = tempfile.mkdtemp()
 					with open(tmp_dir + '/' + TMP_LAST_PATCH_FILE, 'w') as f:
 						f.write(lines)
-					self._log('Applying commit "%s"' % self._get_commit_name_from_patch(lines))
+					self._log('Applying commit: %s' % self._get_commit_name_from_patch(lines))
 					self._repo.git.am('-3', tmp_dir + '/' + TMP_LAST_PATCH_FILE,
 							  output_stream=tmp_file)
 					self._repo.git.checkout(self._rebased)
@@ -747,7 +747,7 @@ class GitUpstream(object):
 			raise
 
 	def _process_commit(self, commit, output):
-		self._log("[%d/%d] Applying commit %s" % \
+		self._log("[%d/%d] Applying commit: %s" % \
 			  (self._cur_num + 1, self._all_num,
 			   self._repo.commit(commit).summary))
 		self._stage1(commit)
