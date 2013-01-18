@@ -318,7 +318,7 @@ class GitUpstream(object):
 		self._save_remote('origin')
 		self._gen_rebased()
 		self._save_current_rebased(self._rebased)
-		self._log('gitum cloned repository was created')
+		self._log('gitum repository from %s was cloned into %s' % (remote_repo, self._repo.working_dir))
 
 	def pull(self, remote=None, track_with=None):
 		self._load_config()
