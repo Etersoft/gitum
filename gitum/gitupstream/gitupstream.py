@@ -83,6 +83,7 @@ class GitUpstream(object):
 		self._process_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._log('gitum merge finished')
 
 	def abort(self, am=False):
 		self._init_merge()
@@ -99,6 +100,7 @@ class GitUpstream(object):
 		self._restore_branches()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._log('gitum merge aborted')
 
 	def continue_merge(self, rebase_cmd):
 		self._init_merge()
@@ -134,6 +136,7 @@ class GitUpstream(object):
 		self._process_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._log('gitum merge finished')
 
 	def update(self, message=''):
 		if self._repo.is_dirty():
@@ -144,15 +147,17 @@ class GitUpstream(object):
 		diff = self._repo.git.diff('--full-index', self._current, self._rebased)
 		ca = self._find_ca(self._load_current_rebased(), self._rebased)
 		if ca == self._load_current_rebased():
-			new_commits = [i.hexsha for i in self._repo.iter_commits(ca + '..' + self._rebased)]
+			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
 			new_commits.reverse()
 			for c_id in new_commits:
+				self._log('Applying commit "%s"' % c_id.summary)
 				self._repo.git.checkout(self._current)
-				self._repo.git.cherry_pick(c_id)
-				self._save_repo_state(self._current if diff else '', message, c_id)
+				self._repo.git.cherry_pick(c_id.hexsha)
+				self._save_repo_state(self._current if diff else '', message, c_id.hexsha)
 		else:
 			try:
 				if diff:
+					self._log('Applying result diff between %s and %s' % (self._current, self._rebased))
 					interactive = False if message else True
 					self._stage3('update current', diff, interactive, message)
 			except PatchError as e:
@@ -165,6 +170,7 @@ class GitUpstream(object):
 			self._save_repo_state(self._current if diff else '', message)
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._log('gitum update finished')
 
 	def create(self, remote, upstream, rebased, current, patches):
 		config = True
@@ -194,6 +200,7 @@ class GitUpstream(object):
 		self._save_mbranch(remote)
 		self._repo.git.checkout(rebased)
 		self._save_current_rebased(rebased)
+		self._log('gitum repository was created')
 
 	def remove_branches(self):
 		self._load_config()
@@ -205,10 +212,12 @@ class GitUpstream(object):
 			self._repo.delete_head(CONFIG_BRANCH, '-D')
 		except:
 			pass
+		self._log('gitum branches were removed')
 
 	def remove_config_files(self):
 		try:
 			os.unlink(STATE_FILE)
+			self._log('gitum config file was removed')
 		except:
 			pass
 
@@ -287,6 +296,7 @@ class GitUpstream(object):
 		shutil.rmtree(tmp_dir)
 		git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._log('gitum repository restored to %s commit from %s branch' % (commit, self._patches))
 
 	def clone(self, remote_repo):
 		if not remote_repo:
@@ -308,6 +318,7 @@ class GitUpstream(object):
 		self._save_remote('origin')
 		self._gen_rebased()
 		self._save_current_rebased(self._rebased)
+		self._log('gitum cloned repository was created')
 
 	def pull(self, remote=None, track_with=None):
 		self._load_config()
@@ -326,6 +337,7 @@ class GitUpstream(object):
 		self._repo.git.checkout(self._current, '-f')
 		self._repo.git.reset(remote + '/' + self._current, '--hard')
 		self._gen_rebased()
+		self._log('Repository was reset to the remote state, applying our commits on top...')
 		self._repo.git.checkout(self._current)
 		previd = self._find_ca(remote + '/' + self._patches, cur)
 		self._commits = [q.hexsha for q in self._repo.iter_commits(previd + '..' + cur)]
@@ -334,6 +346,7 @@ class GitUpstream(object):
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._log('gitum pull finished')
 
 	def continue_pull(self, command):
 		self._load_config()
@@ -368,6 +381,7 @@ class GitUpstream(object):
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._log('gitum pull finished')
 
 	def push(self, remote=None, track_with=None):
 		self._load_config()
@@ -381,6 +395,7 @@ class GitUpstream(object):
 			exist = True
 		if exist:
 			self._repo.git.push(remote, CONFIG_BRANCH)
+		self._log('gitum push finished')
 
 	def _has_branch(self, head):
 		return self._repo.branches.count(Head(head, "refs/heads/" + head, True)) == 1
@@ -449,6 +464,13 @@ class GitUpstream(object):
 	def _load_current_rebased(self):
 		return self._load_parm(CURRENT_REBASED)
 
+	def _get_commit_name_from_patch(self, lines):
+		for i in lines.split('\n'):
+			parts = i.split('Subject: [PATCH] ')
+			if len(parts) == 2:
+				return parts[1]
+		return ''
+
 	def _pull_commits(self):
 		tmp_file = tempfile.TemporaryFile()
 		try:
@@ -460,6 +482,7 @@ class GitUpstream(object):
 					tmp_dir = tempfile.mkdtemp()
 					with open(tmp_dir + '/_current.patch', 'w') as f:
 						f.write(lines)
+					self._log('Applying commit "%s"' % self._get_commit_name_from_patch(lines))
 					self._repo.git.am('-3', tmp_dir + '/_current.patch', output_stream=tmp_file)
 					self._repo.git.checkout(self._rebased)
 					self._repo.git.cherry_pick(self._current)
@@ -707,7 +730,7 @@ class GitUpstream(object):
 			raise
 
 	def _process_commit(self, commit, output):
-		self._log("[%d/%d] commit %s" % \
+		self._log("[%d/%d] Applying commit %s" % \
 			  (self._cur_num + 1, self._all_num,
 			   self._repo.commit(commit).summary))
 		self._stage1(commit)
