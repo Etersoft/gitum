@@ -66,13 +66,13 @@ class GitUpstream(object):
 			mbranch = self._load_mbranch()
 		if track_with:
 			self._save_mbranch(mbranch)
+		if len(mbranch.split('/')) >= 2:
+			self._repo.git.fetch(mbranch.split('/')[0])
 		try:
 			self._repo.commit(mbranch)
 		except:
-			self._log_error('Can not merge with %s - not exists.' % mbranch)
+			self._log_error('Can not merge from %s - not exists.' % mbranch)
 			raise NoMergeBranch
-		if len(mbranch.split('/')) >= 2:
-			self._repo.git.fetch(mbranch.split('/')[0])
 		self._commits = self._get_commits(mbranch)
 		if len(self._commits) == 0:
 			self._log('Repository is up to date - nothing to merge.')
