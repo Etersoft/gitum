@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.7.0
+Version: 0.8.0
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -49,6 +49,10 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Fri Jan 18 2013 Pavel Shilovsky <piastry@altlinux.org> 0.8.0-alt1
+- Improve logging
+- Add status command
+
 * Wed Nov 14 2012 Pavel Shilovsky <piastry@altlinux.org> 0.7.0-alt1
 - Let setup.py run tests
 - Improve restore command
