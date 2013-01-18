@@ -55,12 +55,11 @@ class GitUpstream(object):
 	def merge(self, mbranch=None, track_with=None):
 		self._init_merge()
 		if self._repo.is_dirty():
-			self._log('Repository is dirty - can not merge!')
+			self._log_error('You have local changes. Run git commit and gitum update to save them, please.')
 			raise RepoIsDirty
 		self._load_config()
 		if self._repo.git.diff(self._rebased, self._current) != '':
-			self._log('%s and %s work trees are not equal - can not merge!' % \
-					(self._rebased, self._current))
+			self._log_error('You have local commited changes. Run gitum update to save them, please.')
 			raise NotUptodate
 		if not mbranch:
 			mbranch = self._load_mbranch()
@@ -69,13 +68,13 @@ class GitUpstream(object):
 		try:
 			self._repo.commit(mbranch)
 		except:
-			self._log('Can not merge with %s - not exists!' % mbranch)
+			self._log_error('Can not merge with %s - not exists.' % mbranch)
 			raise NoMergeBranch
 		if len(mbranch.split('/')) >= 2:
 			self._repo.git.fetch(mbranch.split('/')[0])
 		self._commits = self._get_commits(mbranch)
 		if len(self._commits) == 0:
-			self._log('Repository is up to date!')
+			self._log('Repository is up to date - nothing to merge.')
 			return
 		self._commits.reverse()
 		self._all_num = len(self._commits)
@@ -83,7 +82,7 @@ class GitUpstream(object):
 		self._process_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
-		self._log('gitum merge finished')
+		self._log('Successfully updated work branches.')
 
 	def abort(self, am=False):
 		self._init_merge()
@@ -100,7 +99,7 @@ class GitUpstream(object):
 		self._restore_branches()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
-		self._log('gitum merge aborted')
+		self._log('Restored work branches.')
 
 	def continue_merge(self, rebase_cmd):
 		self._init_merge()
@@ -125,39 +124,39 @@ class GitUpstream(object):
 				raise RebaseFailed
 			except PatchError as e:
 				self._save_state()
-				self._log(e.message)
+				self._log_error(e.message)
 				raise PatchFailed
 			except:
 				self._save_state()
 				raise
 		elif self._state != MERGE_ST:
-			self._log("Don't support continue not from merge or rebase mode!")
+			self._log_error("Don't support continue not from merge or rebase mode.")
 			raise NotSupported
 		self._process_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
-		self._log('gitum merge finished')
+		self._log('Successfully updated work branches.')
 
 	def status(self):
 		self._load_config()
 		diff = self._repo.git.diff('--full-index', self._current, self._rebased)
 		ca = self._find_ca(self._load_current_rebased(), self._rebased)
 		if self._load_current_rebased() == self._repo.branches[self._rebased].commit.hexsha:
-			self._log('Nothing to update')
+			self._log('Nothing to update.')
 			return
 		if ca == self._load_current_rebased():
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
 			new_commits.reverse()
-			self._log('Repository has new commits, run gitum update to save them:')
+			self._log('Have new commits, run gitum update to save them:')
 			for c_id in new_commits:
 				self._log('\t%s' % c_id.summary)
 		else:
-			self._log('Repository is modified by changing the existing commits')
-			self._log('The next gitum update will save the result diff:\n%s' % diff)
+			self._log('Existing patches were modified.')
+			self._log('Run gitum update to save the result diff:\n%s' % diff)
 
 	def update(self, message=''):
 		if self._repo.is_dirty():
-			self._log('Repository is dirty - can not update!')
+			self._log_error('You have local changes. Commit them and try again, please.')
 			raise RepoIsDirty
 		self._init_merge()
 		self._load_config()
@@ -167,7 +166,7 @@ class GitUpstream(object):
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
 			new_commits.reverse()
 			for c_id in new_commits:
-				self._log('Applying commit "%s"' % c_id.summary)
+				self._log('Applying commit: %s' % c_id.summary)
 				self._repo.git.checkout(self._current)
 				self._repo.git.cherry_pick(c_id.hexsha)
 				self._save_repo_state(self._current if diff else '', message, c_id.hexsha)
@@ -179,7 +178,7 @@ class GitUpstream(object):
 					self._stage3('update current', diff, interactive, message)
 			except PatchError as e:
 				self._save_state()
-				self._log(e.message)
+				self._log_error(e.message)
 				raise PatchFailed
 			except:
 				self._save_state()
@@ -187,7 +186,7 @@ class GitUpstream(object):
 			self._save_repo_state(self._current if diff else '', message)
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
-		self._log('gitum update finished')
+		self._log('Successfully updated work branches.')
 
 	def create(self, remote, upstream, rebased, current, patches):
 		config = True
@@ -195,16 +194,16 @@ class GitUpstream(object):
 		   and current == CURRENT_BRANCH and patches == PATCHES_BRANCH:
 			config = False
 		if self._has_branch(current):
-			self._log("mainline branch exists!")
+			self._log_error("%s branch exists." % current)
 			raise BranchExists
 		if self._has_branch(rebased):
-			self._log("rebased branch exists!")
+			self._log_error("%s branch exists." % rebased)
 			raise BranchExists
 		if self._has_branch(patches):
-			self._log("patches branch exists!")
+			self._log_error("%s branch exists." % patches)
 			raise BranchExists
 		if config and self._has_branch(CONFIG_BRANCH):
-			self._log("gitum-config branch exists!")
+			self._log_error("%s branch exists." % CONFIG_BRANCH)
 			raise BranchExists
 		if not self._has_branch(upstream):
 			self._repo.git.branch('-m', upstream)
@@ -217,7 +216,7 @@ class GitUpstream(object):
 		self._save_mbranch(remote)
 		self._repo.git.checkout(rebased)
 		self._save_current_rebased(rebased)
-		self._log('gitum repository was created')
+		self._log('Successfully created work branches.')
 
 	def remove_branches(self):
 		self._load_config()
@@ -229,12 +228,12 @@ class GitUpstream(object):
 			self._repo.delete_head(CONFIG_BRANCH, '-D')
 		except:
 			pass
-		self._log('gitum branches were removed')
+		self._log('Successfully removed work branches.')
 
 	def remove_config_files(self):
 		try:
 			os.unlink(STATE_FILE)
-			self._log('gitum config file was removed')
+			self._log('Successfully removed gitum config files.')
 		except:
 			pass
 
@@ -258,7 +257,7 @@ class GitUpstream(object):
 				ok = True
 				break
 		if not ok:
-			self._log('broken %s commit' % commit)
+			self._log_error('Broken %s commit.' % commit)
 			raise BrokenRepo
 		commits.reverse()
 		git = self._repo.git
@@ -268,7 +267,7 @@ class GitUpstream(object):
 		with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
 			tmp_list = f.readlines()
 			if len(tmp_list) > 1:
-				self._log('broken upstream commit file')
+				self._log_error('Broken upstream commit file.')
 				raise BrokenRepo
 			upstream_commit = tmp_list[0]
 		git.checkout(upstream_commit)
@@ -283,7 +282,7 @@ class GitUpstream(object):
 			with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
 				tmp_list = f.readlines()
 				if len(tmp_list) > 1:
-					self._log('broken upstream commit file')
+					self._log_error('Broken upstream commit file.')
 					raise BrokenRepo
 				upstream_commit = tmp_list[0]
 			git.checkout(saved_commit_id)
@@ -313,11 +312,11 @@ class GitUpstream(object):
 		shutil.rmtree(tmp_dir)
 		git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
-		self._log('gitum repository restored to %s commit from %s branch' % (commit, self._patches))
+		self._log('Successfully restored work branches to %s commit from %s branch.' % (commit, self._patches))
 
 	def clone(self, remote_repo):
 		if not remote_repo:
-			self._log('Specify remote repo, please')
+			self._log_error('Specify remote repo, please.')
 			raise NoGitumRemote
 		if remote_repo[0] != '/' and not self._has_hostname(remote_repo):
 			remote_repo = os.getcwd() + '/' + remote_repo
@@ -335,7 +334,7 @@ class GitUpstream(object):
 		self._save_remote('origin')
 		self._gen_rebased()
 		self._save_current_rebased(self._rebased)
-		self._log('gitum repository from %s was cloned into %s' % (remote_repo, self._repo.working_dir))
+		self._log('Repository from %s was cloned into %s.' % (remote_repo, self._repo.working_dir))
 
 	def pull(self, remote=None, track_with=None):
 		self._load_config()
@@ -354,7 +353,7 @@ class GitUpstream(object):
 		self._repo.git.checkout(self._current, '-f')
 		self._repo.git.reset(remote + '/' + self._current, '--hard')
 		self._gen_rebased()
-		self._log('Repository was reset to the remote state, applying our commits on top...')
+		self._log('Reset work branches to the remote state, applying our commits on top...')
 		self._repo.git.checkout(self._current)
 		previd = self._find_ca(remote + '/' + self._patches, cur)
 		self._commits = [q.hexsha for q in self._repo.iter_commits(previd + '..' + cur)]
@@ -363,7 +362,7 @@ class GitUpstream(object):
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
-		self._log('gitum pull finished')
+		self._log('Successfully updated work branches.')
 
 	def continue_pull(self, command):
 		self._load_config()
@@ -398,7 +397,7 @@ class GitUpstream(object):
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
-		self._log('gitum pull finished')
+		self._log('Successfully updated work branches.')
 
 	def push(self, remote=None, track_with=None):
 		self._load_config()
@@ -412,7 +411,7 @@ class GitUpstream(object):
 			exist = True
 		if exist:
 			self._repo.git.push(remote, CONFIG_BRANCH)
-		self._log('gitum push finished')
+		self._log('Successfully pushed work branches.')
 
 	def _has_branch(self, head):
 		return self._repo.branches.count(Head(head, "refs/heads/" + head, True)) == 1
@@ -462,7 +461,7 @@ class GitUpstream(object):
 		try:
 			return self._load_parm(REMOTE_REPO)
 		except:
-			self._log('Specify a remote gitum repository, please!')
+			self._log_error('Specify a remote gitum repository, please.')
 			raise NoGitumRemote
 
 	def _save_mbranch(self, mbranch):
@@ -472,7 +471,7 @@ class GitUpstream(object):
 		try:
 			return self._load_parm(MERGE_BRANCH)
 		except:
-			self._log('Specify a merge branch, please!')
+			self._log_error('Specify a merge branch, please.')
 			raise NoMergeBranch
 
 	def _save_current_rebased(self, rebased):
@@ -607,8 +606,8 @@ class GitUpstream(object):
 		current_c = commit if commit else self._current
 		rebased_c = cur_rebased if cur_rebased else self._rebased
 		if self._repo.git.diff(rebased_c, current_c) != '':
-			self._log('%s and %s work trees are not equal - can\'t save state!' %
-				  (rebased_c, current_c))
+			self._log_error('%s and %s work trees are not equal - can\'t save state!' %
+					(rebased_c, current_c))
 			raise NotUptodate
 		# create tmp dir
 		tmp_dir = tempfile.mkdtemp()
@@ -740,7 +739,7 @@ class GitUpstream(object):
 			raise RebaseFailed
 		except PatchError as e:
 			self._save_state()
-			self._log(e.message)
+			self._log_error(e.message)
 			raise PatchFailed
 		except:
 			self._save_state()
@@ -798,7 +797,7 @@ class GitUpstream(object):
 		self._state = COMMIT_ST
 		git.checkout(self._current)
 		if diff_str == "":
-			self._log('nothing to commit in branch current, skipping %s commit' % commit)
+			self._log('Nothing to commit in branch current, skipping %s commit.' % commit)
 			return
 		git.clean('-d', '-f')
 		try:
@@ -806,8 +805,8 @@ class GitUpstream(object):
 		except:
 			self._id += 1
 			self._state = MERGE_ST
-			raise PatchError('error occurs during applying %s\n'
-					 'fix error, commit and continue the process, please!' % commit)
+			raise PatchError('Error occurs during applying %s.\n'
+					 'Fix error, commit and continue the process, please.' % commit)
 		git.add('-A', self._repo.working_tree_dir)
 		if interactive:
 			res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
@@ -841,7 +840,7 @@ class GitUpstream(object):
 		try:
 			self._load_state_raised(remove)
 		except IOError:
-			self._log('state file is missed or corrupted: nothing to continue!')
+			self._log_error('State file is missed or corrupted: nothing to continue.')
 			ret = False
 		return ret
 
@@ -862,6 +861,10 @@ class GitUpstream(object):
 			self._commits.append(strs[i])
 		if remove:
 			os.unlink(self._repo.working_dir + '/' + STATE_FILE)
+
+	def _log_error(self, mess):
+		if self._with_log and mess:
+			print('error: %s' % mess)
 
 	def _log(self, mess):
 		if self._with_log and mess:
