@@ -231,11 +231,10 @@ class GitUpstream(object):
 		self._log('Successfully removed work branches.')
 
 	def remove_config_files(self):
-		try:
-			os.unlink(STATE_FILE)
-			self._log('Successfully removed gitum config files.')
-		except:
-			pass
+		for name in [STATE_FILE, REMOTE_REPO, MERGE_BRANCH, CURRENT_REBASED]:
+			if os.path.exists(self._repo.working_dir + '/' + name):
+				os.unlink(self._repo.working_dir + '/' + name)
+		self._log('Successfully removed gitum config files.')
 
 	def remove_all(self):
 		self.remove_branches()
