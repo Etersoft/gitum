@@ -69,7 +69,7 @@ def main():
 
 	clone_p = subparsers.add_parser('clone')
 	clone_p.add_argument('git-repo', help='git repo to clone from')
-	clone_p.add_argument('repo-dir', help='directory to clone to')
+	clone_p.add_argument('repo-dir', nargs='?', help='directory to clone to')
 
 	pull_p = subparsers.add_parser('pull')
 	pull_p.add_argument('--remote', help='remote repo to pull from')
@@ -149,6 +149,13 @@ def main():
 		except GitUmException:
 			pass
 	elif args['command_name'] == 'clone':
+		if not args['repo-dir']:
+			if args['git-repo'] == '/':
+				args['repo-dir'] = '/'
+			elif args['git-repo'].endswith('/'):
+				args['repo-dir'] = args['git-repo'][:-1].split('/')[-1].split('.git')[0]
+			else:
+				args['repo-dir'] = args['git-repo'].split('/')[-1].split('.git')[0]
 		GitUpstream(repo_path=args['repo-dir'], with_log=True, new_repo=True).clone(args['git-repo'])
 	elif args['command_name'] == 'pull':
 		track = args['track']
