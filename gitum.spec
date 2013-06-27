@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.8.1
+Version: 0.8.2
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -49,6 +49,9 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Thu Jun 27 2013 Pavel Shilovsky <piastry@altlinux.org> 0.8.2-alt1
+- Fix unicode commit messages support
+
 * Sun Mar 31 2013 Pavel Shilovsky <piastry@altlinux.org> 0.8.1-alt1
 - Use a default directory name for clone if missed
 - Minor logging changes for pull and merge
