@@ -59,7 +59,7 @@ class GitUpstream(object):
 			self._log_error('You have local changes. Run git commit and gitum update to save them, please.')
 			raise RepoIsDirty
 		self._load_config()
-		if self._repo.git.diff(self._rebased, self._current) != '':
+		if self._repo.git.diff(self._rebased, self._mainline) != '':
 			self._log_error('You have local commited changes. Run gitum update to save them, please.')
 			raise NotUptodate
 		if not mbranch:
@@ -113,7 +113,7 @@ class GitUpstream(object):
 				diff_str = self._stage2(self._commits[self._id], tmp_file, rebase_cmd)
 				self._stage3(self._commits[self._id], diff_str)
 				self._save_repo_state(
-					self._repo.branches[self._current].commit.hexsha if diff_str else ''
+					self._repo.branches[self._mainline].commit.hexsha if diff_str else ''
 				)
 				self._id += 1
 				self._cur_num += 1
@@ -140,7 +140,7 @@ class GitUpstream(object):
 
 	def status(self):
 		self._load_config()
-		diff = self._repo.git.diff('--full-index', self._current, self._rebased)
+		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased)
 		ca = self._find_ca(self._load_current_rebased(), self._rebased)
 		if self._load_current_rebased() == self._repo.branches[self._rebased].commit.hexsha:
 			self._log('Nothing to update.')
@@ -161,20 +161,20 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._init_merge()
 		self._load_config()
-		diff = self._repo.git.diff('--full-index', self._current, self._rebased)
+		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased)
 		ca = self._find_ca(self._load_current_rebased(), self._rebased)
 		if ca == self._load_current_rebased():
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
 			new_commits.reverse()
 			for c_id in new_commits:
 				self._log('Applying commit: %s' % c_id.summary)
-				self._repo.git.checkout(self._current)
+				self._repo.git.checkout(self._mainline)
 				self._repo.git.cherry_pick(c_id.hexsha)
-				self._save_repo_state(self._current if diff else '', message, c_id.hexsha)
+				self._save_repo_state(self._mainline if diff else '', message, c_id.hexsha)
 		else:
 			try:
 				if diff:
-					self._log('Applying result diff between %s and %s' % (self._current, self._rebased))
+					self._log('Applying result diff between %s and %s' % (self._mainline, self._rebased))
 					interactive = False if message else True
 					self._stage3('update current', diff, interactive, message)
 			except PatchError as e:
@@ -184,18 +184,18 @@ class GitUpstream(object):
 			except:
 				self._save_state()
 				raise
-			self._save_repo_state(self._current if diff else '', message)
+			self._save_repo_state(self._mainline if diff else '', message)
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
 		self._log('Successfully updated work branches.')
 
-	def create(self, remote, upstream, rebased, current, patches):
+	def create(self, remote, upstream, rebased, mainline, patches):
 		config = True
 		if upstream == UPSTREAM_BRANCH and rebased == REBASED_BRANCH \
-		   and current == CURRENT_BRANCH and patches == PATCHES_BRANCH:
+		   and mainline == MAINLINE_BRANCH and patches == PATCHES_BRANCH:
 			config = False
-		if self._has_branch(current):
-			self._log_error("%s branch exists." % current)
+		if self._has_branch(mainline):
+			self._log_error("%s branch exists." % mainline)
 			raise BranchExists
 		if self._has_branch(rebased):
 			self._log_error("%s branch exists." % rebased)
@@ -209,11 +209,11 @@ class GitUpstream(object):
 		if not self._has_branch(upstream):
 			self._repo.git.branch('-m', upstream)
 		self._repo.git.checkout(upstream)
-		self._repo.create_head(current)
+		self._repo.create_head(mainline)
 		self._repo.create_head(rebased)
 		self._save_patches(patches, upstream)
 		if config:
-			self._save_config(current, upstream, rebased, patches)
+			self._save_config(mainline, upstream, rebased, patches)
 		self._save_mbranch(remote)
 		self._repo.git.checkout(rebased)
 		self._save_current_rebased(rebased)
@@ -222,7 +222,7 @@ class GitUpstream(object):
 	def remove_branches(self):
 		self._load_config()
 		self._repo.git.checkout(self._upstream, '-f')
-		self._repo.delete_head(self._current, '-D')
+		self._repo.delete_head(self._mainline, '-D')
 		self._repo.delete_head(self._rebased, '-D')
 		self._repo.delete_head(self._patches, '-D')
 		try:
@@ -294,9 +294,9 @@ class GitUpstream(object):
 				git.am(tmp_dir + '/' + LAST_PATCH_FILE)
 			os.unlink(tmp_dir + '/' + LAST_PATCH_FILE)
 			saved_commit_id = self._repo.head.commit.hexsha
-		if self._has_branch(self._current):
-			self._repo.delete_head(self._current, '-D')
-		self._repo.create_head(self._current)
+		if self._has_branch(self._mainline):
+			self._repo.delete_head(self._mainline, '-D')
+		self._repo.create_head(self._mainline)
 		git.checkout(upstream_commit)
 		if self._has_branch(self._upstream):
 			self._repo.delete_head(self._upstream, '-D')
@@ -330,7 +330,7 @@ class GitUpstream(object):
 		self._load_config()
 		self._repo.git.checkout('-b', self._upstream, 'origin/' + self._upstream)
 		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
-		self._repo.git.checkout('-b', self._current, 'origin/' + self._current)
+		self._repo.git.checkout('-b', self._mainline, 'origin/' + self._mainline)
 		self._save_remote('origin')
 		self._gen_rebased()
 		self._save_current_rebased(self._rebased)
@@ -350,11 +350,11 @@ class GitUpstream(object):
 		self._repo.git.reset(remote + '/' + self._upstream, '--hard')
 		self._repo.git.checkout(self._patches, '-f')
 		self._repo.git.reset(remote + '/' + self._patches, '--hard')
-		self._repo.git.checkout(self._current, '-f')
-		self._repo.git.reset(remote + '/' + self._current, '--hard')
+		self._repo.git.checkout(self._mainline, '-f')
+		self._repo.git.reset(remote + '/' + self._mainline, '--hard')
 		self._gen_rebased()
 		self._log('Reset work branches to the remote state, applying our commits on top...')
-		self._repo.git.checkout(self._current)
+		self._repo.git.checkout(self._mainline)
 		previd = self._find_ca(remote + '/' + self._patches, cur)
 		self._commits = [q.hexsha for q in self._repo.iter_commits(previd + '..' + cur)]
 		self._commits.reverse()
@@ -374,15 +374,15 @@ class GitUpstream(object):
 			self._repo.git.am(command, output_stream=tmp_file)
 			if command == '--resolved':
 				self._repo.git.checkout(self._rebased)
-				self._repo.git.cherry_pick(self._current)
-				self._save_repo_state(self._current)
+				self._repo.git.cherry_pick(self._mainline)
+				self._save_repo_state(self._mainline)
 			self._repo.git.checkout(self._upstream, '-f')
 			self._repo.git.merge(
 				self._repo.git.show(
 					self._commits[self._id] + ':' + UPSTREAM_COMMIT_FILE
 				)
 			)
-			self._repo.git.checkout(self._current)
+			self._repo.git.checkout(self._mainline)
 			self._id += 1
 			self._cur_num += 1
 		except GitCommandError as e:
@@ -405,7 +405,7 @@ class GitUpstream(object):
 			remote = self._load_remote()
 		if track_with:
 			self._save_remote(remote)
-		self._repo.git.push(remote, self._upstream, self._current, self._patches)
+		self._repo.git.push(remote, self._upstream, self._mainline, self._patches)
 		exist = False
 		if self._has_branch(CONFIG_BRANCH):
 			exist = True
@@ -502,8 +502,8 @@ class GitUpstream(object):
 					self._repo.git.am('-3', tmp_dir + '/' + TMP_LAST_PATCH_FILE,
 							  output_stream=tmp_file)
 					self._repo.git.checkout(self._rebased)
-					self._repo.git.cherry_pick(self._current)
-					self._save_repo_state(self._current)
+					self._repo.git.cherry_pick(self._mainline)
+					self._save_repo_state(self._mainline)
 					shutil.rmtree(tmp_dir)
 				self._repo.git.checkout(self._upstream)
 				self._repo.git.merge(
@@ -511,7 +511,7 @@ class GitUpstream(object):
 						self._commits[q] + ':' + UPSTREAM_COMMIT_FILE
 					)
 				)
-				self._repo.git.checkout(self._current)
+				self._repo.git.checkout(self._mainline)
 				tmp_file.close()
 				tmp_file = tempfile.TemporaryFile()
 				self._id += 1
@@ -563,11 +563,11 @@ class GitUpstream(object):
 		self._repo.git.branch(patches, commit)
 		shutil.rmtree(tmp_dir)
 
-	def _save_config(self, current, upstream, rebased, patches):
+	def _save_config(self, mainline, upstream, rebased, patches):
 		# create blob
 		tmp_dir = tempfile.mkdtemp()
 		with open(tmp_dir + '/' + CONFIG_FILE, 'w') as f:
-			f.write('current = %s\n' % current)
+			f.write('current = %s\n' % mainline)
 			f.write('upstream = %s\n' % upstream)
 			f.write('rebased = %s\n' % rebased)
 			f.write('patches = %s\n' % patches)
@@ -604,11 +604,11 @@ class GitUpstream(object):
 		shutil.rmtree(tmp_dir)
 
 	def _save_repo_state(self, commit, message='', cur_rebased=None):
-		current_c = commit if commit else self._current
+		mainline_c = commit if commit else self._mainline
 		rebased_c = cur_rebased if cur_rebased else self._rebased
-		if self._repo.git.diff(rebased_c, current_c) != '':
+		if self._repo.git.diff(rebased_c, mainline_c) != '':
 			self._log_error('%s and %s work trees are not equal - can\'t save state!' %
-					(rebased_c, current_c))
+					(rebased_c, mainline_c))
 			raise NotUptodate
 		# create tmp dir
 		tmp_dir = tempfile.mkdtemp()
@@ -623,7 +623,7 @@ class GitUpstream(object):
 			if i.endswith('.patch'):
 				shutil.move(self._repo.working_tree_dir + '/' + i,
 					    tmp_dir + '/' + i)
-		# get current branch commit
+		# get mainline branch commit
 		if commit:
 			git.format_patch('%s^..%s' % (commit, commit))
 		else:
@@ -676,7 +676,7 @@ class GitUpstream(object):
 		# set defaults
 		self._upstream = UPSTREAM_BRANCH
 		self._rebased = REBASED_BRANCH
-		self._current = CURRENT_BRANCH
+		self._mainline = MAINLINE_BRANCH
 		self._patches = PATCHES_BRANCH
 		# load config
 		try:
@@ -697,7 +697,7 @@ class GitUpstream(object):
 			elif parts[0] == 'rebased':
 				self._rebased = parts[2]
 			elif parts[0] == 'current':
-				self._current = parts[2]
+				self._mainline = parts[2]
 			elif parts[0] == 'patches':
 				self._patches = parts[2]
 
@@ -707,8 +707,8 @@ class GitUpstream(object):
 		git.reset(self._saved_branches[self._upstream], '--hard')
 		git.checkout(self._rebased, '-f')
 		git.reset(self._saved_branches[self._rebased], '--hard')
-		git.checkout(self._current, '-f')
-		git.reset(self._saved_branches[self._current], '--hard')
+		git.checkout(self._mainline, '-f')
+		git.reset(self._saved_branches[self._mainline], '--hard')
 		git.checkout(self._patches, '-f')
 		git.reset(self._saved_branches[self._patches], '--hard')
 
@@ -716,7 +716,7 @@ class GitUpstream(object):
 		git = self._repo.git
 		self._saved_branches[self._upstream] = self._repo.branches[self._upstream].commit.hexsha
 		self._saved_branches[self._rebased] = self._repo.branches[self._rebased].commit.hexsha
-		self._saved_branches[self._current] = self._repo.branches[self._current].commit.hexsha
+		self._saved_branches[self._mainline] = self._repo.branches[self._mainline].commit.hexsha
 		self._saved_branches[self._patches] = self._repo.branches[self._patches].commit.hexsha
 		self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
 
@@ -753,7 +753,7 @@ class GitUpstream(object):
 		self._stage1(commit)
 		diff_str = self._stage2(commit, output)
 		self._stage3(commit, diff_str)
-		self._save_repo_state(self._repo.branches[self._current].commit.hexsha if diff_str else '')
+		self._save_repo_state(self._repo.branches[self._mainline].commit.hexsha if diff_str else '')
 
 	def _patch_tree(self, diff_str):
 		status = 0
@@ -796,7 +796,7 @@ class GitUpstream(object):
 	def _stage3(self, commit, diff_str, interactive=False, message=''):
 		git = self._repo.git
 		self._state = COMMIT_ST
-		git.checkout(self._current)
+		git.checkout(self._mainline)
 		if diff_str == "":
 			self._log('Nothing to commit in branch current, skipping %s commit.' % commit)
 			return
@@ -812,7 +812,7 @@ class GitUpstream(object):
 		if interactive:
 			res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
 				    '--work-tree=' + self._repo.working_tree_dir, 'commit', '-e', '-m',
-				    'place your comments for %s branch commit' % self._current])
+				    'place your comments for %s branch commit' % self._mainline])
 			if res != 0:
 				raise GitCommandError('git commit', res, '')
 		else:
@@ -827,7 +827,7 @@ class GitUpstream(object):
 		with open(self._repo.working_dir + '/' + STATE_FILE, 'w') as f:
 			f.write(self._saved_branches[self._upstream] + '\n')
 			f.write(self._saved_branches[self._rebased] + '\n')
-			f.write(self._saved_branches[self._current] + '\n')
+			f.write(self._saved_branches[self._mainline] + '\n')
 			f.write(self._saved_branches[self._patches] + '\n')
 			f.write(self._saved_branches['prev_head'] + '\n')
 			f.write(str(self._state) + '\n')
@@ -852,7 +852,7 @@ class GitUpstream(object):
 			raise IOError
 		self._saved_branches[self._upstream] = strs[0]
 		self._saved_branches[self._rebased] = strs[1]
-		self._saved_branches[self._current] = strs[2]
+		self._saved_branches[self._mainline] = strs[2]
 		self._saved_branches[self._patches] = strs[3]
 		self._saved_branches['prev_head'] = strs[4]
 		self._state = int(strs[5])

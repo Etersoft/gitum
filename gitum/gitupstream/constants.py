@@ -21,5 +21,5 @@
 REMOTE_BRANCH = 'origin/master'
 UPSTREAM_BRANCH = 'upstream'
 REBASED_BRANCH = 'rebased'
-CURRENT_BRANCH = 'mainline'
+MAINLINE_BRANCH = 'mainline'
 PATCHES_BRANCH = 'patches'

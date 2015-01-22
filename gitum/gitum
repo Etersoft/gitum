@@ -125,7 +125,7 @@ def main():
 		remote = args['remote'] if args['remote'] else REMOTE_BRANCH
 		upstream = args['upstream'] if args['upstream'] else UPSTREAM_BRANCH
 		rebased = args['rebased'] if args['rebased'] else REBASED_BRANCH
-		current = args['current'] if args['current'] else CURRENT_BRANCH
+		current = args['current'] if args['current'] else MAINLINE_BRANCH
 		patches = args['patches'] if args['patches'] else PATCHES_BRANCH
 		try:
 			repo.create(remote, upstream, rebased, current, patches)
