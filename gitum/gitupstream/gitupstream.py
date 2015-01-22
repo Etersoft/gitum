@@ -161,9 +161,13 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._init_merge()
 		self._load_config()
+		current_rebased = self._load_current_rebased()
+		if current_rebased == self._repo.branches[self._rebased].commit.hexsha:
+			self._log('Nothing to update.')
+			return
 		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased)
-		ca = self._find_ca(self._load_current_rebased(), self._rebased)
-		if ca == self._load_current_rebased():
+		ca = self._find_ca(current_rebased, self._rebased)
+		if ca == current_rebased:
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
 			new_commits.reverse()
 			for c_id in new_commits:
