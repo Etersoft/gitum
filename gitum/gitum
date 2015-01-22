@@ -175,12 +175,18 @@ def main():
 			pass
 	elif args['command_name'] == 'push':
 		track = args['track']
-		if args['remote']:
-			repo.push(args['remote'], track_with=track)
-		else:
-			repo.push(track_with=track)
+		try:
+			if args['remote']:
+				repo.push(args['remote'], track_with=track)
+			else:
+				repo.push(track_with=track)
+		except RepoIsDirty:
+			pass
 	elif args['command_name'] == 'status':
-		repo.status()
+		try:
+			repo.status()
+		except RepoIsDirty:
+			pass
 
 if __name__ == "__main__":
 	main()

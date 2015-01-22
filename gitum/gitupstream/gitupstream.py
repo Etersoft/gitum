@@ -38,6 +38,7 @@ STATE_FILE = '.git/.gitum-state'
 REMOTE_REPO = '.git/.gitum-remote'
 MERGE_BRANCH = '.git/.gitum-mbranch'
 CURRENT_REBASED = '.git/.curent_rebased'
+CURRENT_MAINLINE = '.git/.curent_mainline'
 UPSTREAM_COMMIT_FILE = '_upstream_commit_'
 LAST_PATCH_FILE = '_current_patch_'
 TMP_LAST_PATCH_FILE = '_current.patch'
@@ -59,6 +60,7 @@ class GitUpstream(object):
 			self._log_error('You have local changes. Run git commit and gitum update to save them, please.')
 			raise RepoIsDirty
 		self._load_config()
+		self._check_mainline()
 		if self._repo.git.diff(self._rebased, self._mainline) != '':
 			self._log_error('You have local commited changes. Run gitum update to save them, please.')
 			raise NotUptodate
@@ -83,6 +85,7 @@ class GitUpstream(object):
 		self._process_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Successfully updated work branches.')
 
 	def abort(self, am=False):
@@ -100,6 +103,7 @@ class GitUpstream(object):
 		self._restore_branches()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Restored work branches.')
 
 	def continue_merge(self, rebase_cmd):
@@ -136,12 +140,14 @@ class GitUpstream(object):
 		self._process_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Successfully updated work branches.')
 
 	def status(self):
 		self._load_config()
 		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased)
 		ca = self._find_ca(self._load_current_rebased(), self._rebased)
+		self._check_mainline()
 		if self._load_current_rebased() == self._repo.branches[self._rebased].commit.hexsha:
 			self._log('Nothing to update.')
 			return
@@ -161,6 +167,7 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._init_merge()
 		self._load_config()
+		self._check_mainline()
 		current_rebased = self._load_current_rebased()
 		if current_rebased == self._repo.branches[self._rebased].commit.hexsha:
 			self._log('Nothing to update.')
@@ -191,6 +198,7 @@ class GitUpstream(object):
 			self._save_repo_state(self._mainline if diff else '', message)
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Successfully updated work branches.')
 
 	def create(self, remote, upstream, rebased, mainline, patches):
@@ -221,6 +229,7 @@ class GitUpstream(object):
 		self._save_mbranch(remote)
 		self._repo.git.checkout(rebased)
 		self._save_current_rebased(rebased)
+		self._save_current_mainline(mainline)
 		self._log('Successfully created work branches.')
 
 	def remove_branches(self):
@@ -236,7 +245,7 @@ class GitUpstream(object):
 		self._log('Successfully removed work branches.')
 
 	def remove_config_files(self):
-		for name in [STATE_FILE, REMOTE_REPO, MERGE_BRANCH, CURRENT_REBASED]:
+		for name in [STATE_FILE, REMOTE_REPO, MERGE_BRANCH, CURRENT_REBASED, CURRENT_MAINLINE]:
 			if os.path.exists(self._repo.working_dir + '/' + name):
 				os.unlink(self._repo.working_dir + '/' + name)
 		self._log('Successfully removed gitum config files.')
@@ -316,6 +325,7 @@ class GitUpstream(object):
 		shutil.rmtree(tmp_dir)
 		git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Successfully restored work branches to %s commit from %s branch.' % (commit, self._patches))
 
 	def clone(self, remote_repo):
@@ -338,10 +348,12 @@ class GitUpstream(object):
 		self._save_remote('origin')
 		self._gen_rebased()
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Repository from %s was cloned into %s.' % (remote_repo, self._repo.working_dir))
 
 	def pull(self, remote=None, track_with=None):
 		self._load_config()
+		self._check_mainline()
 		self._init_merge()
 		if not remote:
 			remote = self._load_remote()
@@ -366,6 +378,7 @@ class GitUpstream(object):
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Successfully updated work branches.')
 
 	def continue_pull(self, command):
@@ -401,10 +414,12 @@ class GitUpstream(object):
 		self._pull_commits()
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
 		self._log('Successfully updated work branches.')
 
 	def push(self, remote=None, track_with=None):
 		self._load_config()
+		self._check_mainline()
 		if not remote:
 			remote = self._load_remote()
 		if track_with:
@@ -483,6 +498,20 @@ class GitUpstream(object):
 
 	def _load_current_rebased(self):
 		return self._load_parm(CURRENT_REBASED)
+
+	def _save_current_mainline(self, mainline):
+		self._save_parm(CURRENT_MAINLINE, self._repo.branches[mainline].commit.hexsha)
+
+	def _load_current_mainline(self):
+		return self._load_parm(CURRENT_MAINLINE)
+
+	def _check_mainline(self):
+		current_mainline = self._load_current_mainline()
+		if current_mainline != self._repo.branches[self._mainline].commit.hexsha:
+			self._log_unexpected_head(self._mainline,
+						  self._repo.branches[self._mainline].commit.hexsha,
+						  current_mainline)
+			raise RepoIsDirty
 
 	def _get_commit_name_from_patch(self, lines):
 		for i in lines.split('\n'):
@@ -874,6 +903,10 @@ class GitUpstream(object):
 	def _log(self, mess):
 		if self._with_log and mess:
 			print(mess)
+
+	def _log_unexpected_head(self, mainline, wrong, right):
+		self._log_error('You have an unexpected HEAD of %s branch (%s instead of %s).' % \
+				(mainline, wrong, right))
 
 	def _init_merge(self):
 		self._state = START_ST
