@@ -234,10 +234,14 @@ class GitUpstream(object):
 
 	def remove_branches(self):
 		self._load_config()
-		self._repo.git.checkout(self._upstream, '-f')
-		self._repo.delete_head(self._mainline, '-D')
-		self._repo.delete_head(self._rebased, '-D')
-		self._repo.delete_head(self._patches, '-D')
+		if self._has_branch(self._upstream):
+			self._repo.git.checkout(self._upstream, '-f')
+		if self._has_branch(self._mainline):
+			self._repo.delete_head(self._mainline, '-D')
+		if self._has_branch(self._rebased):
+			self._repo.delete_head(self._rebased, '-D')
+		if self._has_branch(self._patches):
+			self._repo.delete_head(self._patches, '-D')
 		try:
 			self._repo.delete_head(CONFIG_BRANCH, '-D')
 		except:
