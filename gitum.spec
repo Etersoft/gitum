@@ -1,5 +1,5 @@
 Name: gitum
-Version: 0.8.2
+Version: 0.8.3
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -49,6 +49,11 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Thu Jan 22 2015 Pavel Shilovsky <piastry@altlinux.org> 0.8.3-alt1
+- Continue removing branches if one does not exist
+- Check current mainline HEAD for changes
+- Fix update message when there is nothing to update
+
 * Thu Jun 27 2013 Pavel Shilovsky <piastry@altlinux.org> 0.8.2-alt1
 - Fix unicode commit messages support
 
