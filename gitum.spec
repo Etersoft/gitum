@@ -1,21 +1,21 @@
 Name: gitum
 Version: 0.8.3
-Release: alt1
+Release: alt2
 
 Summary: Git Upstream Manager
 License: GPLv2
 Group: Development/Other
 
-# git clone git://git.etersoft.ru/people/piastry/packages/gitum.git
+# git clone git://git.altlinux.org/people/piastry/packages/gitum.git
 
-Url: http://www.etersoft.ru
-Packager: Pavel Shilovsky <piastry@etersoft.ru>
+Url: http://http://wiki.etersoft.ru/GitUM
+Packager: Pavel Shilovsky <piastry@altlinux.org>
 
 Source: %name-%version.tar
 
 BuildArch: noarch
 
-BuildRequires: python-module-setuptools
+BuildRequires: python-module-setuptools-tests
 BuildRequires: python-module-GitPython >= 0.3.0
 BuildRequires: git-core >= 1.7
 
@@ -49,6 +49,10 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Fri Jan 23 2015 Pavel Shilovsky <piastry@altlinux.org> 0.8.3-alt2
+- Fix packager and urls in spec
+- Fix setuptools buildrequires
+
 * Thu Jan 22 2015 Pavel Shilovsky <piastry@altlinux.org> 0.8.3-alt1
 - Continue removing branches if one does not exist
 - Check current mainline HEAD for changes
