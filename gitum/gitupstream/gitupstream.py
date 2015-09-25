@@ -61,7 +61,7 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._load_config()
 		self._check_mainline()
-		if self._repo.git.diff(self._rebased, self._mainline) != '':
+		if self._repo.git.diff(self._rebased, self._mainline, stdout_as_string=False) != '':
 			self._log_error('You have local commited changes. Run gitum update to save them, please.')
 			raise NotUptodate
 		if not mbranch:
@@ -145,7 +145,7 @@ class GitUpstream(object):
 
 	def status(self):
 		self._load_config()
-		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased)
+		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
 		ca = self._find_ca(self._load_current_rebased(), self._rebased)
 		self._check_mainline()
 		if self._load_current_rebased() == self._repo.branches[self._rebased].commit.hexsha:
@@ -172,7 +172,7 @@ class GitUpstream(object):
 		if current_rebased == self._repo.branches[self._rebased].commit.hexsha:
 			self._log('Nothing to update.')
 			return
-		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased)
+		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
 		ca = self._find_ca(current_rebased, self._rebased)
 		if ca == current_rebased:
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
@@ -643,7 +643,7 @@ class GitUpstream(object):
 	def _save_repo_state(self, commit, message='', cur_rebased=None):
 		mainline_c = commit if commit else self._mainline
 		rebased_c = cur_rebased if cur_rebased else self._rebased
-		if self._repo.git.diff(rebased_c, mainline_c) != '':
+		if self._repo.git.diff(rebased_c, mainline_c, stdout_as_string=False) != '':
 			self._log_error('%s and %s work trees are not equal - can\'t save state!' %
 					(rebased_c, mainline_c))
 			raise NotUptodate
@@ -827,7 +827,7 @@ class GitUpstream(object):
 					raise GitCommandError('git rebase', res, '')
 			else:
 				git.rebase(commit, output_stream=output)
-		diff_str = self._repo.git.diff('--full-index', self._saved_branches['prev_head'], self._rebased)
+		diff_str = self._repo.git.diff('--full-index', self._saved_branches['prev_head'], self._rebased, stdout_as_string=False)
 		return diff_str
 
 	def _stage3(self, commit, diff_str, interactive=False, message=''):
