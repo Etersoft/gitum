@@ -50,7 +50,7 @@ and ready for a submission in the same time.
 
 %changelog
 * Mon Oct 05 2015 Konstantin Artyushkin <akv@altlinux.org> 0.8.3-alt4
-- - fix for 0xE0 bug in hex of files by git.diff()
+- fix for 0xE0 bug in hex of files by git.diff()
 
 * Mon Feb 16 2015 Pavel Shilovsky <piastry@altlinux.org> 0.8.3-alt3
 - Fix url
