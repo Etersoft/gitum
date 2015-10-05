@@ -9,7 +9,7 @@ Group: Development/Other
 # git clone git://git.altlinux.org/people/piastry/packages/gitum.git
 
 Url: http://wiki.etersoft.ru/GitUM
-Packager: Pavel Shilovsky <piastry@altlinux.org>
+Packager: Konstantin Artyushkin <akv@altlinux.org>
 
 Source: %name-%version.tar
 
