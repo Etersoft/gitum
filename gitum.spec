@@ -1,6 +1,6 @@
 Name: gitum
 Version: 0.8.3
-Release: alt4
+Release: alt5
 
 Summary: Git Upstream Manager
 License: GPLv2
@@ -49,6 +49,9 @@ and ready for a submission in the same time.
 %_bindir/%name
 
 %changelog
+* Fri Mar 04 2016 Konstantin Artyushkin <akv@altlinux.org> 0.8.3-alt5
+- made --remote arg positional
+
 * Mon Oct 05 2015 Konstantin Artyushkin <akv@altlinux.org> 0.8.3-alt4
 - fix for 0xE0 bug in hex of files by git.diff()
 
