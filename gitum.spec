@@ -50,7 +50,7 @@ and ready for a submission in the same time.
 
 %changelog
 * Fri Mar 04 2016 Konstantin Artyushkin <akv@altlinux.org> 0.8.3-alt5
-- made --remote arg positional
+- made --remote arg positional for push and pull commands
 
 * Mon Oct 05 2015 Konstantin Artyushkin <akv@altlinux.org> 0.8.3-alt4
 - fix for 0xE0 bug in hex of files by git.diff()
