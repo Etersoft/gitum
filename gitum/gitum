@@ -72,7 +72,7 @@ def main():
 	clone_p.add_argument('repo-dir', nargs='?', help='directory to clone to')
 
 	pull_p = subparsers.add_parser('pull')
-	pull_p.add_argument('remote', help='remote repo to pull from')
+	pull_p.add_argument('remote', nargs='?', help='remote repo to pull from')
 	pull_p.add_argument('--track', action='store_true',
 				help='save the remote to use by default')
 	gr_pull = pull_p.add_mutually_exclusive_group()
@@ -84,7 +84,7 @@ def main():
 				help='abort a pull process')
 
 	push_p = subparsers.add_parser('push')
-	push_p.add_argument('remote', help='remote repo to push to')
+	push_p.add_argument('remote', nargs='?', help='remote repo to push to')
 	push_p.add_argument('--track', action='store_true',
 				help='save the remote to use by default')
 
