@@ -308,7 +308,7 @@ class GitUpstream(object):
 				if f.readlines():
 					patch_exists = True
 			if patch_exists:
-				git.am(tmp_dir + '/' + LAST_PATCH_FILE)
+				self._apply_patch_am(tmp_dir, LAST_PATCH_FILE)
 			os.unlink(tmp_dir + '/' + LAST_PATCH_FILE)
 			saved_commit_id = self._repo.head.commit.hexsha
 		if self._has_branch(self._mainline):
@@ -325,7 +325,7 @@ class GitUpstream(object):
 		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
 		patches_to_apply.sort()
 		for i in patches_to_apply:
-			git.am(tmp_dir + '/' + i)
+			self._apply_patch_am(tmp_dir, i)
 		shutil.rmtree(tmp_dir)
 		git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
@@ -464,7 +464,7 @@ class GitUpstream(object):
 		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
 		patches_to_apply.sort()
 		for i in patches_to_apply:
-			self._repo.git.am(tmp_dir + '/' + i)
+			self._apply_patch_am(tmp_dir, i)
 		shutil.rmtree(tmp_dir)
 
 	def _find_ca(self, c1, c2):
@@ -924,3 +924,7 @@ class GitUpstream(object):
 		self._all_num = 0
 		self._commits = []
 		self._saved_branches = {}
+
+	def _apply_patch_am(self, directory, patch, **kwargs):
+		self._log('Applying patch: ' + patch)
+		self._repo.git.am(directory + '/' + patch, **kwargs)
