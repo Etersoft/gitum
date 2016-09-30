@@ -400,7 +400,8 @@ class GitUpstream(object):
 			self._repo.git.checkout(self._upstream, '-f')
 			self._repo.git.merge(
 				self._repo.git.show(
-					self._commits[self._id] + ':' + UPSTREAM_COMMIT_FILE
+					self._commits[self._id] + ':' + UPSTREAM_COMMIT_FILE,
+					stdout_as_string=False
 				)
 			)
 			self._repo.git.checkout(self._mainline)
@@ -456,7 +457,8 @@ class GitUpstream(object):
 			self._repo.delete_head(self._rebased, '-D')
 		self._repo.git.checkout('-b', self._rebased,
 			self._repo.git.show(
-				commit + ':' + UPSTREAM_COMMIT_FILE
+				commit + ':' + UPSTREAM_COMMIT_FILE,
+				stdout_as_string=False
 			)
 		)
 		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
@@ -529,7 +531,8 @@ class GitUpstream(object):
 		try:
 			for q in xrange(self._id, len(self._commits)):
 				lines = self._repo.git.show(
-						self._commits[q] + ':' + LAST_PATCH_FILE
+						self._commits[q] + ':' + LAST_PATCH_FILE,
+						stdout_as_string=False
 					)
 				if len(lines) > 0:
 					tmp_dir = tempfile.mkdtemp()
@@ -545,7 +548,8 @@ class GitUpstream(object):
 				self._repo.git.checkout(self._upstream)
 				self._repo.git.merge(
 					self._repo.git.show(
-						self._commits[q] + ':' + UPSTREAM_COMMIT_FILE
+						self._commits[q] + ':' + UPSTREAM_COMMIT_FILE,
+						stdout_as_string=False
 					)
 				)
 				self._repo.git.checkout(self._mainline)
@@ -718,7 +722,8 @@ class GitUpstream(object):
 		# load config
 		try:
 			lines = self._repo.git.show(
-				CONFIG_BRANCH + ':' + CONFIG_FILE
+				CONFIG_BRANCH + ':' + CONFIG_FILE,
+				stdout_as_string=False
 			).split('\n')
 		except:
 			return
