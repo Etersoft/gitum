@@ -1,6 +1,6 @@
 Name: gitum
-Version: 0.8.4
-Release: alt2
+Version: 0.8.5
+Release: alt1
 
 Summary: Git Upstream Manager
 License: GPLv2
