@@ -696,7 +696,7 @@ class GitUpstream(object):
 			mess = '%s branch updated without code changes' % self._rebased
 		if commit:
 			author = self._repo.commit(commit).author
-			git.commit('-m', mess, '--author="%s <%s>"' % (author.name.encode('utf-8'), author.email))
+			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 		else:
 			git.commit('-m', mess)
 		shutil.rmtree(tmp_dir)
@@ -861,7 +861,7 @@ class GitUpstream(object):
 			if not message:
 				mess = self._repo.commit(commit).message.encode('utf-8')
 				author = self._repo.commit(commit).author
-				git.commit('-m', mess, '--author="%s <%s>"' % (author.name.encode('utf-8'), author.email))
+				git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
 			else:
 				git.commit('-m', message)
 
