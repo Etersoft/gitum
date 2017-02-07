@@ -148,6 +148,9 @@ class GitUpstream(object):
 		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
 		ca = self._find_ca(self._load_current_rebased(), self._rebased)
 		self._check_mainline()
+		if diff != '':
+			self._log_error('You have local changes. Run git commit and gitum update to save them, please.')
+			return
 		if self._load_current_rebased() == self._repo.branches[self._rebased].commit.hexsha:
 			self._log('Nothing to update.')
 			return
@@ -169,33 +172,26 @@ class GitUpstream(object):
 		self._load_config()
 		self._check_mainline()
 		current_rebased = self._load_current_rebased()
-		if current_rebased == self._repo.branches[self._rebased].commit.hexsha:
+		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
+		if current_rebased == self._repo.branches[self._rebased].commit.hexsha and diff == '':
 			self._log('Nothing to update.')
 			return
-		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
 		ca = self._find_ca(current_rebased, self._rebased)
 		if ca == current_rebased:
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
-			new_commits.reverse()
-			for c_id in new_commits:
-				self._log('Applying commit: %s' % c_id.summary)
-				self._repo.git.checkout(self._mainline)
-				self._repo.git.cherry_pick(c_id.hexsha)
-				self._save_repo_state(self._mainline if diff else '', message, c_id.hexsha)
+			if len(new_commits) != 0 and diff == '':
+				new_commits.reverse()
+				self._log('type of new_commits %s with size %s' % (type(new_commits), len(new_commits)))
+				for c_id in new_commits:
+					self._log('Applying commit: %s' % c_id.summary)
+					self._repo.git.checkout(self._mainline)
+					self._repo.git.cherry_pick(c_id.hexsha)
+					self._save_repo_state(self._mainline if diff else '', message, c_id.hexsha)
+			else:
+				self._diffapply(diff, message)
 		else:
-			try:
-				if diff:
-					self._log('Applying result diff between %s and %s' % (self._mainline, self._rebased))
-					interactive = False if message else True
-					self._stage3('update current', diff, interactive, message)
-			except PatchError as e:
-				self._save_state()
-				self._log_error(e.message)
-				raise PatchFailed
-			except:
-				self._save_state()
-				raise
-			self._save_repo_state(self._mainline if diff else '', message)
+			self._log('else')
+			self._diffapply(diff, message)
 		self._repo.git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
 		self._save_current_mainline(self._mainline)
@@ -928,3 +924,18 @@ class GitUpstream(object):
 	def _apply_patch_am(self, directory, patch, **kwargs):
 		self._log('Applying patch: ' + patch)
 		self._repo.git.am(directory + '/' + patch, **kwargs)
+
+	def _diffapply(self, diff, message):
+		try:
+			if diff:
+				self._log('Applying result diff between %s and %s' % (self._mainline, self._rebased))
+				interactive = False if message else True
+				self._stage3('update current', diff, interactive, message)
+		except PatchError as e:
+			self._save_state()
+			self._log_error(e.message)
+			raise PatchFailed
+		except:
+			self._save_state()
+			raise
+		self._save_repo_state(self._mainline if diff else '', message)
