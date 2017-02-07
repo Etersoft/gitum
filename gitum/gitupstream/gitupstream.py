@@ -927,4 +927,4 @@ class GitUpstream(object):
 
 	def _apply_patch_am(self, directory, patch, **kwargs):
 		self._log('Applying patch: ' + patch)
-		self._repo.git.am(directory + '/' + patch, **kwargs)
+		self._repo.git.am('--keep-cr', directory + '/' + patch, **kwargs)
