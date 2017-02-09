@@ -179,6 +179,9 @@ class GitUpstream(object):
 		ca = self._find_ca(current_rebased, self._rebased)
 		if ca == current_rebased:
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
+			if len(new_commits) == 0 and diff !='':
+				self._log_error("You have equal commits betwean mainline and rebased branches.\nBut git diff betwean it brnaches is not a zero string")
+				return
 			new_commits.reverse()
 			for c_id in new_commits:
 				self._log('Applying commit: %s' % c_id.summary)
