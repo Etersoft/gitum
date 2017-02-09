@@ -172,23 +172,19 @@ class GitUpstream(object):
 		self._load_config()
 		self._check_mainline()
 		current_rebased = self._load_current_rebased()
-		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
-		if current_rebased == self._repo.branches[self._rebased].commit.hexsha and diff == '':
+		if current_rebased == self._repo.branches[self._rebased].commit.hexsha:
 			self._log('Nothing to update.')
 			return
+		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
 		ca = self._find_ca(current_rebased, self._rebased)
 		if ca == current_rebased:
 			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
-			if len(new_commits) != 0 and diff == '':
-				new_commits.reverse()
-				self._log('type of new_commits %s with size %s' % (type(new_commits), len(new_commits)))
-				for c_id in new_commits:
-					self._log('Applying commit: %s' % c_id.summary)
-					self._repo.git.checkout(self._mainline)
-					self._repo.git.cherry_pick(c_id.hexsha)
-					self._save_repo_state(self._mainline if diff else '', message, c_id.hexsha)
-			else:
-				self._diffapply(diff, message)
+			new_commits.reverse()
+			for c_id in new_commits:
+				self._log('Applying commit: %s' % c_id.summary)
+				self._repo.git.checkout(self._mainline)
+				self._repo.git.cherry_pick(c_id.hexsha)
+				self._save_repo_state(self._mainline if diff else '', message, c_id.hexsha)
 		else:
 			self._log('else')
 			self._diffapply(diff, message)
