@@ -1,29 +1,30 @@
 Name: gitum
 Version: 0.8.6
-Release: alt1
+Release: alt2
 
 Summary: Git Upstream Manager
+
 License: GPLv2
 Group: Development/Other
-
-# git clone git://git.altlinux.org/people/piastry/packages/gitum.git
-
 Url: http://wiki.etersoft.ru/GitUM
+
 Packager: Konstantin Artyushkin <akv@altlinux.org>
 
+# Source-git: https://github.com/Etersoft/gitum.git
 Source: %name-%version.tar
 
 BuildArch: noarch
 
-BuildRequires: python-module-setuptools-tests
-BuildRequires: python-module-GitPython >= 0.3.0
+BuildRequires: rpm-build-intro
+
+BuildRequires: python-module-setuptools
 BuildRequires: git-core >= 1.7
 
 Requires: git-core >= 1.7
-Requires: python-module-GitPython >= 0.3.0
+
+%py_use GitPython >= 0.3.0
 
 Provides: gitum
-
 Obsoletes: git-um
 
 %description
@@ -33,7 +34,7 @@ into your current working branch and keep all your patches up-to-date
 and ready for a submission in the same time.
 
 %prep
-%setup -q
+%setup
 
 %build
 %python_build
@@ -42,13 +43,17 @@ and ready for a submission in the same time.
 %python_install
 
 %check
-%__python setup.py test
+%python_test
 
 %files
-%python_sitelibdir/*
+%python_sitelibdir/gitupstream/
+%python_sitelibdir/gitum*.egg-info
 %_bindir/%name
 
 %changelog
+* Fri Jul 13 2018 Vitaly Lipatov <lav@altlinux.ru> 0.8.6-alt2
+- cleanup spec, fix build
+
 * Tue Feb 07 2017 Konstantin Artyushkin <akv@altlinux.org> 0.8.6-alt1
 - fix dosformat files bug with --keep-cr
 - revert author wrong enocding utf-8
