@@ -256,6 +256,13 @@ def dependencies_of(git, journal, all_series, meta):
 	return tips, pids, offset
 
 
+def drop_patches(journal, writer, name):
+	"""Remove the patch files of a series from the journal; its other files (mr.md, assets) stay."""
+	for f in journal.list('series/' + name):
+		if f.endswith('.patch'):
+			writer.remove('series/%s/%s' % (name, f))
+
+
 def _commit(repo, journal, writer, message, extra_parents=()):
 	new = writer.write(message, extra_parents)
 	tr = RefTransaction(repo.git)
@@ -293,7 +300,7 @@ def _record(repo, journal, writer, tracker, name, meta, branch_tip, context, all
 		if rec['meta'].get('series') != name:
 			tracker.set(c.gitum_id, series=name)
 	meta.update(base_sha=base, tip=branch_tip, changes=[c.to_json() for c in new_changes])
-	writer.remove_dir('series/%s' % name)
+	drop_patches(journal, writer, name)
 	writer.put_json(meta_path(name), meta)
 	writer.put('series/%s/definition' % name, definition_text(meta))
 	patches = _format_patches(git, [c.sha for c in new_changes], offset + 1)
@@ -437,7 +444,7 @@ def export(repo, names, directory, check=False):
 		if name not in all_series:
 			raise GitumError('no series %s' % name)
 		files = {f: journal.read('series/%s/%s' % (name, f)) for f in journal.list('series/' + name)
-			 if f != 'meta.json'}
+			 if f.endswith('.patch')}
 		files['definition'] = shared_definition(all_series, all_series[name]).encode()
 		target = directory / export_dir(all_series[name])
 		# files of this series: its current files and every patch name it ever had
@@ -522,7 +529,7 @@ def import_staging(repo, directory, base, names=None):
 				meta['state'] = 'draft'
 			if len(rel.parts) > 1:
 				meta['export_dir'] = str(rel)
-			writer.remove_dir('series/%s' % name)
+			drop_patches(journal, writer, name)
 			writer.put_json(meta_path(name), meta)
 			writer.put('series/%s/definition' % name, definition_text(meta))
 			names_here = []
