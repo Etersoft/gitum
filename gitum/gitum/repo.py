@@ -20,7 +20,8 @@ CANDIDATE_FILE = 'candidate.json'
 
 
 def now_id():
-	return datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S-') + secrets.token_hex(2)
+	"""A run id that sorts by time (microseconds) and stays unique across machines."""
+	return datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S%f-') + secrets.token_hex(2)
 
 
 def owner_info():

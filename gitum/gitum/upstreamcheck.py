@@ -192,10 +192,17 @@ def _merged_series(tracker, all_series, containers, git=None):
 	for spec in sorted(containers):
 		kind, _, name = spec.partition(':')
 		meta = all_series.get(name) if kind == 'series' else None
-		if not meta or not meta.get('changes') or meta.get('state') in series_mod.DONE_STATES:
+		if not meta or not meta.get('changes'):
 			continue
 		recs = [tracker.changes.get(c.get('gitum_id')) for c in meta['changes']]
 		if not all(r and r.get('fate') in ('merged', 'merged-modified') for r in recs):
+			continue
+		if meta.get('state') in series_mod.DONE_STATES:
+			# merged already (by a forge): fill in what the forge could not know
+			if meta.get('state') == 'merged' and not meta.get('release'):
+				meta['release'] = max((r['meta'].get('release', '') for r in recs), key=_version_key)
+				if meta['release']:
+					merged.append(name)
 			continue
 		last = recs[-1]['meta']
 		previous = meta.get('state')

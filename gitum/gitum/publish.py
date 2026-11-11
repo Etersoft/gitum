@@ -67,7 +67,7 @@ def publish(repo, remote=None):
 				leases[branch] = theirs or ''
 			elif published and git.is_ancestor(published, theirs):
 				new_tip, commits = _integrate(repo, branch, published, theirs, local)
-				state.move_layer(repo, layer.name, new_tip, 'integrate commits from %s' % remote)
+				state.move_layer(repo, layer.name, new_tip, 'integrate commits from %s' % remote, keep=[theirs])
 				integrated[layer.name] = [git.commit_info(c)['subject'] for c in commits]
 				leases[branch] = theirs
 			elif git.is_ancestor(local, theirs):
@@ -145,9 +145,10 @@ def pull(repo, remote=None):
 			ref = 'refs/heads/' + layer.branch
 			local = git.rev(ref)
 			old = old_states.get(layer.name)
-			if local and old and local != old.tip and local != st.tip:
-				raise NeedsHuman('%s has commits that are not saved in the journal: gitum save, then pull'
-						 % layer.branch)
+			if local and old and local != old.tip and local != st.tip and \
+					not git.is_ancestor(local, target) and not contained(git, old.tip, local, st.changes):
+				raise NeedsHuman('%s has commits that are neither saved in the journal nor in the pulled '
+						 'state: gitum save, then pull' % layer.branch)
 			if local != st.tip:
 				tr.update(ref, st.tip, local or None)
 				moved.append((layer.branch, local, st.tip))
@@ -161,6 +162,14 @@ def pull(repo, remote=None):
 			pass
 		return {'changed': True, 'remote': remote, 'journal': target, 'merged': target != theirs,
 			'moved': [m[0] for m in moved]}
+
+
+def contained(git, old_tip, local, changes):
+	"""Whether the local commits after old_tip are all in the pulled layer (pushed and taken in)."""
+	if not git.is_ancestor(old_tip, local):
+		return False
+	pids = {c.patch_id for c in changes}
+	return all(pid in pids for pid in git.patch_ids(git.rev_list('%s..%s' % (old_tip, local))).values())
 
 
 def merge_journals(repo, ours, theirs, remote):

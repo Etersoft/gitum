@@ -50,6 +50,8 @@ upstream submission queue, wine-staging style series and RPM patch sets.
 %pyproject_install
 
 %check
+# all tests: unit, end-to-end cycles over several releases, crash recovery;
+# they need only git and run offline (a fake forge listens on 127.0.0.1)
 %pyproject_run_pytest
 
 %files

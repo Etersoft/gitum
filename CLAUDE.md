@@ -74,3 +74,8 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
 Tests:
 - `tests/core_helpers.py` builds an upstream with release tags and a work clone with layers `rebased` → `rebased-basealt` → `rebased-etersoft` and their `-START` tags, like wine-rebased.
 - The autouse `git_env` fixture in `tests/conftest.py` isolates git from the user's config.
+- `tests/test_core_cycle.py` holds the end-to-end stories:
+  - a fork through three releases with a robot, a developer, conflicts, a crash and a review;
+  - series from a branch to upstream with a fake GitLab.
+- `tests/test_core_recovery.py` kills gitum at chosen git calls.
+- All tests run in `%check` of the package build, offline and with only git. Keep it so: no network, no tools beyond git, temporary directories only.

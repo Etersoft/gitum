@@ -74,7 +74,10 @@ def staging_plan(repo, layer_conf, target_tag, release_pattern, run_dir, layer_n
 	exclude = layer_conf.get('staging-exclude', [])
 	target = Path(run_dir) / ('staging-%s' % layer_name)
 	target.mkdir(parents=True, exist_ok=True)
-	archive = sgit.run('archive', ref, 'patches', 'staging').stdout
+	paths = [d for d in ('patches', 'staging') if d in sgit.ls_tree(ref)]
+	if 'patches' not in paths:
+		raise NeedsHuman('wine-staging %s has no patches directory' % ref)
+	archive = sgit.run('archive', ref, *paths).stdout
 	with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
 		tar.extractall(target, filter='data')
 	order, disabled = staging_series(target, exclude)
@@ -311,7 +314,7 @@ tr.warn{background:#4a3d14}tr.bad{background:#4a1f1f}tr.info{background:#1d2e4a}
 
 def load_report(repo, run=None):
 	journal = repo.journal()
-	runs = sorted(journal.list('runs'))
+	runs = journal.list('runs')
 	if not runs:
 		raise GitumError('no sync runs in the journal')
 	if run:
@@ -320,6 +323,9 @@ def load_report(repo, run=None):
 			raise GitumError('run %s: %s' % (run, 'not found' if not match else 'ambiguous'))
 		run = match[0]
 	else:
-		run = runs[-1]
+		# the latest run is the one the most recent journal state added
+		added = repo.git.lines('log', '--first-parent', '--format=', '--name-only', '--diff-filter=A',
+				       journal.sha, '--', 'runs/*/report.json')
+		run = added[0].split('/')[1] if added else sorted(runs)[-1]
 	return journal.read_json('runs/%s/report.json' % run)
 

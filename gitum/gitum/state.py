@@ -252,11 +252,13 @@ def status(repo):
 	return result
 
 
-def move_layer(repo, name, new_tip, message, adjust=None):
+def move_layer(repo, name, new_tip, message, adjust=None, keep=()):
 	"""Move a layer branch to new_tip and record it in the journal in one transaction.
 
 	The new tip must stand on the recorded base of the layer. adjust(tracker,
-	state) may set fates of the changes before they are written.
+	state) may set fates of the changes before they are written. keep: more
+	commits to keep reachable from the journal (e.g. the commits of others
+	that were put on top, as they were pushed).
 	"""
 	git = repo.git
 	journal = repo.journal()
@@ -282,7 +284,7 @@ def move_layer(repo, name, new_tip, message, adjust=None):
 	hist_old = git.rev(history_ref(name))
 	tr.update(history_ref(name), history_commit(git, name, new_tip, hist_old, '%s: %s\n\ntip %s\n' % (
 		name, message, new_tip)), hist_old or None)
-	tr.update(JOURNAL_REF, writer.write('gitum: %s: %s' % (name, message), [new_tip]), journal.sha)
+	tr.update(JOURNAL_REF, writer.write('gitum: %s: %s' % (name, message), [new_tip, *keep]), journal.sha)
 	with repo.committing(tr, [(layer.branch, current, new_tip)], kind='layer'):
 		pass
 	return state
