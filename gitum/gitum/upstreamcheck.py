@@ -28,22 +28,37 @@ def norm_subject(subject):
 	return SUBJECT_NOISE.sub(' ', subject).strip().rstrip('.').lower()
 
 
-def diff_lines(git, sha, relative=''):
-	"""Changed lines of a commit (without context) and the files it touches."""
-	args = ['show', '--format=', '--unified=0', '--no-color'] + (['--relative=' + relative] if relative else [])
-	out = git.run(*args, sha).stdout.decode('utf-8', errors='replace')
+MAX_DIFF_LINES = 4000		# difflib is quadratic: compare at most this many changed lines
+
+
+def parse_diff(patch):
+	"""Changed lines (without context) and touched files of a patch."""
 	lines, files = [], set()
-	for line in out.splitlines():
+	for line in patch.decode('utf-8', errors='replace').splitlines():
 		if line.startswith('+++ b/'):
 			files.add(line[6:])
 		elif line.startswith('--- a/'):
 			files.add(line[6:])
-		elif line[:1] in '+-' and not line.startswith(('+++', '---')):
+		elif line[:1] and line[0] in '+-' and not line.startswith(('+++', '---')):
 			lines.append(line[0] + line[1:].strip())
-	return lines, files
+	return lines[:MAX_DIFF_LINES], files
 
 
-def content_in(git, sha, ref, relative=''):
+def diff_lines(git, shas, relative=''):
+	"""parse_diff() of many commits in one git process: {sha: (lines, files)}."""
+	options = ['--unified=0'] + (['--relative=' + relative] if relative else [])
+	return {sha: parse_diff(patch) for sha, patch in git.diffs(shas, *options).items()}
+
+
+def relative_patch_ids(git, shas, relative):
+	"""Patch-ids of the changes of commits inside a vendored subtree."""
+	patches = git.diffs(shas, '--relative=' + relative)
+	text = b''.join(b'commit %s\n%s' % (sha.encode(), patch) for sha, patch in patches.items())
+	out = git.run('patch-id', '--stable', input=text).stdout.decode()
+	return {sha: pid for pid, sha in (line.split() for line in out.splitlines())}
+
+
+def content_in(git, sha, ref, relative='', ref_tree=None):
 	"""Whether the change of commit sha is already contained in ref.
 
 	A three-way apply of the commit onto ref must leave the tree of ref
@@ -55,10 +70,8 @@ def content_in(git, sha, ref, relative=''):
 			g = git.with_env(GIT_INDEX_FILE=os.path.join(tmp, 'index'))
 			g.run('read-tree', ref)
 			return bool(diff.strip()) and g.ok('apply', '--cached', '-R', '--check', input=diff)
-	if not git.rev(sha + '^'):
-		return False
 	res = git.run('merge-tree', '--write-tree', '--merge-base=%s^' % sha, ref, sha, check=False)
-	return res.returncode == 0 and res.stdout.decode().split()[:1] == [git.tree(ref)]
+	return res.returncode == 0 and res.stdout.decode().split()[:1] == [ref_tree or git.tree(ref)]
 
 
 class UpstreamIndex:
@@ -67,6 +80,7 @@ class UpstreamIndex:
 	def __init__(self, git, base, ref):
 		self.git = git
 		self.ref = ref
+		self.ref_tree = git.tree(ref)
 		self.commits = []
 		raw = git.run('log', '--no-merges', '--format=%x01%H%x00%ae%x00%s', '--name-only', '%s..%s' % (base, ref)).stdout
 		for block in raw.decode('utf-8', errors='replace').split('\x01')[1:]:
@@ -82,37 +96,43 @@ class UpstreamIndex:
 		self.by_pid = {pid: sha for sha, pid in self.pids.items()}
 		self._lines = {}
 
+	def prefetch(self, shas):
+		missing = [s for s in dict.fromkeys(shas) if s not in self._lines]
+		for sha, (lines, _files) in diff_lines(self.git, missing).items():
+			self._lines[sha] = lines
+
 	def lines(self, sha):
 		if sha not in self._lines:
-			self._lines[sha] = diff_lines(self.git, sha)[0]
-		return self._lines[sha]
+			self.prefetch([sha])
+		return self._lines.get(sha, [])
 
-	def find(self, sha, patch_id, subject, email, relative=''):
-		if relative:
-			diff = self.git.run('show', '--relative=' + relative, sha).stdout
-			out = self.git.run('patch-id', '--stable', input=diff).stdout.decode().split()
-			patch_id = out[0] if out else ''
-		if patch_id and patch_id in self.by_pid:
-			return {'status': 'merged', 'upstream_commit': self.by_pid[patch_id], 'similarity': 1.0}
-		ours, files = diff_lines(self.git, sha, relative)
-		candidates = {}
+	def candidates(self, files, subject, email):
+		"""Upstream commits touching the same files, best first, with their subject similarity."""
+		found = {}
 		for f in files:
 			for c in self.by_file.get(f, []):
-				candidates[c['sha']] = c
+				found[c['sha']] = c
 		scored = []
 		subj = norm_subject(subject)
-		for c in candidates.values():
+		for c in found.values():
 			overlap = len(files & c['files']) / max(len(files | c['files']), 1)
 			s_ratio = difflib.SequenceMatcher(None, subj, norm_subject(c['subject'])).ratio()
 			scored.append((overlap + s_ratio + (0.2 if c['email'] == email else 0), c, s_ratio))
 		scored.sort(key=lambda t: -t[0])
+		return [(c, s_ratio) for _, c, s_ratio in scored[:MAX_CANDIDATES]]
+
+	def find(self, sha, patch_id, ours, files, candidates, relative=''):
+		if patch_id and patch_id in self.by_pid:
+			return {'status': 'merged', 'upstream_commit': self.by_pid[patch_id], 'similarity': 1.0}
+		if not candidates:
+			return {'status': 'not-found'}		# upstream did not touch our files
 		best = None
-		for _, c, s_ratio in scored[:MAX_CANDIDATES]:
+		for c, s_ratio in candidates:
 			d_ratio = difflib.SequenceMatcher(None, ours, self.lines(c['sha']), autojunk=False).ratio() if ours else 0
 			score = round(0.35 * s_ratio + 0.65 * d_ratio, 3)
 			if not best or score > best['similarity']:
 				best = {'upstream_commit': c['sha'], 'upstream_subject': c['subject'], 'similarity': score}
-		present = content_in(self.git, sha, self.ref, relative)
+		present = content_in(self.git, sha, self.ref, relative, self.ref_tree)
 		if not best or best['similarity'] < SUSPECT_SCORE:
 			if present:
 				return {'status': 'suspect', 'content_in_upstream': True,
@@ -188,11 +208,18 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 			indexes[key] = UpstreamIndex(git, base, target)
 		index = indexes[key]
 		prefix = upstream.prefix if upstream else ''
+		shas = [c.sha for c in chs]
+		infos = git.commit_infos(shas)
+		ours = diff_lines(git, shas, prefix)
+		pids = relative_patch_ids(git, shas, prefix) if prefix else {c.sha: c.patch_id for c in chs}
+		cands = {c.sha: index.candidates(ours.get(c.sha, ([], set()))[1], c.subject, infos[c.sha]['email'])
+			 for c in chs}
+		index.prefetch(u['sha'] for lst in cands.values() for u, _ in lst)
 		for c in chs:
-			info = git.commit_info(c.sha)
-			if prefix and not git.lines('show', '--format=', '--name-only', '--relative=' + prefix, c.sha):
+			lines, files = ours.get(c.sha, ([], set()))
+			if prefix and not files:
 				continue		# does not touch the vendored tree
-			res = index.find(c.sha, c.patch_id, c.subject, info['email'], prefix)
+			res = index.find(c.sha, pids.get(c.sha), lines, files, cands[c.sha], prefix)
 			entry = {'container': spec, 'id': c.gitum_id, 'sha': c.sha, 'subject': c.subject, **res}
 			if res.get('upstream_commit'):
 				entry['release'] = first_release(git, upstream, res['upstream_commit'])

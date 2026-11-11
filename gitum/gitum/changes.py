@@ -7,6 +7,7 @@ last, the subject. Each change has a fate: what is known about it upstream.
 """
 
 import datetime
+import json
 import re
 import secrets
 
@@ -63,11 +64,10 @@ def path(cid):
 
 def load_all(journal):
 	result = {}
-	for name in journal.list('changes'):
-		if name.endswith('.json'):
-			data = journal.read_json('changes/' + name)
-			if data:
-				result[data['id']] = data
+	for data in journal.read_files('changes', '.json').values():
+		if data:
+			rec = json.loads(data)
+			result[rec['id']] = rec
 	return result
 
 

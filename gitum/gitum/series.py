@@ -7,6 +7,7 @@ In the journal a series is a directory compatible with wine-staging:
 Work on a series happens in its git branch; `gitum series save` records it.
 """
 
+import json
 import re
 import tempfile
 from pathlib import Path
@@ -48,10 +49,10 @@ def check_name(name):
 
 def load_all(journal):
 	result = {}
-	for name in journal.list('series'):
-		meta = journal.read_json(meta_path(name))
-		if meta:
-			result[name] = meta
+	for path, data in journal.read_files('series', '/meta.json').items():
+		parts = path.split('/')
+		if len(parts) == 3 and data:
+			result[parts[1]] = json.loads(data)
 	return result
 
 

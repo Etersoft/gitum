@@ -72,9 +72,10 @@ def describe_changes(git, base, tip):
 	"""Changes of a layer: commits base..tip, oldest first."""
 	shas = git.rev_list('--reverse', '--no-merges', '%s..%s' % (base, tip))
 	pids = git.patch_ids(shas)
+	infos = git.commit_infos(shas)
 	result = []
 	for sha in shas:
-		info = git.commit_info(sha)
+		info = infos[sha]
 		m = GITUM_ID_RE.findall(info['message'])
 		result.append(Change(sha=sha, subject=info['subject'], patch_id=pids.get(sha, ''),
 				     gitum_id=m[-1] if m else ''))
@@ -110,6 +111,12 @@ class Journal:
 	def read_text(self, path):
 		data = self.read(path)
 		return data.decode('utf-8') if data is not None else None
+
+	def read_files(self, path, suffix=''):
+		"""All files under a directory (recursive) in one git process: {path: bytes}."""
+		paths = [p for p in self.git.ls_files(self.sha, path) if p.endswith(suffix)]
+		blobs = self.git.read_blobs('%s:%s' % (self.sha, p) for p in paths)
+		return {p: blobs['%s:%s' % (self.sha, p)] for p in paths}
 
 	def read_json(self, path, default=None):
 		text = self.read_text(path)
@@ -170,12 +177,13 @@ class JournalWriter:
 				git.run('read-tree', self.parent)
 			for path in self.remove_dirs:
 				git.run('rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', path)
+			blobs = git.hash_blobs([d for d in self.files.values() if d is not None])
 			info = []
 			for path, data in self.files.items():
 				if data is None:
 					info.append('0 %s\t%s' % ('0' * 40, path))
 				else:
-					info.append('100644 %s\t%s' % (git.hash_blob(data), path))
+					info.append('100644 %s\t%s' % (blobs.pop(0), path))
 			if info:
 				git.run('update-index', '--index-info', input='\n'.join(info) + '\n')
 			tree = git.out('write-tree')

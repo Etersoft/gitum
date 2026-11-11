@@ -69,7 +69,8 @@ def origin_commit(git, message, new_base):
 
 def revert_pairs(git, commits):
 	"""Commits forming 'patch' + 'Revert "patch"' pairs (exact subject match)."""
-	subjects = [(sha, git.commit_info(sha)['subject']) for sha in commits]
+	infos = git.commit_infos(commits)
+	subjects = [(sha, infos[sha]['subject']) for sha in commits]
 	drop = {}
 	for i, (sha, subject) in enumerate(subjects):
 		m = REVERT_RE.match(subject)
@@ -285,8 +286,9 @@ class Sync:
 		for line in git.lines('cherry', new_base, old.tip, old.base):
 			sign, sha = line.split()
 			cherry[sha] = sign
+		infos = git.commit_infos(commits)
 		for sha in commits:
-			info = git.commit_info(sha)
+			info = infos[sha]
 			res = {'sha': sha, 'subject': info['subject']}
 			gid = re.findall(r'^Gitum-Id:\s*(\S+)', info['message'], re.M)
 			if gid:
@@ -399,10 +401,11 @@ class Sync:
 		new_tip = git.at(op['worktree']).rev('HEAD')
 		generated = git.rev_list('--reverse', '%s..%s' % (cur['new_base'], new_tip))
 		new_pids = git.patch_ids(generated)
-		new_subjects = {git.commit_info(s)['subject'] for s in generated}
+		infos = git.commit_infos(generated)
+		new_subjects = {infos[s]['subject'] for s in generated}
 		results = []
 		for sha in generated:
-			r = {'sha': sha, 'new_sha': sha, 'subject': git.commit_info(sha)['subject'], 'result': 'generated'}
+			r = {'sha': sha, 'new_sha': sha, 'subject': infos[sha]['subject'], 'result': 'generated'}
 			if sha in gen['resolved']:
 				r.update(result=RESOLVED, resolver='manual')
 			results.append(r)

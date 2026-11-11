@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 from .errors import GitError
@@ -96,6 +97,56 @@ class Git:
 		res = self.run('cat-file', 'blob', '%s:%s' % (rev, path), check=False)
 		return res.stdout if res.returncode == 0 else None
 
+	def read_blobs(self, specs):
+		"""Contents of many objects ('rev:path' or sha) in one git process: {spec: bytes or None}."""
+		specs = list(specs)
+		if not specs:
+			return {}
+		out = self.run('cat-file', '--batch', input='\n'.join(specs) + '\n').stdout
+		result, pos = {}, 0
+		for spec in specs:
+			end = out.index(b'\n', pos)
+			header = out[pos:end].split()
+			pos = end + 1
+			if len(header) < 3 or header[1] == b'missing':
+				result[spec] = None
+				continue
+			size = int(header[2])
+			result[spec] = out[pos:pos + size]
+			pos += size + 1
+		return result
+
+	def ls_files(self, rev, path):
+		"""Paths of all files under a directory of a revision (recursive)."""
+		return self.lines('ls-tree', '-r', '--name-only', rev, '--', path.rstrip('/') + '/')
+
+	def commit_infos(self, revs):
+		"""commit_info() of many commits in one git process: {sha: info}."""
+		revs = list(revs)
+		if not revs:
+			return {}
+		raw = self.run('log', '--no-walk=unsorted', '--stdin', '--format=%x01%H%x00%s%x00%an%x00%ae%x00%B',
+			       input='\n'.join(revs) + '\n').stdout
+		result = {}
+		for block in raw.decode('utf-8', errors='replace').split('\x01')[1:]:
+			sha, subject, name, email, body = block.split('\x00', 4)
+			result[sha] = {'sha': sha, 'subject': subject, 'author': name, 'email': email,
+				       'message': body.rstrip('\n')}
+		return result
+
+	def diffs(self, revs, *options):
+		"""Patch text of many commits in one git process: {sha: bytes}."""
+		revs = list(revs)
+		if not revs:
+			return {}
+		raw = self.run('log', '--no-walk=unsorted', '--stdin', '--no-color', '--format=%x01%x01%H', '--patch',
+			       *options, input='\n'.join(revs) + '\n').stdout
+		result = {}
+		for block in raw.split(b'\x01\x01')[1:]:
+			sha, _, patch = block.partition(b'\n')
+			result[sha.decode()] = patch
+		return result
+
 	def ls_tree(self, rev, path=''):
 		"""Names directly under a directory of a revision."""
 		args = ['ls-tree', '--name-only', rev]
@@ -105,6 +156,20 @@ class Git:
 
 	def hash_blob(self, data):
 		return self.out('hash-object', '-w', '--stdin', input=data)
+
+	def hash_blobs(self, datas):
+		"""Write many blobs in one git process; return their shas in order."""
+		datas = list(datas)
+		if not datas:
+			return []
+		with tempfile.TemporaryDirectory() as tmp:
+			paths = []
+			for i, data in enumerate(datas):
+				path = os.path.join(tmp, str(i))
+				with open(path, 'wb') as f:
+					f.write(data)
+				paths.append(path)
+			return self.lines('hash-object', '-w', '--no-filters', '--stdin-paths', input='\n'.join(paths) + '\n')
 
 	def commit_tree(self, tree, parents=(), message='', author=None):
 		args = ['commit-tree', tree]

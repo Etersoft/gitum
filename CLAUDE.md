@@ -29,6 +29,7 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
 
 - **No GitPython.** `git.py` has `Git` (subprocess runner with a non-interactive env: `GIT_EDITOR=true`, no prompts) and `RefTransaction` (`update-ref --stdin` with old-value checks).
   - Branches change **only** through such a transaction at the end of an operation.
+  - **Performance:** almost all the time is spent in git processes (5–12 ms each on a wine-sized repository); Python itself is under 5%. Never run git once per object in a loop. Use the batch helpers instead: `read_blobs` (cat-file --batch), `Journal.read_files`, `commit_infos`, `diffs`, `hash_blobs`, `patch_ids`.
   - Work happens in private work trees under `<common dir>/gitum/wt/`; never reset or clean a user's work tree.
   - A branch checked out in a clean user work tree moves together with it (`repo.check_checkouts` before the transaction, `repo.follow_checkouts` after it, via `read-tree -m -u old new`). A dirty work tree means `NeedsHuman`.
   - Every external command gets its environment from `repo.hook_env()` (sync adds layer, run and target via `Sync._env`). The variables, the lock file format and the publish event are a documented interface in README "Commands that gitum runs": keep them stable.

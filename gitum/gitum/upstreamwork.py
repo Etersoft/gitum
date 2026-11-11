@@ -95,12 +95,14 @@ def variants(repo, name):
 	result = {}
 	main_range = (meta['base_sha'], meta['tip'])
 	main_pids = git.patch_ids(git.rev_list('%s..%s' % main_range))
-	main_subjects = {git.commit_info(s)['subject']: pid for s, pid in main_pids.items()}
+	main_infos = git.commit_infos(main_pids)
+	main_subjects = {main_infos[s]['subject']: pid for s, pid in main_pids.items()}
 	for spec, v in (meta.get('variants') or {}).items():
 		tip = git.rev('refs/heads/' + v['branch']) or v['tip']
 		base = git.merge_base(git.rev(series_mod.base_ref(journal.config, spec)) or v['base_sha'], tip) or v['base_sha']
 		pids = git.patch_ids(git.rev_list('%s..%s' % (base, tip)))
-		subjects = {git.commit_info(s)['subject']: pid for s, pid in pids.items()}
+		infos = git.commit_infos(pids)
+		subjects = {infos[s]['subject']: pid for s, pid in pids.items()}
 		only_main = sorted(set(main_subjects) - set(subjects))
 		only_variant = sorted(set(subjects) - set(main_subjects))
 		differ = sorted(s for s in set(main_subjects) & set(subjects) if main_subjects[s] != subjects[s])
