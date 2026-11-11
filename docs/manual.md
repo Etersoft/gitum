@@ -250,14 +250,19 @@ gitum mr render ntdll-fix --forge upstream -o out.md # without the internal part
 
 The first line `# Title` is the title. Lines between `<!-- internal -->` and
 `<!-- /internal -->` (or from `<!-- internal -->` to the end) are for internal
-review only and are left out unless `--internal` is given. The text is stored
+review only and are left out unless `--internal` is given. With `[series]
+mr-internal-separator = "---"`, `mr set` and `mr import` turn the first line
+`---` of a text without markers into `<!-- internal -->`, for internal merge
+requests that put the review notes after such a line. The text is stored
 as `series/NAME/mr.md`, the images as `series/NAME/assets/`; `series save` and
 export leave them alone. For a GitLab forge with a token, `render` uploads the
 images to the project (`--project`, or the project of the series' `pr`/`internal_mr`
-link, or `[forge.NAME] project`) and remembers their URLs by content, so a new
+link, or `[forge.NAME] project`, or the project of the series' upstream remote
+when it is on that forge's host) and remembers their URLs by content, so a new
 version of the text uploads only new or changed images. For other forges, or
 with `--no-upload`, the text gets placeholders `{{gitum-asset:FILE}}` and the
-images are written to `<common dir>/gitum/mr/NAME/` (listed under `pending` in
+images are written to `<common dir>/gitum/mr/NAME/` (or `DIR/NAME/` with
+`--assets-dir DIR` or `[series] mr-assets-dir`; listed under `pending` in
 `--json`); after uploading them some other way, `gitum mr record NAME
 FILE=URL... --forge F` makes later renders use those URLs. gitum does not open
 or edit merge requests itself: a person or an agent does that with the rendered

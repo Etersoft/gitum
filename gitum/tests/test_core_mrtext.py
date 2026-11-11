@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from gitum.cli import main
-from gitum.mrtext import strip_internal
+from gitum.mrtext import mark_internal, remote_project, strip_internal
 from gitum.repo import Repo as GitumRepo
 
 from core_helpers import INIT_ARGS, make_stack
@@ -82,8 +82,10 @@ def world(tmp_path, capsys, monkeypatch):
 	cfg.write_text(journal(work).config_text +
 		       '\n[forge.internal]\ntype = "gitlab"\nurl = "%s"\n'
 		       '[forge.upstream]\ntype = "gitlab"\nurl = "%s"\nproject = "wine/wine"\n'
+		       '[forge.plain]\ntype = "gitlab"\nurl = "%s"\n'
 		       '[forge.other]\ntype = "github"\nurl = "https://github.com"\nproject = "a/b"\n'
-		       '[series]\ninternal-mr-forge = "internal"\npr-forge = "upstream"\n' % (url, url))
+		       '[series]\ninternal-mr-forge = "internal"\npr-forge = "upstream"\nmr-internal-separator = "---"\n'
+		       % (url, url, url))
 	assert main(['--repo', str(work.path), 'config', 'load', str(cfg)]) == 0
 	work.run('checkout', '-q', '-b', 'series/fix', 'v1.0')
 	work.commit('ntdll: Fix it.', {'ntdll': 'fix\n'})
@@ -97,6 +99,16 @@ def world(tmp_path, capsys, monkeypatch):
 def test_strip_internal():
 	text = 'a\n<!-- internal -->\nsecret\n<!-- /internal -->\nb\n<!-- internal -->\ntail\n'
 	assert strip_internal(text) == 'a\nb\n'
+
+
+def test_mark_internal_and_remote_project():
+	assert mark_internal('up\n---\nru\n---\nmore\n', '---') == 'up\n<!-- internal -->\nru\n---\nmore\n'
+	assert mark_internal('a\n<!-- internal -->\nb\n---\n', '---') == 'a\n<!-- internal -->\nb\n---\n'
+	assert remote_project('git@gitlab.winehq.org:wine/wine.git', 'https://gitlab.winehq.org') == 'wine/wine'
+	assert remote_project('https://gitlab.winehq.org/wine/wine.git', 'https://gitlab.winehq.org/') == 'wine/wine'
+	assert remote_project('ssh://git@gitlab.winehq.org:2222/wine/wine', 'https://gitlab.winehq.org') == 'wine/wine'
+	assert remote_project('https://github.com/wine-mirror/wine.git', 'https://gitlab.winehq.org') is None
+	assert remote_project('/srv/git/wine.git', 'https://gitlab.winehq.org') is None
 
 
 def test_set_render_upload_once(world, capsys):
@@ -167,3 +179,18 @@ def test_import_from_internal_mr(world, capsys):
 	assert journal(work).read('series/fix/assets/shot.png') == SHOT
 	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'upstream', '--no-upload')
 	assert data['pending'][0]['file'] == 'shot.png' and not FakeGitLab.uploads
+
+
+def test_separator_assets_dir_and_upstream_project(world, capsys):
+	work, tmp = world['work'], world['tmp']
+	(tmp / 'a.png').write_bytes(PNG)
+	md = tmp / 'mr.md'
+	md.write_text('# Title\n\nPublic ![a](a.png).\n\n---\n\nВнутреннее.\n')
+	assert gitum(work, capsys, 'mr', 'set', 'fix', str(md))['internal']
+	assert '<!-- internal -->' in journal(work).read_text('series/fix/mr.md')
+	# no project for the forge, no links: taken from the remote of the series' upstream
+	work.run('remote', 'set-url', 'winehq', 'git@127.0.0.1:wine/wine.git')
+	out = tmp / 'lavtomate-in'
+	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'plain', '--no-upload', '--assets-dir', str(out))
+	assert data['project'] == 'wine/wine' and 'Внутреннее' not in data['description']
+	assert data['pending'][0]['path'] == str(out / 'fix' / 'a.png') and (out / 'fix' / 'a.png').read_bytes() == PNG

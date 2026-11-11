@@ -55,6 +55,18 @@ def strip_internal(text):
 	return '\n'.join(out).strip('\n') + '\n'
 
 
+def mark_internal(text, separator):
+	"""Turn the first line equal to the separator (e.g. ---) into the internal marker."""
+	if not separator or INTERNAL_START in text:
+		return text
+	lines = text.split('\n')
+	for i, line in enumerate(lines):
+		if line.strip() == separator:
+			lines[i] = INTERNAL_START
+			break
+	return '\n'.join(lines)
+
+
 def split_title(text):
 	lines = text.lstrip('\n').split('\n')
 	if lines and lines[0].startswith('# '):
@@ -90,6 +102,7 @@ def _store(repo, name, text, assets, message):
 		journal = repo.journal()
 		meta = series_mod.load(journal, name)
 		writer = JournalWriter(repo.git, journal.sha)
+		text = mark_internal(text, journal.config.series.get('mr-internal-separator'))
 		writer.remove_dir('series/%s/assets' % name)
 		writer.put(text_path(name), text)
 		for file, data in assets.items():
@@ -102,7 +115,8 @@ def _store(repo, name, text, assets, message):
 		tr = RefTransaction(repo.git)
 		tr.update(JOURNAL_REF, new, journal.sha)
 		tr.commit()
-	return {'series': name, 'assets': sorted(assets), 'title': split_title(text)[0]}
+	return {'series': name, 'assets': sorted(assets), 'title': split_title(text)[0],
+		'internal': INTERNAL_START in text}
 
 
 def set_from_file(repo, name, path):
@@ -213,7 +227,32 @@ def _multipart(field, filename, data):
 	return body, 'multipart/form-data; boundary=' + boundary
 
 
-def _project_for(cfg, meta, forge_name, project):
+def remote_project(remote_url, forge_url):
+	"""group/project of a remote URL on the forge's host (https, ssh:// or scp-like), or None."""
+	host = urllib.parse.urlsplit(forge_url).hostname
+	m = (re.match(r'^[a-z+]+://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?/?$', remote_url)
+	     or re.match(r'^(?:[^@/]+@)?([^/:]+):(?!/)(.+?)(?:\.git)?/?$', remote_url))
+	return m.group(2) if m and host and m.group(1) == host else None
+
+
+def _upstream_project(git, cfg, meta, conf):
+	"""The project of the series' upstream (or of any upstream) when its remote is on this forge."""
+	if not conf.get('url'):
+		return None
+	kind, _, target = (meta.get('base') or '').partition(':')
+	names = ([target] if kind == 'upstream' and target in cfg.upstreams else []) + list(cfg.upstreams)
+	for n in names:
+		up = cfg.upstreams[n]
+		ref = up.ref.removeprefix('refs/remotes/')
+		remote = up.remote or (ref.split('/', 1)[0] if '/' in ref and not ref.startswith('refs/') else '')
+		url = up.url or (git.out('remote', 'get-url', remote, check=False) if remote else '')
+		found = url and remote_project(url.strip(), conf['url'])
+		if found:
+			return found
+	return None
+
+
+def _project_for(git, cfg, meta, forge_name, project):
 	if project:
 		return project
 	conf = cfg.forges.get(forge_name, {})
@@ -224,10 +263,13 @@ def _project_for(cfg, meta, forge_name, project):
 			return parse_url(url, cfg.forges)[2]
 	if conf.get('project'):
 		return conf['project']
+	found = _upstream_project(git, cfg, meta, conf)
+	if found:
+		return found
 	raise GitumError('which project of %s? use --project or set [forge.%s] project' % (forge_name, forge_name))
 
 
-def render(repo, name, forge_name=None, project=None, internal=False, upload=True):
+def render(repo, name, forge_name=None, project=None, internal=False, upload=True, assets_dir=None):
 	"""The title and description for a forge; images are uploaded there or left as placeholders."""
 	journal = repo.journal()
 	cfg = journal.config
@@ -239,13 +281,14 @@ def render(repo, name, forge_name=None, project=None, internal=False, upload=Tru
 		text = strip_internal(text)
 	title, description = split_title(text)
 	assets = (meta.get('mr') or {}).get('assets', {})
-	key = '%s:%s' % (forge_name, _project_for(cfg, meta, forge_name, project)) if forge_name else None
+	key = '%s:%s' % (forge_name, _project_for(repo.git, cfg, meta, forge_name, project)) if forge_name else None
 	known = dict(((meta.get('mr') or {}).get('uploads') or {}).get(key, {})) if key else {}
 	kind, api, token = (None, None, '')
 	if forge_name:
 		kind, _base, api, token, _conf = _forge(cfg, forge_name)
 	uploaded, pending = [], []
-	out_dir = repo.gitum_dir / 'mr' / name
+	assets_dir = assets_dir or cfg.series.get('mr-assets-dir')
+	out_dir = (Path(assets_dir).expanduser() if assets_dir else repo.gitum_dir / 'mr') / name
 
 	def place(link):
 		if not link.startswith('assets/'):
@@ -295,7 +338,7 @@ def record_uploads(repo, name, forge_name, project, pairs):
 	journal = repo.journal()
 	meta = series_mod.load(journal, name)
 	assets = (meta.get('mr') or {}).get('assets', {})
-	key = '%s:%s' % (forge_name, _project_for(journal.config, meta, forge_name, project))
+	key = '%s:%s' % (forge_name, _project_for(repo.git, journal.config, meta, forge_name, project))
 	urls = dict(((meta.get('mr') or {}).get('uploads') or {}).get(key, {}))
 	for file, url in pairs.items():
 		if file not in assets:

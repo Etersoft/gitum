@@ -114,7 +114,8 @@ def cmd_mr(repo, args, out):
 		out.result(data, 'Remembered %s for %s' % (', '.join(data['recorded']), data['forge']))
 		return
 	else:
-		data = mrtext.render(repo, args.name, args.forge, args.project, args.internal, not args.no_upload)
+		data = mrtext.render(repo, args.name, args.forge, args.project, args.internal, not args.no_upload,
+				     args.assets_dir)
 		text = ('# %s\n\n' % data['title'] if data['title'] else '') + data['description']
 		if args.output:
 			Path(args.output).write_text(text)
@@ -138,6 +139,8 @@ def register(sub):
 	s.add_argument('--internal', action='store_true', help='render: keep the internal parts')
 	s.add_argument('--no-upload', action='store_true', help='render: placeholders instead of uploading')
 	s.add_argument('-o', '--output', metavar='FILE', help='render: write the text to FILE')
+	s.add_argument('--assets-dir', metavar='DIR', help='render: write images to upload by hand to DIR/SERIES/ '
+		       '(default: [series] mr-assets-dir, or <common dir>/gitum/mr)')
 	s.set_defaults(func=cmd_mr)
 
 	s = sub.add_parser('port', help='put a series onto another base as a variant branch')
