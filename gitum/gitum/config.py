@@ -27,6 +27,8 @@ class Layer:
 	base: str				# upstream:<name> or layer:<name>
 	compat_start_tag: str = ''
 	annihilate_reverts: bool = False
+	generator: str = ''			# '', 'staging' or 'command': rebuild instead of cherry-pick
+	options: dict = field(default_factory=dict)	# the raw [layer.NAME] table
 
 	@property
 	def base_kind(self):
@@ -125,7 +127,16 @@ def parse(text):
 			base=_get(t, 'base', str, '', where),
 			compat_start_tag=_get(t, 'compat-start-tag', str, '', where),
 			annihilate_reverts=_get(t, 'annihilate-reverts', bool, False, where),
+			generator=_get(t, 'generator', str, '', where),
+			options=dict(t),
 		)
+		layer = cfg.layers[name]
+		if layer.generator not in ('', 'staging', 'command'):
+			raise ConfigError('%s: generator must be staging or command' % where)
+		if layer.generator == 'staging' and not t.get('staging-repo'):
+			raise ConfigError('%s: generator staging needs staging-repo' % where)
+		if layer.generator == 'command' and not t.get('command'):
+			raise ConfigError('%s: generator command needs command' % where)
 	for layer in cfg.layers.values():
 		kind, _, target = layer.base.partition(':')
 		if kind == 'upstream' and target in cfg.upstreams:

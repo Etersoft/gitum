@@ -196,7 +196,8 @@ def prepare(repo, name, onto=None, branch=None, push=None, directory=None, strip
 	meta = series_mod.load(journal, name)
 	if meta.get('changes') is None:
 		raise GitumError('series %s has no branch recorded' % name)
-	upstream_spec = meta['base'] if meta['base'].startswith('upstream:') else None
+	upstream_spec = ('upstream:' + meta['upstream']) if meta.get('upstream') else \
+		(meta['base'] if meta['base'].startswith('upstream:') else None)
 	if not onto:
 		if not upstream_spec:
 			names = [n for n in series_mod.order(all_series, [name])]
@@ -208,6 +209,8 @@ def prepare(repo, name, onto=None, branch=None, push=None, directory=None, strip
 	start = git.rev(onto)
 	if not start:
 		raise GitumError('%s does not exist' % onto)
+	if directory is None and upstream_spec and upstream_spec.split(':', 1)[1] in cfg.upstreams:
+		directory = cfg.upstreams[upstream_spec.split(':', 1)[1]].prefix or None
 	strip = strip if strip is not None else cfg.series.get('strip-trailers', DEFAULT_STRIP)
 	lint_re = re.compile(cfg.series['subject-lint']) if lint and cfg.series.get('subject-lint') else None
 	names = series_mod.order(all_series, [name]) if with_depends else [name]
@@ -218,7 +221,7 @@ def prepare(repo, name, onto=None, branch=None, push=None, directory=None, strip
 			continue
 		commits += [c['sha'] for c in (m.get('changes') or [])]
 	in_base = {line.split()[1] for line in git.lines('cherry', start, meta['tip'], meta['base_sha'])
-		   if line.startswith('-')} if meta.get('tip') else set()
+		   if line.startswith('-')} if meta.get('tip') and git.merge_base(start, meta['tip']) else set()
 	commits = [c for c in commits if c not in in_base]
 	if not commits:
 		raise GitumError('series %s: nothing left to send, everything is in %s' % (name, onto))

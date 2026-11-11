@@ -19,7 +19,7 @@ from .journal import JOURNAL_REF, JournalWriter, LayerState, describe_changes
 STATES = ('draft', 'review', 'queued', 'sent', 'merged', 'rejected', 'disabled')
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+-]*$')
 SET_KEYS = {'state', 'pr', 'internal_mr', 'bugs', 'depends', 'disabled', 'title', 'version', 'base', 'branch',
-	    'note', 'upstream_commit', 'fixes'}
+	    'note', 'upstream_commit', 'fixes', 'upstream'}
 
 
 def meta_path(name):

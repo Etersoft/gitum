@@ -267,6 +267,8 @@ class Sync:
 						    'new_tip': old.tip, 'results': [], 'unchanged': True}
 			self.repo.save_op(op)
 			return False
+		if layer.generator:
+			return self._generate_layer(journal, layer, old, new_base)
 		if git.rev_list('--merges', '%s..%s' % (old.base, old.tip)):
 			raise GitumError('layer %s has merge commits; gitum layers must be linear' % layer.name)
 		commits = git.rev_list('--reverse', '%s..%s' % (old.base, old.tip))
@@ -297,16 +299,56 @@ class Sync:
 			else:
 				todo.append(sha)
 			results.append(res)
-		if not op['worktree']:
-			wt = self.repo.add_worktree(new_base, 'sync-' + op['run'])
-			op['worktree'] = str(wt.cwd)
-		else:
-			wt = git.at(op['worktree'])
-			wt.run('checkout', '-q', '--detach', new_base)
+		self._worktree(new_base)
 		op['current'] = {'layer': layer.name, 'old_base': old.base, 'old_tip': old.tip,
 				 'new_base': new_base, 'todo': todo, 'results': results}
 		self.repo.save_op(op)
 		return True
+
+	def _generate_layer(self, journal, layer, old, new_base):
+		"""Rebuild a layer by its generator (wine-staging, a command) on the new base."""
+		from . import packaging
+		op, git = self.op, self.git
+		cfg = journal.config
+		wt = self._worktree(new_base)
+		up = cfg.root_upstream(layer)
+		target_tag = op['targets'].get(up.name, {}).get('tag', '')
+		try:
+			if layer.generator == 'staging':
+				info = packaging.generate_staging(self.repo, wt, layer.options, target_tag, up.release_tags,
+								  op['run_dir'])
+			else:
+				info = packaging.generate_command(self.repo, wt, layer.options, target_tag, new_base,
+								  op['run_dir'], layer.name)
+			post = packaging.post_command(self.repo, wt, layer.options, op['run_dir'], layer.name)
+			if post:
+				info['post_log'] = post
+		except NeedsHuman:
+			self._cleanup()
+			raise
+		new_tip = wt.rev('HEAD')
+		generated = git.rev_list('--reverse', '%s..%s' % (new_base, new_tip))
+		new_pids = git.patch_ids(generated)
+		new_subjects = {git.commit_info(s)['subject'] for s in generated}
+		results = [{'sha': s, 'new_sha': s, 'subject': git.commit_info(s)['subject'], 'result': 'generated'}
+			   for s in generated]
+		for c in old.changes:
+			if c.patch_id not in new_pids.values() and c.subject not in new_subjects:
+				results.append({'sha': c.sha, 'subject': c.subject, 'result': 'dropped-by-generator'})
+		op['current'] = {'layer': layer.name, 'old_base': old.base, 'old_tip': old.tip, 'new_base': new_base,
+				 'todo': [], 'results': results, 'generator': info}
+		self.repo.save_op(op)
+		return True
+
+	def _worktree(self, rev):
+		op = self.op
+		if not op['worktree']:
+			wt = self.repo.add_worktree(rev, 'sync-' + op['run'])
+			op['worktree'] = str(wt.cwd)
+		else:
+			wt = self.git.at(op['worktree'])
+			wt.run('checkout', '-q', '--detach', rev)
+		return wt
 
 	def _continue_layer(self):
 		op = self.op
@@ -433,6 +475,8 @@ class Sync:
 		(Path(op['run_dir']) / ('range-diff-%s.txt' % cur['layer'])).write_bytes(range_diff)
 		op['layers'][cur['layer']] = {'old_base': cur['old_base'], 'old_tip': cur['old_tip'],
 					      'new_base': cur['new_base'], 'new_tip': new_tip, 'results': cur['results']}
+		if cur.get('generator'):
+			op['layers'][cur['layer']]['generator'] = cur['generator']
 		op['current'] = None
 		self.repo.save_op(op)
 

@@ -91,9 +91,10 @@ def cmd_pull(repo, args, out):
 
 
 def register(sub):
-	from . import commands_changes, commands_upstream
+	from . import commands_changes, commands_packaging, commands_upstream
 	commands_changes.register(sub)
 	commands_upstream.register(sub)
+	commands_packaging.register(sub)
 	s = sub.add_parser('sync', help='move the layer stack onto a new upstream in one pass')
 	g = s.add_mutually_exclusive_group()
 	g.add_argument('--to', action='append', metavar='[NAME=]REF', help='target commit or tag of an upstream')

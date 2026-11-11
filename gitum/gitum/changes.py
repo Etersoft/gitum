@@ -41,6 +41,7 @@ RESULT_FATES = {
 	'annihilated': 'dropped',
 	'skipped': 'dropped',
 	'dropped-marked': None,		# keeps its fate
+	'dropped-by-generator': 'dropped',
 }
 BUG_RE = re.compile(r'(?:eterbug|bug)\s*#?\s*(\d+)', re.I)
 

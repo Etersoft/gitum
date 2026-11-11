@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 gitum (Git Upstream Manager) keeps your changes developed in parallel with an external upstream and syncs them with it.
-- The code is the package `gitum/gitum/`. Its design and the decisions taken are in `docs/design-v2.md` (Russian); read it before changing the gitum 2 code. Stages 0 (foundation), 1 (sync), 2 (changes, series, upstream check, forges) and 3 (variants, queue, prepare, backport, branches, mirrors in `upstreamwork.py`) are done; stage 4 (packaging) follows the plan in section 9 of the design.
+- The code is the package `gitum/gitum/`. Its design and the decisions taken are in `docs/design-v2.md` (Russian); read it before changing the gitum 2 code. All stages of the plan in section 9 of the design are implemented: 0 foundation, 1 sync, 2 changes/series/upstream check/forges, 3 upstream work (`upstreamwork.py`), 4 packaging (`packaging.py`: generated layers, spec/quilt/staging export and import, HTML reports).
 
 User docs: `README.md` (English) and `README.ru.md` (Russian), still describing gitum 1. `NOTES` (untracked) is an old list of known problems, in Russian.
 
@@ -49,6 +49,9 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
   - Import/export of that layout; `checkout` builds a branch with dependencies first.
 - **Upstream check.** `upstreamcheck.py` matches by patch-id, then scores candidates touching the same files by subject + diff similarity (`merged-modified` ≥ 0.75, `suspect` ≥ 0.5).
 - **Forges.** `forge.py` reads GitHub/GitLab/Forgejo REST APIs (tokens from env) and supports JSON import/export.
+- **Generated layers.** A layer with `generator = "staging"` (`staging-repo`, `staging-ref` = `v{version}`, `staging-exclude`) or `"command"` is rebuilt on the new base instead of cherry-picked.
+  - `post-command` runs afterwards (autoreconf etc.).
+  - On wine-rebased this reproduced the robot's `rebased-11.20` except `configure`, whose content depends on the autoconf version.
 - **Shared rerere.** `rrcache.py` keeps the rerere cache in the journal under `rr-cache/`.
 - **Hooks.** `hooks.py` passes JSON events on stdin; hook failures never fail a run.
 - **Publishing.** `publish.py` pushes layers with a lease and the journal/history without force. Commits others pushed since our last publish (`refs/gitum/published/...`) are cherry-picked on top. `pull` fast-forwards the journal, or merges diverged journals with `git merge-tree` when they touched different files, and moves the branches.

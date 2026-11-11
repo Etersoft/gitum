@@ -116,7 +116,7 @@ def cmd_series(repo, args, out):
 		out.result(meta, '\n'.join(lines))
 	elif a == 'add':
 		meta = series.add(repo, args.name, args.branch or 'series/' + args.name, args.base,
-				  [d for d in (args.depends or '').split(',') if d], args.state)
+				  [d for d in (args.depends or '').split(',') if d], args.state, upstream=args.upstream)
 		out.result(meta, 'Series %s: %d patches on %s' % (args.name, len(meta['changes']), short(meta['base_sha'])))
 	elif a == 'save':
 		data = series.save(repo, args.names or None)
@@ -239,6 +239,7 @@ def register(sub):
 	p.add_argument('--base', required=True, help='upstream:NAME, layer:NAME, series:NAME or a ref')
 	p.add_argument('--depends', help='comma separated series names')
 	p.add_argument('--state', default='draft', choices=series.STATES)
+	p.add_argument('--upstream', help='the upstream the series is for, if not its base (vendored trees)')
 	p = ss.add_parser('save', help='record series branches in the journal')
 	p.add_argument('names', nargs='*')
 	p = ss.add_parser('set')

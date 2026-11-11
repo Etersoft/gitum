@@ -24,9 +24,10 @@ def norm_subject(subject):
 	return SUBJECT_NOISE.sub(' ', subject).strip().rstrip('.').lower()
 
 
-def diff_lines(git, sha):
+def diff_lines(git, sha, relative=''):
 	"""Changed lines of a commit (without context) and the files it touches."""
-	out = git.run('show', '--format=', '--unified=0', '--no-color', sha).stdout.decode('utf-8', errors='replace')
+	args = ['show', '--format=', '--unified=0', '--no-color'] + (['--relative=' + relative] if relative else [])
+	out = git.run(*args, sha).stdout.decode('utf-8', errors='replace')
 	lines, files = [], set()
 	for line in out.splitlines():
 		if line.startswith('+++ b/'):
@@ -63,10 +64,14 @@ class UpstreamIndex:
 			self._lines[sha] = diff_lines(self.git, sha)[0]
 		return self._lines[sha]
 
-	def find(self, sha, patch_id, subject, email):
+	def find(self, sha, patch_id, subject, email, relative=''):
+		if relative:
+			diff = self.git.run('show', '--relative=' + relative, sha).stdout
+			out = self.git.run('patch-id', '--stable', input=diff).stdout.decode().split()
+			patch_id = out[0] if out else ''
 		if patch_id and patch_id in self.by_pid:
 			return {'status': 'merged', 'upstream_commit': self.by_pid[patch_id], 'similarity': 1.0}
-		ours, files = diff_lines(self.git, sha)
+		ours, files = diff_lines(self.git, sha, relative)
 		candidates = {}
 		for f in files:
 			for c in self.by_file.get(f, []):
@@ -122,7 +127,9 @@ def containers(journal, what):
 			from .journal import Change
 			up = None
 			base_kind, _, base_name = meta['base'].partition(':')
-			if base_kind == 'upstream':
+			if meta.get('upstream'):
+				up = cfg.upstreams.get(meta['upstream'])
+			elif base_kind == 'upstream':
 				up = cfg.upstreams.get(base_name)
 			elif base_kind == 'layer' and base_name in cfg.layers:
 				up = cfg.root_upstream(cfg.layers[base_name])
@@ -148,9 +155,12 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 		if key not in indexes:
 			indexes[key] = UpstreamIndex(git, base, target)
 		index = indexes[key]
+		prefix = upstream.prefix if upstream else ''
 		for c in chs:
 			info = git.commit_info(c.sha)
-			res = index.find(c.sha, c.patch_id, c.subject, info['email'])
+			if prefix and not git.lines('show', '--format=', '--name-only', '--relative=' + prefix, c.sha):
+				continue		# does not touch the vendored tree
+			res = index.find(c.sha, c.patch_id, c.subject, info['email'], prefix)
 			entry = {'container': spec, 'id': c.gitum_id, 'sha': c.sha, 'subject': c.subject, **res}
 			if res.get('upstream_commit'):
 				entry['release'] = first_release(git, upstream, res['upstream_commit'])
