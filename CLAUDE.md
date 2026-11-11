@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 gitum (Git Upstream Manager) keeps your changes developed in parallel with an external upstream and syncs them with it.
 - The code is the package `gitum/gitum/`. Its design and the decisions taken are in `docs/design-v2.md` (Russian); read it before changing the gitum 2 code. All stages of the plan in section 9 of the design are implemented: 0 foundation, 1 sync, 2 changes/series/upstream check/forges, 3 upstream work (`upstreamwork.py`), 4 packaging (`packaging.py`: generated layers, spec/quilt/staging export and import, HTML reports).
 
-User docs: `README.md` (English) and `README.ru.md` (Russian), still describing gitum 1. `NOTES` (untracked) is an old list of known problems, in Russian.
+User docs: `README.md` (English) and `README.ru.md` (Russian) describe gitum 2 and must stay in sync with each other. `NOTES` (untracked) is an old list of known problems, in Russian.
 
 Packaged for ALT Linux via gear. The working branch is `sisyphus`. Remotes: `git.github` (github.com/Etersoft/gitum) and `pub.gitlab` (gitlab.eterfund.ru/etersoft/gitum); publish with `gpush`.
 
