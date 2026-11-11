@@ -145,6 +145,12 @@ def cmd_status(repo, args, out):
 		text += '\nchanges: ' + ', '.join('%s %d' % kv for kv in sorted(fates.items()))
 	if states:
 		text += '\nseries: ' + ', '.join('%s %d' % kv for kv in sorted(states.items()))
+	if all_series:
+		from .series import suspect_warning
+		suspects = [w for w in (suspect_warning(m) for _, m in sorted(all_series.items())) if w]
+		if suspects:
+			data['warnings'] = suspects
+			text += ''.join('\nwarning: ' + w for w in suspects)
 	if args.changes:
 		rows = [r for r in change_rows(journal) if args.all or r['action']]
 		data['changes'] = rows

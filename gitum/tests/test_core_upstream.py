@@ -380,3 +380,29 @@ def test_mr_url_template(ser, tmp_path, capsys):
 		'gitlab', 'https://gitlab.old.example/api/v4', 'wine/wine', 1)
 	from gitum.upstreamwork import md_link
 	assert md_link(url) == '[wine/wine!1](%s)' % url
+
+
+def test_series_on_newer_upstream_than_the_ref(stack, capsys):
+	"""A series branch on an upstream newer than the local upstream ref: warned, not silently bigger."""
+	up, work = stack
+	up.run('config', 'user.email', 'maint@upstream')
+	up.commit('upstream: one', {'u1': '1\n'})
+	work.run('fetch', '-q', 'winehq')
+	up.commit('upstream: two', {'u2': '2\n'})
+	up.commit('upstream: three', {'u3': '3\n'})
+	work.run('fetch', '-q', str(up.path), 'master')		# only FETCH_HEAD: winehq/master stays old
+	work.run('checkout', '-q', '-b', 'series/fresh', 'FETCH_HEAD')
+	work.commit('ntdll: Fresh fix.', {'ntdll': 'fresh\n'})
+	work.run('checkout', '-q', '--detach')
+	code, meta = gitum_json(work, capsys, 'series', 'add', 'fresh', '--base', 'upstream:winehq')
+	assert code == EXIT_NEEDS_HUMAN and len(meta['upstream_suspects']) == 2
+	assert 'fetch the upstream' in meta['warnings'][0]
+	code, data = gitum_json(work, capsys, 'status', '--series')
+	assert code == 0 and data['warnings'] and data['series_tree'][0]['upstream_suspects'] == 2
+	assert gitum(work, 'status', '--series') == 0
+	assert 'look like upstream ones' in capsys.readouterr().out
+	work.run('fetch', '-q', 'winehq')
+	code, data = gitum_json(work, capsys, 'series', 'save', 'fresh')
+	assert code == 0 and not data['warnings']
+	meta = journal(work).read_json('series/fresh/meta.json')
+	assert len(meta['changes']) == 1 and 'upstream_suspects' not in meta

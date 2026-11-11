@@ -160,7 +160,9 @@ def series_tree(repo, journal, with_variants=False):
 		       'patches': len(meta.get('changes') or []), 'depends': meta.get('depends', []),
 		       'target': meta.get('target') or upstreamwork.DEFAULT_TARGET, 'base_behind': lag,
 		       'claimed_by': (series.claim_owner(repo, name) or {}).get('session'), 'updated': meta.get('updated', ''),
-		       'variants': sorted(meta.get('variants') or {}), 'pr': meta.get('pr', '')}
+		       'variants': sorted(meta.get('variants') or {}), 'pr': meta.get('pr', ''),
+		       'upstream_suspects': len(meta.get('upstream_suspects') or []),
+		       'warning': series.suspect_warning(meta)}
 		if with_variants and meta.get('variants'):
 			row['diverged'] = sorted(spec for spec, v in upstreamwork.variants(repo, name).items() if v['diverged'])
 		rows[name] = row
@@ -188,7 +190,9 @@ def format_tree(rows):
 	lines = []
 	for r in rows:
 		notes = []
-		if r['base_behind']:
+		if r.get('upstream_suspects'):
+			notes.append('%d commits look like upstream ones: fetch the upstream?' % r['upstream_suspects'])
+		elif r['base_behind']:
 			notes.append('base %d behind' % r['base_behind'])
 		elif r['base_behind'] == 0:
 			notes.append('base up to date')
@@ -204,6 +208,13 @@ def format_tree(rows):
 		lines.append('%-40s %-12s %3d patches  %s' % ('  ' * r['depth'] + r['name'], state, r['patches'],
 							   '; '.join(notes)))
 	return '\n'.join(lines)
+
+
+def with_warnings(out, data, text):
+	"""Print a result with its warnings; exit 2 when there are any."""
+	warnings = data.get('warnings') or []
+	out.result(data, '\n'.join([text] + ['warning: ' + w for w in warnings]))
+	return EXIT_NEEDS_HUMAN if warnings else EXIT_OK
 
 
 def cmd_series(repo, args, out):
@@ -222,10 +233,11 @@ def cmd_series(repo, args, out):
 	elif a == 'add':
 		meta = series.add(repo, args.name, args.branch or 'series/' + args.name, args.base,
 				  [d for d in (args.depends or '').split(',') if d], args.state, upstream=args.upstream)
-		out.result(meta, 'Series %s: %d patches on %s' % (args.name, len(meta['changes']), short(meta['base_sha'])))
+		return with_warnings(out, meta, 'Series %s: %d patches on %s' % (
+			args.name, len(meta['changes']), short(meta['base_sha'])))
 	elif a == 'save':
 		data = series.save(repo, args.names or None)
-		out.result(data, ('Saved: ' + ', '.join(data['saved'])) if data['saved'] else 'Nothing to save.')
+		return with_warnings(out, data, ('Saved: ' + ', '.join(data['saved'])) if data['saved'] else 'Nothing to save.')
 	elif a == 'set':
 		meta = series.set_(repo, args.name, parse_values(args.values))
 		out.result(meta, 'Series %s updated.' % args.name)
@@ -254,7 +266,7 @@ def cmd_series(repo, args, out):
 		for sk in data['skipped']:
 			lines.append('kept %s state %s instead of %s: %s; if it is right anyway: %s (or import with --force)' % (
 				sk['series'], sk['kept'], sk['state'], sk['reason'], sk['command']))
-		out.result(data, '\n'.join(lines))
+		return with_warnings(out, data, '\n'.join(lines))
 	elif a == 'checkout':
 		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends)
 		out.result(data, '%s: %d patches on %s' % (data['branch'], len(data['applied']), short(data['base'])))

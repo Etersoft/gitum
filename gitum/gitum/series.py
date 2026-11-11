@@ -271,6 +271,38 @@ def _commit(repo, journal, writer, message, extra_parents=()):
 	return new
 
 
+_UPSTREAM_COMMITTERS = {}
+
+
+def upstream_looking(git, ref, base, tip):
+	"""Commits base..tip committed by someone who commits to the upstream, but not by us.
+
+	Such commits in a series usually mean that the series branch stands on a
+	newer upstream than the local upstream ref: the ref needs a fetch.
+	"""
+	ref_sha = git.rev(ref)
+	if ref_sha not in _UPSTREAM_COMMITTERS:
+		_UPSTREAM_COMMITTERS[ref_sha] = set(git.lines('log', '-n', '500', '--no-merges', '--format=%ce', ref_sha))
+	ups = _UPSTREAM_COMMITTERS[ref_sha]
+	me = git.out('config', 'user.email', check=False)
+	found = []
+	for line in git.lines('log', '--reverse', '--no-merges', '--format=%H %ce', '%s..%s' % (base, tip)):
+		sha, _, email = line.partition(' ')
+		if email in ups and email != me:
+			found.append(sha)
+	return found
+
+
+def suspect_warning(meta):
+	"""A warning for a series whose branch looks newer than its upstream ref, or ''."""
+	found = meta.get('upstream_suspects')
+	if not found:
+		return ''
+	return ('series %s: %d of its commits look like upstream ones (committed by an upstream committer): '
+		'the branch base is probably not in %s yet; fetch the upstream and run gitum series save %s'
+		% (meta['name'], len(found), meta.get('upstream') or meta['base'], meta['name']))
+
+
 def _record(repo, journal, writer, tracker, name, meta, branch_tip, context, all_series=None):
 	"""Recompute changes and patches of a series from its branch.
 
@@ -300,6 +332,11 @@ def _record(repo, journal, writer, tracker, name, meta, branch_tip, context, all
 		if rec['meta'].get('series') != name:
 			tracker.set(c.gitum_id, series=name)
 	meta.update(base_sha=base, tip=branch_tip, changes=[c.to_json() for c in new_changes])
+	suspects = upstream_looking(git, ref, base, branch_tip) if meta['base'].startswith('upstream:') else []
+	if suspects:
+		meta['upstream_suspects'] = suspects
+	else:
+		meta.pop('upstream_suspects', None)
 	drop_patches(journal, writer, name)
 	writer.put_json(meta_path(name), meta)
 	writer.put('series/%s/definition' % name, definition_text(meta))
@@ -333,6 +370,7 @@ def add(repo, name, branch, base, depends=(), state='draft', **meta):
 		_record(repo, journal, writer, tracker, name, data, tip, 'series add', known)
 		tracker.write(writer)
 		_commit(repo, journal, writer, 'gitum: series add %s' % name, [tip])
+		data['warnings'] = [w for w in [suspect_warning(data)] if w]
 		return data
 
 
@@ -368,7 +406,8 @@ def save(repo, names=None):
 			return {'changed': False, 'saved': []}
 		tracker.write(writer)
 		_commit(repo, journal, writer, 'gitum: series save %s' % ', '.join(saved), tips)
-		return {'changed': True, 'saved': saved}
+		warnings = [w for w in (suspect_warning(all_series[n]) for n in saved) if w]
+		return {'changed': True, 'saved': saved, 'warnings': warnings}
 
 
 def set_(repo, name, values):
@@ -661,7 +700,9 @@ def import_json(repo, items, force=False):
 			progress = True
 		if not progress:
 			raise GitumError('series dependency cycle among %s' % ', '.join(i['name'] for i in pending))
-	return {'created': created, 'updated': updated, 'skipped': skipped}
+	final = load_all(repo.journal())
+	warnings = [w for w in (suspect_warning(final[n]) for n in created + updated if n in final) if w]
+	return {'created': created, 'updated': updated, 'skipped': skipped, 'warnings': warnings}
 
 
 def _put_dates(repo, name, updated, history):
