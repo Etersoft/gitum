@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="870" height="470" viewBox="0 0 870 470" font-family="DejaVu Sans, Verdana, sans-serif">
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#888"/></marker></defs>
+<rect x="0.5" y="0.5" width="869" height="469" rx="10" fill="#fdfdfb" stroke="#ddd"/>
+<line x1="90" y1="394" x2="90" y2="155" stroke="#555" stroke-width="1.5"/>
+<text x="90" y="56" font-size="15" text-anchor="middle" font-weight="bold" fill="#222">upstream</text>
+<circle cx="90" cy="380" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="90" cy="346" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="90" cy="312" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="90" cy="278" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="90" cy="244" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="90" cy="210" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<line x1="260" y1="394" x2="260" y2="96" stroke="#555" stroke-width="1.5"/>
+<text x="260" y="56" font-size="15" text-anchor="middle" font-weight="bold" fill="#222">merge</text>
+<text x="260" y="74" font-size="12" text-anchor="middle" font-weight="normal" fill="#666">ours get buried</text>
+<circle cx="260" cy="380" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="260" cy="346" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="260" cy="312" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="260" cy="278" r="11" fill="#f2cf4a" stroke="#a8891b" stroke-width="1.6"/>
+<text x="278" y="283" font-size="13" text-anchor="start" font-weight="normal" fill="#555">A</text>
+<circle cx="260" cy="244" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="260" cy="210" r="11" fill="#f2cf4a" stroke="#a8891b" stroke-width="1.6"/>
+<text x="278" y="215" font-size="13" text-anchor="start" font-weight="normal" fill="#555">B</text>
+<circle cx="260" cy="176" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="260" cy="142" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<line x1="430" y1="394" x2="430" y2="96" stroke="#555" stroke-width="1.5"/>
+<text x="430" y="56" font-size="15" text-anchor="middle" font-weight="bold" fill="#222">rebase</text>
+<text x="430" y="74" font-size="12" text-anchor="middle" font-weight="normal" fill="#666">history is lost</text>
+<circle cx="430" cy="380" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="430" cy="346" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="430" cy="312" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="430" cy="278" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="430" cy="244" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="430" cy="210" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="430" cy="176" r="11" fill="#f2cf4a" stroke="#a8891b" stroke-width="1.6"/>
+<text x="448" y="181" font-size="13" text-anchor="start" font-weight="normal" fill="#555">A'</text>
+<circle cx="430" cy="142" r="11" fill="#f2cf4a" stroke="#a8891b" stroke-width="1.6"/>
+<text x="448" y="147" font-size="13" text-anchor="start" font-weight="normal" fill="#555">B'</text>
+<line x1="580" y1="394" x2="580" y2="96" stroke="#555" stroke-width="1.5"/>
+<text x="580" y="56" font-size="15" text-anchor="middle" font-weight="bold" fill="#222">gitum</text>
+<text x="580" y="74" font-size="12" text-anchor="middle" font-weight="normal" fill="#666">layer on top</text>
+<circle cx="580" cy="380" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="580" cy="346" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="580" cy="312" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<circle cx="580" cy="278" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="580" cy="244" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="580" cy="210" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<circle cx="580" cy="176" r="11" fill="#f2cf4a" stroke="#a8891b" stroke-width="1.6"/>
+<text x="598" y="181" font-size="13" text-anchor="start" font-weight="normal" fill="#555">A'</text>
+<circle cx="580" cy="142" r="11" fill="#f2cf4a" stroke="#a8891b" stroke-width="1.6"/>
+<text x="598" y="147" font-size="13" text-anchor="start" font-weight="normal" fill="#555">B'</text>
+<line x1="700" y1="394" x2="700" y2="291" stroke="#555" stroke-width="1.5"/>
+<text x="700" y="56" font-size="15" text-anchor="middle" font-weight="bold" fill="#222">history</text>
+<text x="700" y="74" font-size="12" text-anchor="middle" font-weight="normal" fill="#666">kept</text>
+<rect x="690" y="370" width="20" height="20" rx="3" fill="#8f7cc9" stroke="#55448c" stroke-width="1.6"/>
+<text x="718" y="385" font-size="13" text-anchor="start" font-weight="normal" fill="#555">state 1</text>
+<rect x="690" y="336" width="20" height="20" rx="3" fill="#8f7cc9" stroke="#55448c" stroke-width="1.6"/>
+<text x="718" y="351" font-size="13" text-anchor="start" font-weight="normal" fill="#555">sync</text>
+<circle cx="31" cy="445" r="11" fill="#3d6fc4" stroke="#1f3f80" stroke-width="1.6"/>
+<text x="48" y="450" font-size="13" text-anchor="start" font-weight="normal" fill="#444">upstream commit</text>
+<circle cx="188" cy="445" r="11" fill="#2fae7f" stroke="#16704d" stroke-width="1.6"/>
+<text x="205" y="450" font-size="13" text-anchor="start" font-weight="normal" fill="#444">new upstream commit</text>
+<circle cx="374" cy="445" r="11" fill="#f2cf4a" stroke="#a8891b" stroke-width="1.6"/>
+<text x="391" y="450" font-size="13" text-anchor="start" font-weight="normal" fill="#444">our change</text>
+</svg>
