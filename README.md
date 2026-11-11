@@ -37,6 +37,126 @@ relative to upstream.
   in the wine-staging layout, so they can be imported from and exported to
   wine-staging style directories.
 
+## How it works
+
+### A stack of layers moves to a new upstream in one pass
+
+```mermaid
+flowchart LR
+  subgraph before["before"]
+    direction BT
+    U1["winehq<br/>wine-11.19"] --> S1["rebased<br/>wine-staging"] --> B1["rebased-basealt<br/>15 patches"] --> E1["rebased-etersoft<br/>156 patches"]
+  end
+  subgraph after["after gitum sync --next-release"]
+    direction BT
+    U2["winehq<br/>wine-11.20"] --> S2["rebased<br/>rebuilt from wine-staging v11.20"] --> B2["rebased-basealt<br/>moved"] --> E2["rebased-etersoft<br/>moved"]
+  end
+  before ==>|private work tree,<br/>all branches move at once| after
+```
+
+A layer is moved only after the layer below it has moved successfully. Until
+the whole stack is done, no branch of yours changes.
+
+### What happens to each change during a sync
+
+```mermaid
+flowchart TD
+  C(["a change of the layer"]) --> R{"patch + revert pair?"}
+  R -- yes --> AN["annihilated"]
+  R -- no --> F{"its fate says drop?<br/>merged, fixed differently, disabled"}
+  F -- yes --> DM["dropped-marked"]
+  F -- no --> O{"its Origin commit<br/>is in the new base?"}
+  O -- yes --> DB["dropped-backport"]
+  O -- no --> P{"the same patch<br/>is already upstream?"}
+  P -- yes --> DU["dropped-upstream"]
+  P -- no --> CP["cherry-pick onto the new base"]
+  CP -- clean --> PK["picked"]
+  CP -- nothing left --> EM["emptied:<br/>accepted with edits?"]
+  CP -- conflict --> RR["rerere"]
+  RR -- not solved --> RU["your rules"]
+  RU -- not solved --> AG["agent"]
+  AG -- not solved --> H["stop with exit code 2:<br/>a person resolves,<br/>gitum continue or skip"]
+  RR -- solved --> RS["resolved,<br/>the resolver is recorded"]
+  RU -- solved --> RS
+  AG -- solved --> RS
+  H --> RS
+```
+
+Every result goes to the run report and to the history of the change. Results
+from resolvers you do not trust yet (an agent, for example) first go to
+`candidate/*` branches for review.
+
+### What is rewritten and what only grows
+
+```mermaid
+flowchart LR
+  subgraph rewritten["rewritten by every sync"]
+    L["layer branches<br/>rebased, rebased-basealt,<br/>rebased-etersoft"]
+  end
+  subgraph growing["only grow: safe to share"]
+    J["gitum/journal<br/>a commit per state:<br/>gitum.toml, layers, changes,<br/>series, run reports, rr-cache"]
+    H["gitum/history/LAYER<br/>a commit per state<br/>with the tree of the layer:<br/>git log -p and bisect"]
+  end
+  L -- state recorded --> J
+  L -- tree recorded --> H
+  J -. old tips stay reachable .-> L
+```
+
+The layer branches are pushed with a lease; commits a colleague pushed
+meanwhile are put on top. The journal and the history branches are pushed
+without force. The journals of two sessions merge on `gitum pull` when they
+changed different series or changes.
+
+### The fate of a change
+
+```mermaid
+stateDiagram-v2
+  direction TB
+  state "local" as local
+  state "draft" as draft
+  state "review" as review
+  state "queued" as queued
+  state "sent" as sent
+  state "merged" as merged
+  state "merged-modified" as merged_modified
+  state "rejected" as rejected
+  state "fixed-differently" as fixed
+  state "distro-only" as distro
+  state "backport" as backport
+  [*] --> local: added to a layer
+  [*] --> backport: gitum backport
+  local --> draft
+  local --> distro: not for upstream
+  local --> fixed: upstream did it another way
+  draft --> review: internal MR
+  review --> queued: gitum queue add
+  queued --> sent: upstream MR
+  sent --> merged: accepted as is
+  sent --> merged_modified: accepted with edits
+  sent --> rejected
+  rejected --> draft: rework
+  merged --> [*]: dropped by sync
+  merged_modified --> [*]: dropped by sync
+  fixed --> [*]: dropped by sync
+  backport --> [*]: dropped when the base has it
+```
+
+`gitum check-upstream` finds accepted changes by patch-id or by similarity,
+and `gitum forge refresh` reads merge request states from the forge.
+
+### A series on its way upstream
+
+```mermaid
+flowchart TB
+  BR["branch<br/>series/ntdll-fix"] -->|gitum series add| SE[("series in the journal:<br/>definition, patches,<br/>bugs, MR links")]
+  SE -->|gitum port| VA["variant<br/>series/ntdll-fix@etersoft<br/>for our builds"]
+  SE -->|gitum queue| QU["queue:<br/>one at a time,<br/>dependencies first"]
+  QU -->|gitum prepare --push| PR["fork branch on a fresh master:<br/>new dates, no Co-Authored-By"]
+  PR -->|MR by hand| UP["upstream"]
+  UP -->|forge refresh,<br/>check-upstream| DONE["merged:<br/>dropped from the layers<br/>at the next sync"]
+  VA -. gitum variants:<br/>do they diverge? .- SE
+```
+
 ## Requirements
 
 - Python 3.11 or newer

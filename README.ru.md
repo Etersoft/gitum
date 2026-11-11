@@ -38,6 +38,126 @@ gitum помогает вести разработку параллельно в
   серии в раскладке wine-staging, поэтому их можно импортировать из
   каталогов в стиле wine-staging и экспортировать в такие каталоги.
 
+## Как это устроено
+
+### Стек слоёв переносится на новый апстрим за один проход
+
+```mermaid
+flowchart LR
+  subgraph before["до"]
+    direction BT
+    U1["winehq<br/>wine-11.19"] --> S1["rebased<br/>wine-staging"] --> B1["rebased-basealt<br/>15 патчей"] --> E1["rebased-etersoft<br/>156 патчей"]
+  end
+  subgraph after["после gitum sync --next-release"]
+    direction BT
+    U2["winehq<br/>wine-11.20"] --> S2["rebased<br/>собран из wine-staging v11.20"] --> B2["rebased-basealt<br/>перенесён"] --> E2["rebased-etersoft<br/>перенесён"]
+  end
+  before ==>|приватное рабочее дерево,<br/>все ветки двигаются разом| after
+```
+
+Слой переносится только после успешного переноса слоя под ним. Пока весь
+стек не готов, ни одна ваша ветка не меняется.
+
+### Что происходит с каждым изменением при sync
+
+```mermaid
+flowchart TD
+  C(["изменение слоя"]) --> R{"пара патч + revert?"}
+  R -- да --> AN["annihilated:<br/>схлопнуто"]
+  R -- нет --> F{"судьба велит выбросить?<br/>принято, исправлено иначе, отключено"}
+  F -- да --> DM["dropped-marked"]
+  F -- нет --> O{"коммит из Origin<br/>уже в новой базе?"}
+  O -- да --> DB["dropped-backport"]
+  O -- нет --> P{"такой же патч<br/>уже в апстриме?"}
+  P -- да --> DU["dropped-upstream"]
+  P -- нет --> CP["cherry-pick на новую базу"]
+  CP -- чисто --> PK["picked"]
+  CP -- ничего не осталось --> EM["emptied:<br/>принято с правками?"]
+  CP -- конфликт --> RR["rerere"]
+  RR -- не решил --> RU["ваши правила"]
+  RU -- не решили --> AG["агент"]
+  AG -- не решил --> H["стоп с кодом 2:<br/>человек разрешает,<br/>gitum continue или skip"]
+  RR -- решил --> RS["resolved,<br/>записано, кто разрешил"]
+  RU -- решили --> RS
+  AG -- решил --> RS
+  H --> RS
+```
+
+Каждый результат попадает в отчёт прогона и в историю изменения. Результаты
+резолверов, которым вы ещё не доверяете (например, агента), сначала уходят на
+ревью в ветки `candidate/*`.
+
+### Что переписывается, а что только растёт
+
+```mermaid
+flowchart LR
+  subgraph rewritten["переписываются при каждом sync"]
+    L["ветки слоёв<br/>rebased, rebased-basealt,<br/>rebased-etersoft"]
+  end
+  subgraph growing["только растут: можно делиться"]
+    J["gitum/journal<br/>коммит на состояние:<br/>gitum.toml, слои, изменения,<br/>серии, отчёты, rr-cache"]
+    H["gitum/history/СЛОЙ<br/>коммит на состояние<br/>с деревом слоя:<br/>git log -p и bisect"]
+  end
+  L -- состояние записано --> J
+  L -- дерево записано --> H
+  J -. старые вершины остаются достижимы .-> L
+```
+
+Ветки слоёв публикуются с lease: коммиты, которые коллега тем временем
+запушил, встают сверху. Журнал и ветки истории публикуются без force.
+Журналы двух сессий сливаются при `gitum pull`, если те меняли разные серии
+или изменения.
+
+### Судьба изменения
+
+```mermaid
+stateDiagram-v2
+  direction TB
+  state "local" as local
+  state "draft" as draft
+  state "review" as review
+  state "queued" as queued
+  state "sent" as sent
+  state "merged" as merged
+  state "merged-modified" as merged_modified
+  state "rejected" as rejected
+  state "fixed-differently" as fixed
+  state "distro-only" as distro
+  state "backport" as backport
+  [*] --> local: добавлено в слой
+  [*] --> backport: gitum backport
+  local --> draft
+  local --> distro: не для апстрима
+  local --> fixed: апстрим сделал иначе
+  draft --> review: внутренний MR
+  review --> queued: gitum queue add
+  queued --> sent: MR в апстрим
+  sent --> merged: принято как есть
+  sent --> merged_modified: принято с правками
+  sent --> rejected
+  rejected --> draft: доработка
+  merged --> [*]: выброшено при sync
+  merged_modified --> [*]: выброшено при sync
+  fixed --> [*]: выброшено при sync
+  backport --> [*]: выброшено, когда база его содержит
+```
+
+`gitum check-upstream` находит принятые изменения по patch-id или по
+сходству, а `gitum forge refresh` читает состояния merge request'ов.
+
+### Путь серии в апстрим
+
+```mermaid
+flowchart TB
+  BR["ветка<br/>series/ntdll-fix"] -->|gitum series add| SE[("серия в журнале:<br/>definition, патчи,<br/>баги, ссылки на MR")]
+  SE -->|gitum port| VA["вариант<br/>series/ntdll-fix@etersoft<br/>для наших сборок"]
+  SE -->|gitum queue| QU["очередь:<br/>по одной,<br/>сначала зависимости"]
+  QU -->|gitum prepare --push| PR["ветка в форке на свежем master:<br/>новые даты, без Co-Authored-By"]
+  PR -->|MR вручную| UP["апстрим"]
+  UP -->|forge refresh,<br/>check-upstream| DONE["принято:<br/>выброшено из слоёв<br/>при следующем sync"]
+  VA -. gitum variants:<br/>расходятся ли? .- SE
+```
+
 ## Требования
 
 - Python 3.11 или новее
