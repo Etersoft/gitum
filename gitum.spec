@@ -1,7 +1,7 @@
 %def_with check
 
 Name: gitum
-Version: 0.9.0
+Version: 2.0.0
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -21,20 +21,24 @@ BuildRequires(pre): rpm-build-pyproject
 BuildRequires: python3-module-setuptools
 
 %if_with check
-BuildRequires: git-core
+BuildRequires: git-core >= 2.45
 BuildRequires: python3-module-pytest
 %endif
 
-Requires: git-core
+BuildRequires: python3 >= 3.11
+
+Requires: git-core >= 2.45
 
 Provides: git-um = %EVR
 Obsoletes: git-um < %EVR
 
 %description
-Git Upstream Manager is the development tool that maintains your current
-working git repository: pull upstream changes in the appropriate order
-into your current working branch and keep all your patches up-to-date
-and ready for a submission in the same time.
+gitum helps to develop in parallel with an external upstream and to stay
+in sync with it: stacks of layer branches moved onto a new upstream
+release in one pass, every change classified (applied, resolved, already
+upstream, backported, dropped), an append-only journal of states shared
+without force pushes, change fates and series with merge requests,
+upstream submission queue, wine-staging style series and RPM patch sets.
 
 %prep
 %setup
@@ -50,10 +54,19 @@ and ready for a submission in the same time.
 
 %files
 %_bindir/%name
-%python3_sitelibdir/gitupstream/
+%python3_sitelibdir/gitum/
 %python3_sitelibdir/%name-%version.dist-info/
 
 %changelog
+* Wed Nov 11 2026 Vitaly Lipatov <lav@altlinux.ru> 2.0.0-alt1
+- gitum 2: layers over upstreams, one-pass sync with conflict resolver
+  chain, review candidates, journal of states and linear history branches
+- change identities and fates, series, check-upstream, forges
+- series variants, upstream queue, prepare, backport, branch bookkeeping
+- generated layers (wine-staging, command), spec/quilt/staging patch sets,
+  HTML reports
+- gitum 1 commands and repositories are no longer supported
+
 * Wed Nov 11 2026 Vitaly Lipatov <lav@altlinux.ru> 0.9.0-alt1
 - port to Python 3 and GitPython 3, build with pyproject
 - move the CLI to gitupstream.cli (gitum entry point, python3 -m gitupstream)
