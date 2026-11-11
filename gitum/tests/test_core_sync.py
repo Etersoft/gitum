@@ -438,3 +438,22 @@ def test_sync_pulls_published_state_first(published, tmp_path, capsys):
 	code, data = gitum_json(other, capsys, 'sync', '--next-release')
 	assert code == 0 and data['changed'] is False
 	assert tips(other) == tips(work)
+
+
+def test_rewritten_upstream(tmp_path, capsys):
+	"""A base regenerated for every version (like the wine-staging branch) is not a descendant."""
+	up, work = make_stack(tmp_path)
+	assert gitum(work, 'init', '--upstream', 'staging=rebased', '--layer', 'basealt=rebased-basealt:staging',
+		     '--layer', 'etersoft=rebased-etersoft:basealt') == 0
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	work.run('checkout', '-q', '-b', 'staging-new', 'v1.1')
+	work.commit('staging: patch one (regenerated)', {'staging1': 'one\n'})
+	work.run('checkout', '-q', '--detach')
+	code, data = gitum_json(work, capsys, 'sync', '--no-fetch', '--to', 'staging-new')
+	assert code == 1 and 'not newer' in data['error']
+	code, data = gitum_json(work, capsys, 'sync', '--no-fetch', '--to', 'staging-new', '--allow-rewrite')
+	assert code == 0
+	assert work.git.merge_base('staging-new', 'rebased-basealt') == work.rev('staging-new')
+	assert work.subjects('staging-new..rebased-etersoft') == ['basealt: tweak', 'etersoft: feature',
+								   'etersoft: change base line']

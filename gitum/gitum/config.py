@@ -17,6 +17,7 @@ class Upstream:
 	url: str = ''
 	release_tags: str = ''			# glob for release tags, e.g. wine-*
 	prefix: str = ''			# vendored upstream inside the tree
+	rewritten: bool = False			# history is regenerated (e.g. a branch built by patchinstall)
 
 
 @dataclass
@@ -112,6 +113,7 @@ def parse(text):
 			url=_get(t, 'url', str, '', where),
 			release_tags=_get(t, 'release-tags', str, '', where),
 			prefix=_get(t, 'prefix', str, '', where),
+			rewritten=_get(t, 'rewritten', bool, False, where),
 		)
 		if not cfg.upstreams[name].ref:
 			raise ConfigError('%s: ref is required' % where)
@@ -165,7 +167,7 @@ def render(upstreams, layers, extra=''):
 	lines = ['version = %d' % CONFIG_VERSION, '']
 	for up in upstreams:
 		lines.append('[upstream.%s]' % up['name'])
-		for key in ('remote', 'url', 'ref', 'release-tags', 'prefix'):
+		for key in ('remote', 'url', 'ref', 'release-tags', 'prefix', 'rewritten'):
 			if up.get(key):
 				lines.append('%s = %s' % (key, _quote(up[key])))
 		lines.append('')

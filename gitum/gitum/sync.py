@@ -93,9 +93,12 @@ class Sync:
 
 	# public entry points
 
+	op_allow_rewrite = False
+
 	def start(self, to=None, next_release_=False, candidate='auto', publish=False, fetch=True,
-		  find_culprit=False, update_checked_out=False):
+		  find_culprit=False, update_checked_out=False, allow_rewrite=False):
 		repo, git = self.repo, self.git
+		self.op_allow_rewrite = allow_rewrite
 		if repo.load_op():
 			raise NeedsHuman('an operation is in progress: gitum continue, skip or abort')
 		if (repo.gitum_dir / 'candidate.json').exists():
@@ -194,7 +197,8 @@ class Sync:
 				if not sha:
 					raise GitumError('upstream %s: %s does not exist' % (up.name, up.ref))
 				tag = state.upstream_tag(git, up, sha)
-			if current and sha != current and not git.is_ancestor(current, sha):
+			if current and sha != current and not git.is_ancestor(current, sha) \
+					and not (up.rewritten or self.op_allow_rewrite):
 				raise GitumError('upstream %s: %s is not newer than the current base %s'
 						 % (up.name, tag or sha[:12], current[:12]))
 			targets[up.name] = {'sha': sha, 'tag': tag, 'old': current}

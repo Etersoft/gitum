@@ -50,7 +50,8 @@ def cmd_sync(repo, args, out):
 			to[None] = spec
 	data = sync.sync(repo, to=to or None, next_release_=args.next_release, candidate=args.candidate,
 			 publish=args.publish, fetch=not args.no_fetch, find_culprit=args.find_culprit,
-			 update_checked_out=args.update_checked_out, wait=args.wait, step=args.step)
+			 update_checked_out=args.update_checked_out, wait=args.wait, step=args.step,
+			 allow_rewrite=args.allow_rewrite)
 	return _result(args, out, data)
 
 
@@ -99,6 +100,8 @@ def register(sub):
 			    'not listed in resolve.review-unless was used)')
 	s.add_argument('--publish', action='store_true', help='publish the result')
 	s.add_argument('--no-fetch', action='store_true', help='do not fetch the upstream remotes')
+	s.add_argument('--allow-rewrite', action='store_true',
+		       help='the target need not contain the current base (a regenerated upstream)')
 	s.add_argument('--step', action='store_true',
 		       help='one upstream commit at a time, recording a state after each (for bisect)')
 	s.add_argument('--find-culprit', action='store_true',
