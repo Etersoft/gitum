@@ -225,7 +225,7 @@ def queue_pause(repo, target, paused, reason=''):
 
 def md_link(url):
 	"""A merge request URL as a short markdown link."""
-	m = re.match(r'^https?://[^/]+/(.+?)(?:/-/merge_requests/|/pulls?/)(\d+)', url or '')
+	m = re.match(r'^https?://[^/]+/(.+?)(?:/-/merge_requests/|/merge_requests/|/pulls?/)(\d+)', url or '')
 	return '[%s!%s](%s)' % (m.group(1), m.group(2), url) if m else (url or '')
 
 

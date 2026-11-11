@@ -19,7 +19,7 @@ from .git import RefTransaction
 from .journal import JOURNAL_REF, JournalWriter
 
 GITHUB_RE = re.compile(r'^https?://(?P<host>github\.com)/(?P<path>[^/]+/[^/]+)/pull/(?P<num>\d+)')
-GITLAB_RE = re.compile(r'^(?P<scheme>https?)://(?P<host>[^/]+)/(?P<path>.+?)/-/merge_requests/(?P<num>\d+)')
+GITLAB_RE = re.compile(r'^(?P<scheme>https?)://(?P<host>[^/]+)/(?P<path>.+?)/(?:-/)?merge_requests/(?P<num>\d+)')
 FORGEJO_RE = re.compile(r'^(?P<scheme>https?)://(?P<host>[^/]+)/(?P<path>[^/]+/[^/]+)/pulls/(?P<num>\d+)')
 TOKEN_ENV = {'github': 'GITHUB_TOKEN', 'gitlab': 'GITLAB_TOKEN', 'forgejo': 'FORGEJO_TOKEN'}
 
@@ -31,7 +31,7 @@ def parse_url(url, forges=None):
 		if base and url.startswith(base + '/'):
 			kind = conf.get('type', 'gitlab')
 			rest = url[len(base) + 1:]
-			m = {'gitlab': re.match(r'(?P<path>.+?)/-/merge_requests/(?P<num>\d+)', rest),
+			m = {'gitlab': re.match(r'(?P<path>.+?)/(?:-/)?merge_requests/(?P<num>\d+)', rest),
 			     'forgejo': re.match(r'(?P<path>[^/]+/[^/]+)/pulls/(?P<num>\d+)', rest),
 			     'github': re.match(r'(?P<path>[^/]+/[^/]+)/pull/(?P<num>\d+)', rest)}.get(kind)
 			if m:

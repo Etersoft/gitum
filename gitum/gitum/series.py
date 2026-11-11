@@ -37,7 +37,8 @@ SET_KEYS = {'state', 'pr', 'internal_mr', 'bugs', 'depends', 'disabled', 'title'
 	    'merged_at', 'release'}
 LINK_FIELDS = ('pr', 'internal_mr')
 LINK_RE = re.compile(r'^(?:([A-Za-z0-9][\w.-]*):)?([\w.-]+(?:/[\w.-]+)+)!(\d+)$')
-LINK_FORMAT = {'gitlab': '%s/%s/-/merge_requests/%s', 'forgejo': '%s/%s/pulls/%s', 'github': '%s/%s/pull/%s'}
+MR_URL = {'gitlab': '{url}/{project}/-/merge_requests/{n}', 'forgejo': '{url}/{project}/pulls/{n}',
+	  'github': '{url}/{project}/pull/{n}'}
 
 
 def normalize_link(cfg, field, value):
@@ -56,7 +57,8 @@ def normalize_link(cfg, field, value):
 	if not conf or not conf.get('url'):
 		raise GitumError('%s: %r needs a forge: write NAME:%s with [forge.NAME] url in gitum.toml, or set '
 				 '[series] %s-forge' % (field, value, value, field.replace('_', '-')))
-	return LINK_FORMAT[conf.get('type', 'gitlab')] % (conf['url'].rstrip('/'), m.group(2), m.group(3))
+	template = conf.get('mr-url') or MR_URL[conf.get('type', 'gitlab')]
+	return template.format(url=conf['url'].rstrip('/'), project=m.group(2), n=m.group(3))
 # files of a series directory that gitum writes; everything else there belongs to people
 MANAGED = ('definition',)
 

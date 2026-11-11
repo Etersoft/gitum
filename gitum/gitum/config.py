@@ -110,7 +110,7 @@ KNOWN = {
 	'series': {'subject-lint', 'strip-trailers', 'pr-forge', 'internal-mr-forge'},
 	'queue': {'one-at-a-time', 'done-limit', 'markdown'},
 	'queue.markdown': {'title', 'generated', 'next', 'nothing', 'paused', 'sections', 'fields', 'done-fields', 'titles'},
-	'forge.*': {'type', 'url', 'api', 'token-env'},
+	'forge.*': {'type', 'url', 'api', 'token-env', 'mr-url'},
 	'identity': {'aliases'},
 }
 

@@ -365,3 +365,18 @@ def test_global_flags_anywhere(ser, capsys):
 	capsys.readouterr()
 	assert main(['series', 'list', '--json', '--repo', str(work.path)]) == 0
 	assert 'ntdll-base' in json.loads(capsys.readouterr().out)
+
+
+def test_mr_url_template(ser, tmp_path, capsys):
+	"""An older GitLab without /-/ in its paths: the forge sets its own merge request URL form."""
+	up, work = ser
+	load_config(work, tmp_path, '[forge.old]\ntype = "gitlab"\nurl = "https://gitlab.old.example"\n'
+		    'mr-url = "{url}/{project}/merge_requests/{n}"\n[series]\ninternal-mr-forge = "old"\n')
+	gitum(work, 'series', 'set', 'ntdll-base', 'internal_mr=wine/wine!1')
+	url = journal(work).read_json('series/ntdll-base/meta.json')['internal_mr']
+	assert url == 'https://gitlab.old.example/wine/wine/merge_requests/1'
+	from gitum import forge
+	assert forge.parse_url(url, journal(work).config.forges)[:4] == (
+		'gitlab', 'https://gitlab.old.example/api/v4', 'wine/wine', 1)
+	from gitum.upstreamwork import md_link
+	assert md_link(url) == '[wine/wine!1](%s)' % url
