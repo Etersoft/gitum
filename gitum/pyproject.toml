@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitum"
+dynamic = ["version"]
+description = "Git Upstream Manager"
+license = "GPL-2.0-or-later"
+license-files = ["COPYING"]
+authors = [{ name = "Pavel Shilovsky", email = "piastry@etersoft.ru" }]
+maintainers = [{ name = "Etersoft" }]
+requires-python = ">=3.9"
+dependencies = ["GitPython>=3.1"]
+
+[project.urls]
+Homepage = "https://wiki.etersoft.ru/GitUM"
+Source = "https://github.com/Etersoft/gitum"
+
+[project.scripts]
+gitum = "gitupstream.cli:main"
+
+[tool.setuptools]
+packages = ["gitupstream"]
+
+[tool.setuptools.dynamic]
+version = { attr = "gitupstream.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

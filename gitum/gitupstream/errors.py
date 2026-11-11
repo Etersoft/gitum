@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-#
 # git-um - Git Upstream Manager.
 # Copyright (C) 2012  Pavel Shilovsky <piastry@etersoft.ru>
 #
@@ -20,9 +17,9 @@
 
 class PatchError(Exception):
 	def __init__(self, message):
+		super().__init__(message)
 		self.message = message
-	def __str__(self):
-		return repr(self.message)
+
 
 class GitUmException(Exception):
 	pass
@@ -61,4 +58,10 @@ class NoMergeBranch(GitUmException):
 	pass
 
 class BranchExists(GitUmException):
+	pass
+
+class NotGitRepo(GitUmException):
+	pass
+
+class NotGitumRepo(GitUmException):
 	pass

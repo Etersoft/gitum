@@ -1,7 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-#
-# gitum - Git Upstream Manager.
+# git-um - Git Upstream Manager.
 # Copyright (C) 2012  Pavel Shilovsky <piastry@etersoft.ru>
 #
 # This program is free software; you can redistribute it and/or
@@ -18,14 +15,30 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from git import *
-from subprocess import Popen, call
 import os
-import tempfile
-import sys
 import shutil
-from errors import *
-from constants import *
+import subprocess
+import tempfile
+from pathlib import Path
+
+from git import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
+
+from .constants import MAINLINE_BRANCH, PATCHES_BRANCH, REBASED_BRANCH, UPSTREAM_BRANCH
+from .errors import (
+	BranchExists,
+	BrokenRepo,
+	NoGitumRemote,
+	NoMergeBranch,
+	NoStateFile,
+	NotGitRepo,
+	NotGitumRepo,
+	NotSupported,
+	NotUptodate,
+	PatchError,
+	PatchFailed,
+	RebaseFailed,
+	RepoIsDirty,
+)
 
 START_ST = 0
 MERGE_ST = 1
@@ -34,25 +47,46 @@ COMMIT_ST = 3
 
 CONFIG_FILE = '.gitum-config'
 CONFIG_BRANCH = 'gitum-config'
-STATE_FILE = '.git/.gitum-state'
-REMOTE_REPO = '.git/.gitum-remote'
-MERGE_BRANCH = '.git/.gitum-mbranch'
-CURRENT_REBASED = '.git/.curent_rebased'
-CURRENT_MAINLINE = '.git/.curent_mainline'
+# per-repository state files, stored in the git directory
+STATE_FILE = '.gitum-state'
+REMOTE_REPO = '.gitum-remote'
+MERGE_BRANCH = '.gitum-mbranch'
+CURRENT_REBASED = '.curent_rebased'
+CURRENT_MAINLINE = '.curent_mainline'
+STATE_FILES = (STATE_FILE, REMOTE_REPO, MERGE_BRANCH, CURRENT_REBASED, CURRENT_MAINLINE)
+# files in the patches branch
 UPSTREAM_COMMIT_FILE = '_upstream_commit_'
 LAST_PATCH_FILE = '_current_patch_'
 TMP_LAST_PATCH_FILE = '_current.patch'
+PATCHES_ROOT_MESSAGE = 'gitum-patches: begin'
 
-class GitUpstream(object):
+# never start an editor from a non-interactive git call
+NO_EDITOR_ENV = {'GIT_EDITOR': 'true'}
+
+
+def _decode(data):
+	if isinstance(data, bytes):
+		return data.decode('utf-8', errors='replace')
+	return data
+
+
+class GitUpstream:
 	def __init__(self, repo_path='.', with_log=False, new_repo=False):
-		if new_repo:
-			self._repo = Repo.init(repo_path)
-		else:
-			self._repo = Repo(repo_path)
+		try:
+			if new_repo:
+				self._repo = Repo.init(repo_path)
+			else:
+				self._repo = Repo(repo_path, search_parent_directories=True)
+		except (InvalidGitRepositoryError, NoSuchPathError) as e:
+			raise NotGitRepo('%s is not a git repository' % e) from e
 		self._with_log = with_log
 
 	def repo(self):
 		return self._repo
+
+	@property
+	def _work_dir(self):
+		return Path(self._repo.working_tree_dir)
 
 	def merge(self, mbranch=None, track_with=None):
 		self._init_merge()
@@ -61,7 +95,7 @@ class GitUpstream(object):
 			raise RepoIsDirty
 		self._load_config()
 		self._check_mainline()
-		if self._repo.git.diff(self._rebased, self._mainline, stdout_as_string=False) != '':
+		if self._diff(self._rebased, self._mainline):
 			self._log_error('You have local commited changes. Run gitum update to save them, please.')
 			raise NotUptodate
 		if not mbranch:
@@ -72,21 +106,18 @@ class GitUpstream(object):
 			self._repo.git.fetch(mbranch.split('/')[0])
 		try:
 			self._repo.commit(mbranch)
-		except:
+		except (BadName, GitCommandError, ValueError):
 			self._log_error('Can not merge from %s - not exists.' % mbranch)
 			raise NoMergeBranch
 		self._commits = self._get_commits(mbranch)
-		if len(self._commits) == 0:
+		if not self._commits:
 			self._log('Repository is up to date - nothing to merge.')
 			return
 		self._commits.reverse()
 		self._all_num = len(self._commits)
 		self._save_branches()
 		self._process_commits()
-		self._repo.git.checkout(self._rebased)
-		self._save_current_rebased(self._rebased)
-		self._save_current_mainline(self._mainline)
-		self._log('Successfully updated work branches.')
+		self._finish('Successfully updated work branches.')
 
 	def abort(self, am=False):
 		self._init_merge()
@@ -94,17 +125,14 @@ class GitUpstream(object):
 		if not self._load_state():
 			raise NoStateFile
 		try:
-			if not am:
-				self._repo.git.rebase('--abort')
-			else:
+			if am:
 				self._repo.git.am('--abort')
-		except:
+			else:
+				self._repo.git.rebase('--abort')
+		except GitCommandError:
 			pass
 		self._restore_branches()
-		self._repo.git.checkout(self._rebased)
-		self._save_current_rebased(self._rebased)
-		self._save_current_mainline(self._mainline)
-		self._log('Restored work branches.')
+		self._finish('Restored work branches.')
 
 	def continue_merge(self, rebase_cmd):
 		self._init_merge()
@@ -112,57 +140,52 @@ class GitUpstream(object):
 		if not self._load_state():
 			raise NoStateFile
 		if self._state == REBASE_ST:
-			tmp_file = tempfile.TemporaryFile()
-			try:
-				diff_str = self._stage2(self._commits[self._id], tmp_file, rebase_cmd)
-				self._stage3(self._commits[self._id], diff_str)
-				self._save_repo_state(
-					self._repo.branches[self._mainline].commit.hexsha if diff_str else ''
-				)
-				self._id += 1
-				self._cur_num += 1
-			except GitCommandError as e:
-				self._save_state()
-				tmp_file.seek(0)
-				self._log(self._fixup_merge_message(''.join(tmp_file.readlines())))
-				self._log(e.stderr)
-				raise RebaseFailed
-			except PatchError as e:
-				self._save_state()
-				self._log_error(e.message)
-				raise PatchFailed
-			except:
-				self._save_state()
-				raise
+			with tempfile.TemporaryFile() as tmp_file:
+				try:
+					diff_str = self._stage2(self._commits[self._id], tmp_file, rebase_cmd)
+					self._stage3(self._commits[self._id], diff_str)
+					self._save_repo_state(self._head(self._mainline) if diff_str else '')
+					self._id += 1
+					self._cur_num += 1
+				except GitCommandError as e:
+					self._save_state()
+					self._log(self._fixup_merge_message(self._read_output(tmp_file)))
+					self._log(e.stderr)
+					raise RebaseFailed from e
+				except PatchError as e:
+					self._save_state()
+					self._log_error(e.message)
+					raise PatchFailed from e
+				except BaseException:
+					self._save_state()
+					raise
 		elif self._state != MERGE_ST:
 			self._log_error("Don't support continue not from merge or rebase mode.")
 			raise NotSupported
 		self._process_commits()
-		self._repo.git.checkout(self._rebased)
-		self._save_current_rebased(self._rebased)
-		self._save_current_mainline(self._mainline)
-		self._log('Successfully updated work branches.')
+		self._finish('Successfully updated work branches.')
 
 	def status(self):
 		self._load_config()
-		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
-		ca = self._find_ca(self._load_current_rebased(), self._rebased)
+		current_rebased = self._load_current_rebased()
 		self._check_mainline()
-		if diff != '':
+		diff = self._diff('--full-index', self._mainline, self._rebased)
+		ca = self._find_ca(current_rebased, self._rebased)
+		if self._repo.is_dirty():
 			self._log_error('You have local changes. Run git commit and gitum update to save them, please.')
 			return
-		if self._load_current_rebased() == self._repo.branches[self._rebased].commit.hexsha:
+		if current_rebased == self._head(self._rebased):
 			self._log('Nothing to update.')
 			return
-		if ca == self._load_current_rebased():
-			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
+		if ca == current_rebased:
+			new_commits = list(self._repo.iter_commits(ca + '..' + self._rebased))
 			new_commits.reverse()
 			self._log('Have new commits, run gitum update to save them:')
 			for c_id in new_commits:
 				self._log('\t%s' % c_id.summary)
 		else:
 			self._log('Existing patches were modified.')
-			self._log('Run gitum update to save the result diff:\n%s' % diff)
+			self._log('Run gitum update to save the result diff:\n%s' % _decode(diff))
 
 	def update(self, message=''):
 		if self._repo.is_dirty():
@@ -172,15 +195,16 @@ class GitUpstream(object):
 		self._load_config()
 		self._check_mainline()
 		current_rebased = self._load_current_rebased()
-		if current_rebased == self._repo.branches[self._rebased].commit.hexsha:
+		if current_rebased == self._head(self._rebased):
 			self._log('Nothing to update.')
 			return
-		diff = self._repo.git.diff('--full-index', self._mainline, self._rebased, stdout_as_string=False)
+		diff = self._diff('--full-index', self._mainline, self._rebased)
 		ca = self._find_ca(current_rebased, self._rebased)
 		if ca == current_rebased:
-			new_commits = [i for i in self._repo.iter_commits(ca + '..' + self._rebased)]
-			if len(new_commits) == 0 and diff !='':
-				self._log_error("You have equal commits betwean mainline and rebased branches.\nBut git diff betwean it brnaches is not a zero string")
+			new_commits = list(self._repo.iter_commits(ca + '..' + self._rebased))
+			if not new_commits and diff:
+				self._log_error('You have equal commits between mainline and rebased branches.\n'
+						'But git diff between these branches is not empty.')
 				return
 			new_commits.reverse()
 			for c_id in new_commits:
@@ -189,29 +213,18 @@ class GitUpstream(object):
 				self._repo.git.cherry_pick(c_id.hexsha)
 				self._save_repo_state(self._mainline if diff else '', message, c_id.hexsha)
 		else:
-			self._log('else')
 			self._diffapply(diff, message)
-		self._repo.git.checkout(self._rebased)
-		self._save_current_rebased(self._rebased)
-		self._save_current_mainline(self._mainline)
-		self._log('Successfully updated work branches.')
+		self._finish('Successfully updated work branches.')
 
 	def create(self, remote, upstream, rebased, mainline, patches):
-		config = True
-		if upstream == UPSTREAM_BRANCH and rebased == REBASED_BRANCH \
-		   and mainline == MAINLINE_BRANCH and patches == PATCHES_BRANCH:
-			config = False
-		if self._has_branch(mainline):
-			self._log_error("%s branch exists." % mainline)
-			raise BranchExists
-		if self._has_branch(rebased):
-			self._log_error("%s branch exists." % rebased)
-			raise BranchExists
-		if self._has_branch(patches):
-			self._log_error("%s branch exists." % patches)
-			raise BranchExists
+		config = (upstream, rebased, mainline, patches) != \
+			(UPSTREAM_BRANCH, REBASED_BRANCH, MAINLINE_BRANCH, PATCHES_BRANCH)
+		for branch in (mainline, rebased, patches):
+			if self._has_branch(branch):
+				self._log_error('%s branch exists.' % branch)
+				raise BranchExists
 		if config and self._has_branch(CONFIG_BRANCH):
-			self._log_error("%s branch exists." % CONFIG_BRANCH)
+			self._log_error('%s branch exists.' % CONFIG_BRANCH)
 			raise BranchExists
 		if not self._has_branch(upstream):
 			self._repo.git.branch('-m', upstream)
@@ -231,22 +244,14 @@ class GitUpstream(object):
 		self._load_config()
 		if self._has_branch(self._upstream):
 			self._repo.git.checkout(self._upstream, '-f')
-		if self._has_branch(self._mainline):
-			self._repo.delete_head(self._mainline, '-D')
-		if self._has_branch(self._rebased):
-			self._repo.delete_head(self._rebased, '-D')
-		if self._has_branch(self._patches):
-			self._repo.delete_head(self._patches, '-D')
-		try:
-			self._repo.delete_head(CONFIG_BRANCH, '-D')
-		except:
-			pass
+		for branch in (self._mainline, self._rebased, self._patches, CONFIG_BRANCH):
+			if self._has_branch(branch):
+				self._repo.delete_head(branch, force=True)
 		self._log('Successfully removed work branches.')
 
 	def remove_config_files(self):
-		for name in [STATE_FILE, REMOTE_REPO, MERGE_BRANCH, CURRENT_REBASED, CURRENT_MAINLINE]:
-			if os.path.exists(self._repo.working_dir + '/' + name):
-				os.unlink(self._repo.working_dir + '/' + name)
+		for name in STATE_FILES:
+			self._state_path(name).unlink(missing_ok=True)
 		self._log('Successfully removed gitum config files.')
 
 	def remove_all(self):
@@ -262,13 +267,11 @@ class GitUpstream(object):
 			self._save_current_rebased(self._rebased)
 			return
 		commits = []
-		ok = False
 		for i in self._repo.iter_commits(commit):
 			commits.append(i.hexsha)
-			if i.message.startswith('gitum-patches: begin'):
-				ok = True
+			if i.message.startswith(PATCHES_ROOT_MESSAGE):
 				break
-		if not ok:
+		else:
 			self._log_error('Broken %s commit.' % commit)
 			raise BrokenRepo
 		commits.reverse()
@@ -276,52 +279,28 @@ class GitUpstream(object):
 		start = commits[0]
 		commits = commits[1:]
 		git.checkout(start)
-		with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
-			tmp_list = f.readlines()
-			if len(tmp_list) > 1:
-				self._log_error('Broken upstream commit file.')
-				raise BrokenRepo
-			upstream_commit = tmp_list[0]
+		upstream_commit = self._read_upstream_commit()
 		git.checkout(upstream_commit)
-		tmp_dir = tempfile.mkdtemp()
-		saved_commit_id = self._repo.head.commit.hexsha
-		for i in commits:
-			git.checkout(i)
-			for j in os.listdir(self._repo.working_tree_dir):
-				if j.endswith('.patch'):
-					shutil.copy(self._repo.working_tree_dir + '/' + j, tmp_dir + '/' + j)
-			shutil.copy(self._repo.working_tree_dir + '/' + LAST_PATCH_FILE, tmp_dir + '/' + LAST_PATCH_FILE)
-			with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE) as f:
-				tmp_list = f.readlines()
-				if len(tmp_list) > 1:
-					self._log_error('Broken upstream commit file.')
-					raise BrokenRepo
-				upstream_commit = tmp_list[0]
-			git.checkout(saved_commit_id)
-			patch_exists = False
-			with open(tmp_dir + '/' + LAST_PATCH_FILE) as f:
-				if f.readlines():
-					patch_exists = True
-			if patch_exists:
-				self._apply_patch_am(tmp_dir, LAST_PATCH_FILE)
-			os.unlink(tmp_dir + '/' + LAST_PATCH_FILE)
+		with tempfile.TemporaryDirectory() as tmp:
+			tmp_dir = Path(tmp)
 			saved_commit_id = self._repo.head.commit.hexsha
-		if self._has_branch(self._mainline):
-			self._repo.delete_head(self._mainline, '-D')
-		self._repo.create_head(self._mainline)
-		git.checkout(upstream_commit)
-		if self._has_branch(self._upstream):
-			self._repo.delete_head(self._upstream, '-D')
-		self._repo.create_head(self._upstream)
-		if self._has_branch(self._rebased):
-			self._repo.delete_head(self._rebased, '-D')
-		self._repo.create_head(self._rebased)
-		git.checkout(self._rebased)
-		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
-		patches_to_apply.sort()
-		for i in patches_to_apply:
-			self._apply_patch_am(tmp_dir, i)
-		shutil.rmtree(tmp_dir)
+			for i in commits:
+				git.checkout(i)
+				self._copy_patches(self._work_dir, tmp_dir)
+				shutil.copy(self._work_dir / LAST_PATCH_FILE, tmp_dir / LAST_PATCH_FILE)
+				upstream_commit = self._read_upstream_commit()
+				git.checkout(saved_commit_id)
+				if (tmp_dir / LAST_PATCH_FILE).stat().st_size:
+					self._apply_patch_am(tmp_dir, LAST_PATCH_FILE)
+				(tmp_dir / LAST_PATCH_FILE).unlink()
+				saved_commit_id = self._repo.head.commit.hexsha
+			self._recreate_head(self._mainline)
+			git.checkout(upstream_commit)
+			self._recreate_head(self._upstream)
+			self._recreate_head(self._rebased)
+			git.checkout(self._rebased)
+			for i in self._list_patches(tmp_dir):
+				self._apply_patch_am(tmp_dir, i)
 		git.checkout(self._rebased)
 		self._save_current_rebased(self._rebased)
 		self._save_current_mainline(self._mainline)
@@ -331,15 +310,12 @@ class GitUpstream(object):
 		if not remote_repo:
 			self._log_error('Specify remote repo, please.')
 			raise NoGitumRemote
-		if remote_repo[0] != '/' and not self._has_hostname(remote_repo):
-			remote_repo = os.getcwd() + '/' + remote_repo
+		if not os.path.isabs(remote_repo) and not self._has_hostname(remote_repo):
+			remote_repo = os.path.join(os.getcwd(), remote_repo)
 		self._repo.git.remote('add', 'origin', remote_repo)
 		self._repo.git.fetch('origin')
-		try:
-			self._repo.remotes['origin'].refs[CONFIG_BRANCH]
+		if any(ref.remote_head == CONFIG_BRANCH for ref in self._repo.remotes.origin.refs):
 			self._repo.git.checkout('-b', CONFIG_BRANCH, 'origin/' + CONFIG_BRANCH)
-		except:
-			pass
 		self._load_config()
 		self._repo.git.checkout('-b', self._upstream, 'origin/' + self._upstream)
 		self._repo.git.checkout('-b', self._patches, 'origin/' + self._patches)
@@ -359,63 +335,49 @@ class GitUpstream(object):
 		if track_with:
 			self._save_remote(remote)
 		self._save_branches()
-		cur = self._repo.branches[self._patches].commit.hexsha
-		self._repo.git.fetch(remote)
-		self._repo.git.checkout(self._upstream, '-f')
-		self._repo.git.reset(remote + '/' + self._upstream, '--hard')
-		self._repo.git.checkout(self._patches, '-f')
-		self._repo.git.reset(remote + '/' + self._patches, '--hard')
-		self._repo.git.checkout(self._mainline, '-f')
-		self._repo.git.reset(remote + '/' + self._mainline, '--hard')
+		cur = self._head(self._patches)
+		git = self._repo.git
+		git.fetch(remote)
+		for branch in (self._upstream, self._patches, self._mainline):
+			git.checkout(branch, '-f')
+			git.reset(remote + '/' + branch, '--hard')
 		self._gen_rebased()
 		self._log('Reset work branches to the remote state, applying our commits on top...')
-		self._repo.git.checkout(self._mainline)
+		git.checkout(self._mainline)
 		previd = self._find_ca(remote + '/' + self._patches, cur)
 		self._commits = [q.hexsha for q in self._repo.iter_commits(previd + '..' + cur)]
 		self._commits.reverse()
 		self._all_num = len(self._commits)
 		self._pull_commits()
-		self._repo.git.checkout(self._rebased)
-		self._save_current_rebased(self._rebased)
-		self._save_current_mainline(self._mainline)
-		self._log('Successfully updated work branches.')
+		self._finish('Successfully updated work branches.')
 
 	def continue_pull(self, command):
 		self._load_config()
 		self._init_merge()
 		if not self._load_state():
 			raise NoStateFile
-		try:
-			tmp_file = tempfile.TemporaryFile()
-			self._repo.git.am(command, output_stream=tmp_file)
-			if command == '--resolved':
-				self._repo.git.checkout(self._rebased)
-				self._repo.git.cherry_pick(self._mainline)
-				self._save_repo_state(self._mainline)
-			self._repo.git.checkout(self._upstream, '-f')
-			self._repo.git.merge(
-				self._repo.git.show(
-					self._commits[self._id] + ':' + UPSTREAM_COMMIT_FILE,
-					stdout_as_string=False
-				)
-			)
-			self._repo.git.checkout(self._mainline)
-			self._id += 1
-			self._cur_num += 1
-		except GitCommandError as e:
-			self._save_state()
-			tmp_file.seek(0)
-			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
-			self._log(e.stderr)
-			raise RebaseFailed
-		except:
-			self._save_state()
-			raise
+		with tempfile.TemporaryFile() as tmp_file:
+			try:
+				self._repo.git.am(command, output_stream=tmp_file)
+				if command == '--resolved':
+					self._repo.git.checkout(self._rebased)
+					self._repo.git.cherry_pick(self._mainline)
+					self._save_repo_state(self._mainline)
+				self._repo.git.checkout(self._upstream, '-f')
+				self._repo.git.merge(self._show(self._commits[self._id], UPSTREAM_COMMIT_FILE))
+				self._repo.git.checkout(self._mainline)
+				self._id += 1
+				self._cur_num += 1
+			except GitCommandError as e:
+				self._save_state()
+				self._log(self._fixup_pull_message(self._read_output(tmp_file)))
+				self._log(e.stderr)
+				raise RebaseFailed from e
+			except BaseException:
+				self._save_state()
+				raise
 		self._pull_commits()
-		self._repo.git.checkout(self._rebased)
-		self._save_current_rebased(self._rebased)
-		self._save_current_mainline(self._mainline)
-		self._log('Successfully updated work branches.')
+		self._finish('Successfully updated work branches.')
 
 	def push(self, remote=None, track_with=None):
 		self._load_config()
@@ -425,54 +387,90 @@ class GitUpstream(object):
 		if track_with:
 			self._save_remote(remote)
 		self._repo.git.push(remote, self._upstream, self._mainline, self._patches)
-		exist = False
 		if self._has_branch(CONFIG_BRANCH):
-			exist = True
-		if exist:
 			self._repo.git.push(remote, CONFIG_BRANCH)
 		self._log('Successfully pushed work branches.')
 
-	def _has_branch(self, head):
-		return self._repo.branches.count(Head(head, "refs/heads/" + head, True)) == 1
+	# helpers
 
-	def _has_hostname(self, repo_path):
-		if repo_path.find(':') == -1:
-			return False
-		return True
+	def _finish(self, message):
+		self._repo.git.checkout(self._rebased)
+		self._save_current_rebased(self._rebased)
+		self._save_current_mainline(self._mainline)
+		self._log(message)
+
+	def _head(self, branch):
+		return self._repo.branches[branch].commit.hexsha
+
+	def _has_branch(self, head):
+		return any(h.name == head for h in self._repo.heads)
+
+	def _recreate_head(self, head):
+		if self._has_branch(head):
+			self._repo.delete_head(head, force=True)
+		self._repo.create_head(head)
+
+	@staticmethod
+	def _has_hostname(repo_path):
+		return ':' in repo_path
+
+	def _diff(self, *args):
+		"""Return git diff output as bytes to keep binary data and line endings intact."""
+		return self._repo.git.diff(*args, stdout_as_string=False)
+
+	def _show(self, commit, path):
+		return self._repo.git.show('%s:%s' % (commit, path))
+
+	def _run_git(self, *args, stdin=None):
+		"""Run git with data on stdin (not supported by GitPython) and return stdout bytes."""
+		return subprocess.run(['git', *args], cwd=self._work_dir, input=stdin,
+				      stdout=subprocess.PIPE, check=True).stdout
+
+	def _read_upstream_commit(self):
+		lines = (self._work_dir / UPSTREAM_COMMIT_FILE).read_text().splitlines()
+		if len(lines) != 1:
+			self._log_error('Broken upstream commit file.')
+			raise BrokenRepo
+		return lines[0].strip()
+
+	@staticmethod
+	def _list_patches(directory):
+		return sorted(p.name for p in Path(directory).iterdir() if p.name.endswith('.patch'))
+
+	@classmethod
+	def _copy_patches(cls, src, dst):
+		for name in cls._list_patches(src):
+			shutil.copy(Path(src) / name, Path(dst) / name)
+
+	@staticmethod
+	def _read_output(tmp_file):
+		tmp_file.seek(0)
+		return _decode(tmp_file.read())
 
 	def _gen_rebased(self, commit=''):
 		if not commit:
 			commit = self._patches
 		self._repo.git.checkout(commit)
-		tmp_dir = tempfile.mkdtemp()
-		for j in os.listdir(self._repo.working_tree_dir):
-			if j.endswith('.patch'):
-				shutil.copy(self._repo.working_tree_dir + '/' + j, tmp_dir + '/' + j)
-		if self._has_branch(self._rebased):
-			self._repo.delete_head(self._rebased, '-D')
-		self._repo.git.checkout('-b', self._rebased,
-			self._repo.git.show(
-				commit + ':' + UPSTREAM_COMMIT_FILE,
-				stdout_as_string=False
-			)
-		)
-		patches_to_apply = [i for i in os.listdir(tmp_dir) if i.endswith('.patch')]
-		patches_to_apply.sort()
-		for i in patches_to_apply:
-			self._apply_patch_am(tmp_dir, i)
-		shutil.rmtree(tmp_dir)
+		with tempfile.TemporaryDirectory() as tmp_dir:
+			self._copy_patches(self._work_dir, tmp_dir)
+			if self._has_branch(self._rebased):
+				self._repo.delete_head(self._rebased, force=True)
+			self._repo.git.checkout('-b', self._rebased, self._show(commit, UPSTREAM_COMMIT_FILE))
+			for i in self._list_patches(tmp_dir):
+				self._apply_patch_am(tmp_dir, i)
 
 	def _find_ca(self, c1, c2):
 		return self._repo.git.merge_base(c1, c2)
 
+	def _state_path(self, name):
+		return Path(self._repo.git_dir) / name
+
 	def _save_parm(self, filename, parm):
-		with open(self._repo.working_dir + '/' + filename, 'w') as f:
-			f.write(parm)
+		self._state_path(filename).write_text(parm)
 
 	def _load_parm(self, filename):
-		with open(self._repo.working_dir + '/' + filename) as f:
-			parm = f.readline().strip()
-		return parm
+		with self._state_path(filename).open() as f:
+			return f.readline().strip()
 
 	def _save_remote(self, remote):
 		self._save_parm(REMOTE_REPO, remote)
@@ -480,7 +478,7 @@ class GitUpstream(object):
 	def _load_remote(self):
 		try:
 			return self._load_parm(REMOTE_REPO)
-		except:
+		except OSError:
 			self._log_error('Specify a remote gitum repository, please.')
 			raise NoGitumRemote
 
@@ -490,33 +488,40 @@ class GitUpstream(object):
 	def _load_mbranch(self):
 		try:
 			return self._load_parm(MERGE_BRANCH)
-		except:
+		except OSError:
 			self._log_error('Specify a merge branch, please.')
 			raise NoMergeBranch
 
 	def _save_current_rebased(self, rebased):
-		self._save_parm(CURRENT_REBASED, self._repo.branches[rebased].commit.hexsha)
+		self._save_parm(CURRENT_REBASED, self._head(rebased))
+
+	def _load_current_parm(self, filename):
+		try:
+			return self._load_parm(filename)
+		except OSError:
+			self._log_error('Not a gitum repository (no %s): run gitum create or gitum clone first.' %
+					self._state_path(filename))
+			raise NotGitumRepo
 
 	def _load_current_rebased(self):
-		return self._load_parm(CURRENT_REBASED)
+		return self._load_current_parm(CURRENT_REBASED)
 
 	def _save_current_mainline(self, mainline):
-		self._save_parm(CURRENT_MAINLINE, self._repo.branches[mainline].commit.hexsha)
+		self._save_parm(CURRENT_MAINLINE, self._head(mainline))
 
 	def _load_current_mainline(self):
-		return self._load_parm(CURRENT_MAINLINE)
+		return self._load_current_parm(CURRENT_MAINLINE)
 
 	def _check_mainline(self):
 		current_mainline = self._load_current_mainline()
-		if current_mainline != self._repo.branches[self._mainline].commit.hexsha:
-			self._log_unexpected_head(self._mainline,
-						  self._repo.branches[self._mainline].commit.hexsha,
-						  current_mainline)
+		if current_mainline != self._head(self._mainline):
+			self._log_unexpected_head(self._mainline, self._head(self._mainline), current_mainline)
 			raise RepoIsDirty
 
-	def _get_commit_name_from_patch(self, lines):
-		for i in lines.split('\n'):
-			parts = i.split('Subject: [PATCH] ')
+	@staticmethod
+	def _get_commit_name_from_patch(lines):
+		for line in _decode(lines).split('\n'):
+			parts = line.split('Subject: [PATCH] ')
 			if len(parts) == 2:
 				return parts[1]
 		return ''
@@ -524,29 +529,20 @@ class GitUpstream(object):
 	def _pull_commits(self):
 		tmp_file = tempfile.TemporaryFile()
 		try:
-			for q in xrange(self._id, len(self._commits)):
-				lines = self._repo.git.show(
-						self._commits[q] + ':' + LAST_PATCH_FILE,
-						stdout_as_string=False
-					)
-				if len(lines) > 0:
-					tmp_dir = tempfile.mkdtemp()
-					with open(tmp_dir + '/' + TMP_LAST_PATCH_FILE, 'w') as f:
-						f.write(lines)
-					self._log('Applying commit: %s' % self._get_commit_name_from_patch(lines))
-					self._repo.git.am('-3', tmp_dir + '/' + TMP_LAST_PATCH_FILE,
-							  output_stream=tmp_file)
+			for q in range(self._id, len(self._commits)):
+				lines = self._repo.git.show(self._commits[q] + ':' + LAST_PATCH_FILE,
+							    stdout_as_string=False)
+				if lines:
+					with tempfile.TemporaryDirectory() as tmp_dir:
+						patch = Path(tmp_dir) / TMP_LAST_PATCH_FILE
+						patch.write_bytes(lines)
+						self._log('Applying commit: %s' % self._get_commit_name_from_patch(lines))
+						self._repo.git.am('-3', '--keep-cr', str(patch), output_stream=tmp_file)
 					self._repo.git.checkout(self._rebased)
 					self._repo.git.cherry_pick(self._mainline)
 					self._save_repo_state(self._mainline)
-					shutil.rmtree(tmp_dir)
 				self._repo.git.checkout(self._upstream)
-				self._repo.git.merge(
-					self._repo.git.show(
-						self._commits[q] + ':' + UPSTREAM_COMMIT_FILE,
-						stdout_as_string=False
-					)
-				)
+				self._repo.git.merge(self._show(self._commits[q], UPSTREAM_COMMIT_FILE))
 				self._repo.git.checkout(self._mainline)
 				tmp_file.close()
 				tmp_file = tempfile.TemporaryFile()
@@ -554,158 +550,81 @@ class GitUpstream(object):
 				self._cur_num += 1
 		except GitCommandError as e:
 			self._save_state()
-			tmp_file.seek(0)
-			self._log(self._fixup_pull_message(''.join(tmp_file.readlines())))
+			self._log(self._fixup_pull_message(self._read_output(tmp_file)))
 			self._log(e.stderr)
-			raise RebaseFailed
-		except:
+			raise RebaseFailed from e
+		except BaseException:
 			self._save_state()
 			raise
+		finally:
+			tmp_file.close()
+
+	def _make_orphan_branch(self, branch, filename, content, message):
+		"""Create a branch with a single parentless commit holding one file."""
+		blob = self._run_git('hash-object', '-w', '--stdin', stdin=content.encode()).decode().strip()
+		tree = self._run_git('mktree', stdin=('100644 blob %s\t%s\n' % (blob, filename)).encode()).decode().strip()
+		commit = self._repo.git.commit_tree(tree, '-m', message)
+		self._repo.git.branch(branch, commit)
 
 	def _save_patches(self, patches, upstream):
-		# create blob
-		tmp_dir = tempfile.mkdtemp()
-		with open(tmp_dir + '/' + UPSTREAM_COMMIT_FILE, 'w') as f:
-			f.write(self._repo.branches[upstream].commit.hexsha)
-		blob = self._repo.git.hash_object('-w', tmp_dir + '/' + UPSTREAM_COMMIT_FILE)
-		# create tree
-		in_file = tempfile.TemporaryFile()
-		out_file = tempfile.TemporaryFile()
-		in_file.write(('100644 blob %s\t' + UPSTREAM_COMMIT_FILE) % blob)
-		in_file.seek(0)
-		proc = Popen(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
-			      '--work-tree=' + self._repo.working_tree_dir, 'mktree'],
-			      stdin=in_file, stdout=out_file)
-		status = proc.wait()
-		if status != 0:
-			self._log(status)
-		out_file.seek(0)
-		tree=out_file.readline().strip()
-		in_file.close()
-		out_file.close()
-		# create commit
-		in_file = tempfile.TemporaryFile()
-		in_file.write('gitum-patches: begin')
-		in_file.seek(0)
-		out_file = tempfile.TemporaryFile()
-		proc = Popen(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
-			      '--work-tree=' + self._repo.working_tree_dir, 'commit-tree', tree],
-			      stdin=in_file, stdout=out_file)
-		status = proc.wait()
-		if status != 0:
-			self._log(status)
-		out_file.seek(0)
-		commit=out_file.readline().strip()
-		self._repo.git.branch(patches, commit)
-		shutil.rmtree(tmp_dir)
+		self._make_orphan_branch(patches, UPSTREAM_COMMIT_FILE, self._head(upstream),
+					 PATCHES_ROOT_MESSAGE)
 
 	def _save_config(self, mainline, upstream, rebased, patches):
-		# create blob
-		tmp_dir = tempfile.mkdtemp()
-		with open(tmp_dir + '/' + CONFIG_FILE, 'w') as f:
-			f.write('current = %s\n' % mainline)
-			f.write('upstream = %s\n' % upstream)
-			f.write('rebased = %s\n' % rebased)
-			f.write('patches = %s\n' % patches)
-		blob = self._repo.git.hash_object('-w', tmp_dir + '/' + CONFIG_FILE)
-		# create tree
-		in_file = tempfile.TemporaryFile()
-		out_file = tempfile.TemporaryFile()
-		in_file.write(('100644 blob %s\t' + CONFIG_FILE) % blob)
-		in_file.seek(0)
-		proc = Popen(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
-			      '--work-tree=' + self._repo.working_tree_dir, 'mktree'],
-			      stdin=in_file, stdout=out_file)
-		status = proc.wait()
-		if status != 0:
-			self._log(status)
-		out_file.seek(0)
-		tree=out_file.readline().strip()
-		in_file.close()
-		out_file.close()
-		# create commit
-		in_file = tempfile.TemporaryFile()
-		in_file.write('Save config file')
-		in_file.seek(0)
-		out_file = tempfile.TemporaryFile()
-		proc = Popen(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
-			      '--work-tree=' + self._repo.working_tree_dir, 'commit-tree', tree],
-			      stdin=in_file, stdout=out_file)
-		status = proc.wait()
-		if status != 0:
-			self._log(status)
-		out_file.seek(0)
-		commit=out_file.readline().strip()
-		self._repo.git.branch(CONFIG_BRANCH, commit)
-		shutil.rmtree(tmp_dir)
+		content = ('current = %s\nupstream = %s\nrebased = %s\npatches = %s\n' %
+			   (mainline, upstream, rebased, patches))
+		self._make_orphan_branch(CONFIG_BRANCH, CONFIG_FILE, content, 'Save config file')
 
 	def _save_repo_state(self, commit, message='', cur_rebased=None):
 		mainline_c = commit if commit else self._mainline
 		rebased_c = cur_rebased if cur_rebased else self._rebased
-		if self._repo.git.diff(rebased_c, mainline_c, stdout_as_string=False) != '':
-			self._log_error('%s and %s work trees are not equal - can\'t save state!' %
+		if self._diff(rebased_c, mainline_c):
+			self._log_error("%s and %s work trees are not equal - can't save state!" %
 					(rebased_c, mainline_c))
 			raise NotUptodate
-		# create tmp dir
-		tmp_dir = tempfile.mkdtemp()
 		git = self._repo.git
-		# generate new patches
-		for i in os.listdir(self._repo.working_tree_dir):
-			if i.endswith('.patch'):
-				os.unlink(self._repo.working_tree_dir + '/' + i)
-		git.format_patch('%s..%s' % (self._upstream, rebased_c))
-		# move patches to tmp dir
-		for i in os.listdir(self._repo.working_tree_dir):
-			if i.endswith('.patch'):
-				shutil.move(self._repo.working_tree_dir + '/' + i,
-					    tmp_dir + '/' + i)
-		# get mainline branch commit
-		if commit:
-			git.format_patch('%s^..%s' % (commit, commit))
-		else:
-			with open(self._repo.working_tree_dir + '/' + TMP_LAST_PATCH_FILE, 'w') as f:
-				pass
-		# move it to tmp dir
-		for i in os.listdir(self._repo.working_tree_dir):
-			if i.endswith('.patch'):
-				shutil.move(self._repo.working_tree_dir + '/' + i,
-					    tmp_dir + '/' + LAST_PATCH_FILE)
-		git.checkout(self._patches, '-f')
-		# remove old patches from patches branch
-		git.rm(self._repo.working_tree_dir + '/*.patch', '--ignore-unmatch')
-		# move new patches from tmp dir to patches branch
-		for i in os.listdir(tmp_dir):
-			if i.endswith('.patch'):
-				shutil.move(tmp_dir + '/' + i, self._repo.working_tree_dir + '/' + i)
-		shutil.move(tmp_dir + '/' + LAST_PATCH_FILE,
-			    self._repo.working_tree_dir + '/' + LAST_PATCH_FILE)
+		work_dir = self._work_dir
+		with tempfile.TemporaryDirectory() as tmp:
+			tmp_dir = Path(tmp)
+			# generate new patches
+			git.format_patch('-o', str(tmp_dir), '%s..%s' % (self._upstream, rebased_c))
+			# get mainline branch commit
+			if commit:
+				out = Path(git.format_patch('-o', str(tmp_dir / 'last'), '%s^..%s' % (commit, commit)))
+				shutil.move(out, tmp_dir / LAST_PATCH_FILE)
+			else:
+				(tmp_dir / LAST_PATCH_FILE).touch()
+			git.checkout(self._patches, '-f')
+			# replace old patches in the patches branch with new ones
+			git.rm(str(work_dir / '*.patch'), '--ignore-unmatch')
+			for name in self._list_patches(tmp_dir):
+				shutil.move(tmp_dir / name, work_dir / name)
+			shutil.move(tmp_dir / LAST_PATCH_FILE, work_dir / LAST_PATCH_FILE)
 		# update upstream head
-		with open(self._repo.working_tree_dir + '/' + UPSTREAM_COMMIT_FILE, 'w') as f:
-			f.write(self._repo.branches[self._upstream].commit.hexsha)
+		(work_dir / UPSTREAM_COMMIT_FILE).write_text(self._head(self._upstream))
 		# commit the result
-		git.add(self._repo.working_tree_dir)
+		git.add(str(work_dir))
 		mess = message
 		if not mess and commit:
-			mess = self._repo.commit(commit).message.encode('utf-8')
+			mess = self._repo.commit(commit).message
 		if not mess:
 			mess = '%s branch updated without code changes' % self._rebased
 		if commit:
 			author = self._repo.commit(commit).author
-			git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
+			git.commit('-m', mess, '--author=%s <%s>' % (author.name, author.email))
 		else:
 			git.commit('-m', mess)
-		shutil.rmtree(tmp_dir)
 
-	def _fixup_merge_message(self, mess):
-		mess = mess.replace('git rebase --continue', 'gitum merge --continue')
-		mess = mess.replace('git rebase --abort', 'gitum merge --abort')
-		mess = mess.replace('git rebase --skip', 'gitum merge --skip')
+	@staticmethod
+	def _fixup_merge_message(mess):
+		for cmd in ('continue', 'abort', 'skip'):
+			mess = mess.replace('git rebase --' + cmd, 'gitum merge --' + cmd)
 		return mess
 
-	def _fixup_pull_message(self, mess):
-		mess = mess.replace('git am --resolved', 'gitum pull --resolved')
-		mess = mess.replace('git am --abort', 'gitum pull --abort')
-		mess = mess.replace('git am --skip', 'gitum pull --skip')
+	@staticmethod
+	def _fixup_pull_message(mess):
+		for cmd in ('resolved', 'abort', 'skip'):
+			mess = mess.replace('git am --' + cmd, 'gitum pull --' + cmd)
 		return mess
 
 	def _load_config(self):
@@ -716,46 +635,37 @@ class GitUpstream(object):
 		self._patches = PATCHES_BRANCH
 		# load config
 		try:
-			lines = self._repo.git.show(
-				CONFIG_BRANCH + ':' + CONFIG_FILE,
-				stdout_as_string=False
-			).split('\n')
-		except:
+			lines = self._show(CONFIG_BRANCH, CONFIG_FILE).split('\n')
+		except GitCommandError:
 			return
-		num = 0
-		for i in lines:
-			num += 1
-			parts = i.split('#')[0].strip().split(' ')
+		for num, line in enumerate(lines, 1):
+			parts = line.split('#')[0].strip().split(' ')
+			if parts == ['']:
+				continue
 			if len(parts) != 3 or parts[1] != '=':
 				self._log('error in config file on line %d :' % num)
-				self._log('    %s' % i)
-			if parts[0] == 'upstream':
-				self._upstream = parts[2]
-			elif parts[0] == 'rebased':
-				self._rebased = parts[2]
-			elif parts[0] == 'current':
-				self._mainline = parts[2]
-			elif parts[0] == 'patches':
-				self._patches = parts[2]
+				self._log('    %s' % line)
+				continue
+			key, value = parts[0], parts[2]
+			if key == 'upstream':
+				self._upstream = value
+			elif key == 'rebased':
+				self._rebased = value
+			elif key == 'current':
+				self._mainline = value
+			elif key == 'patches':
+				self._patches = value
 
 	def _restore_branches(self):
 		git = self._repo.git
-		git.checkout(self._upstream, '-f')
-		git.reset(self._saved_branches[self._upstream], '--hard')
-		git.checkout(self._rebased, '-f')
-		git.reset(self._saved_branches[self._rebased], '--hard')
-		git.checkout(self._mainline, '-f')
-		git.reset(self._saved_branches[self._mainline], '--hard')
-		git.checkout(self._patches, '-f')
-		git.reset(self._saved_branches[self._patches], '--hard')
+		for branch in (self._upstream, self._rebased, self._mainline, self._patches):
+			git.checkout(branch, '-f')
+			git.reset(self._saved_branches[branch], '--hard')
 
 	def _save_branches(self):
-		git = self._repo.git
-		self._saved_branches[self._upstream] = self._repo.branches[self._upstream].commit.hexsha
-		self._saved_branches[self._rebased] = self._repo.branches[self._rebased].commit.hexsha
-		self._saved_branches[self._mainline] = self._repo.branches[self._mainline].commit.hexsha
-		self._saved_branches[self._patches] = self._repo.branches[self._patches].commit.hexsha
-		self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
+		for branch in (self._upstream, self._rebased, self._mainline, self._patches):
+			self._saved_branches[branch] = self._head(branch)
+		self._saved_branches['prev_head'] = self._head(self._rebased)
 
 	def _get_commits(self, upstream_repo):
 		return [q.hexsha for q in self._repo.iter_commits(self._upstream + '..' + upstream_repo)]
@@ -763,7 +673,7 @@ class GitUpstream(object):
 	def _process_commits(self):
 		tmp_file = tempfile.TemporaryFile()
 		try:
-			for i in xrange(self._id, len(self._commits)):
+			for i in range(self._id, len(self._commits)):
 				self._process_commit(self._commits[i], tmp_file)
 				self._id += 1
 				self._cur_num += 1
@@ -771,34 +681,32 @@ class GitUpstream(object):
 				tmp_file = tempfile.TemporaryFile()
 		except GitCommandError as e:
 			self._save_state()
-			tmp_file.seek(0)
-			self._log(self._fixup_merge_message(''.join(tmp_file.readlines())))
+			self._log(self._fixup_merge_message(self._read_output(tmp_file)))
 			self._log(e.stderr)
-			raise RebaseFailed
+			raise RebaseFailed from e
 		except PatchError as e:
 			self._save_state()
 			self._log_error(e.message)
-			raise PatchFailed
-		except:
+			raise PatchFailed from e
+		except BaseException:
 			self._save_state()
 			raise
+		finally:
+			tmp_file.close()
 
 	def _process_commit(self, commit, output):
-		self._log("[%d/%d] Applying commit: %s" % \
-			  (self._cur_num + 1, self._all_num,
-			   self._repo.commit(commit).summary))
+		self._log('[%d/%d] Applying commit: %s' %
+			  (self._cur_num + 1, self._all_num, self._repo.commit(commit).summary))
 		self._stage1(commit)
 		diff_str = self._stage2(commit, output)
 		self._stage3(commit, diff_str)
-		self._save_repo_state(self._repo.branches[self._mainline].commit.hexsha if diff_str else '')
+		self._save_repo_state(self._head(self._mainline) if diff_str else '')
 
 	def _patch_tree(self, diff_str):
-		status = 0
-		tmp_dir = tempfile.mkdtemp()
-		with open(tmp_dir + '/__patch__.patch', 'w') as f:
-			f.write(diff_str + '\n')
-		self._repo.git.apply(tmp_dir + '/__patch__.patch')
-		shutil.rmtree(tmp_dir)
+		with tempfile.TemporaryDirectory() as tmp_dir:
+			patch = Path(tmp_dir) / '__patch__.patch'
+			patch.write_bytes(diff_str + b'\n')
+			self._repo.git.apply(str(patch))
 
 	def _stage1(self, commit):
 		git = self._repo.git
@@ -806,87 +714,71 @@ class GitUpstream(object):
 		git.checkout(self._upstream)
 		git.merge(commit)
 
-	def _stage2(self, commit, output, rebase_cmd=None, interactive=False):
+	def _stage2(self, commit, output, rebase_cmd=None):
 		git = self._repo.git
 		self._state = REBASE_ST
 		if rebase_cmd:
-			if interactive:
-				res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
-					    '--work-tree=' + self._repo.working_tree_dir, 'rebase', rebase_cmd], stderr=output)
-				if res != 0:
-					raise GitCommandError('git rebase %s' % rebase_cmd, res, '')
-			else:
-				git.rebase(rebase_cmd, output_stream=output)
+			git.rebase(rebase_cmd, output_stream=output, env=NO_EDITOR_ENV)
 		else:
 			git.checkout(self._rebased)
-			self._saved_branches['prev_head'] = self._repo.branches[self._rebased].commit.hexsha
-			if interactive:
-				res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
-					    '--work-tree=' + self._repo.working_tree_dir, 'rebase', '-i', commit], stderr=output)
-				if res != 0:
-					raise GitCommandError('git rebase', res, '')
-			else:
-				git.rebase(commit, output_stream=output)
-		diff_str = self._repo.git.diff('--full-index', self._saved_branches['prev_head'], self._rebased, stdout_as_string=False)
-		return diff_str
+			self._saved_branches['prev_head'] = self._head(self._rebased)
+			git.rebase(commit, output_stream=output, env=NO_EDITOR_ENV)
+		return self._diff('--full-index', self._saved_branches['prev_head'], self._rebased)
 
 	def _stage3(self, commit, diff_str, interactive=False, message=''):
 		git = self._repo.git
 		self._state = COMMIT_ST
 		git.checkout(self._mainline)
-		if diff_str == "":
+		if not diff_str:
 			self._log('Nothing to commit in branch current, skipping %s commit.' % commit)
 			return
 		git.clean('-d', '-f')
 		try:
 			self._patch_tree(diff_str)
-		except:
+		except GitCommandError:
 			self._id += 1
 			self._state = MERGE_ST
 			raise PatchError('Error occurs during applying %s.\n'
 					 'Fix error, commit and continue the process, please.' % commit)
-		git.add('-A', self._repo.working_tree_dir)
+		git.add('-A', str(self._work_dir))
 		if interactive:
-			res = call(['git', '--git-dir=' + self._repo.working_dir + '/.git/',
-				    '--work-tree=' + self._repo.working_tree_dir, 'commit', '-e', '-m',
-				    'place your comments for %s branch commit' % self._mainline])
-			if res != 0:
-				raise GitCommandError('git commit', res, '')
+			res = subprocess.run(['git', 'commit', '-e', '-m',
+					      'place your comments for %s branch commit' % self._mainline],
+					     cwd=self._work_dir)
+			if res.returncode != 0:
+				raise GitCommandError('git commit', res.returncode, '')
+		elif message:
+			git.commit('-m', message)
 		else:
-			if not message:
-				mess = self._repo.commit(commit).message.encode('utf-8')
-				author = self._repo.commit(commit).author
-				git.commit('-m', mess, '--author="%s <%s>"' % (author.name, author.email))
-			else:
-				git.commit('-m', message)
+			orig = self._repo.commit(commit)
+			git.commit('-m', orig.message, '--author=%s <%s>' % (orig.author.name, orig.author.email))
 
 	def _save_state(self):
-		with open(self._repo.working_dir + '/' + STATE_FILE, 'w') as f:
-			f.write(self._saved_branches[self._upstream] + '\n')
-			f.write(self._saved_branches[self._rebased] + '\n')
-			f.write(self._saved_branches[self._mainline] + '\n')
-			f.write(self._saved_branches[self._patches] + '\n')
-			f.write(self._saved_branches['prev_head'] + '\n')
-			f.write(str(self._state) + '\n')
-			f.write(str(self._all_num) + '\n')
-			f.write(str(self._cur_num) + '\n')
-			for i in xrange(self._id, len(self._commits)):
-				f.write(str(self._commits[i]) + '\n')
+		lines = [
+			self._saved_branches[self._upstream],
+			self._saved_branches[self._rebased],
+			self._saved_branches[self._mainline],
+			self._saved_branches[self._patches],
+			self._saved_branches['prev_head'],
+			str(self._state),
+			str(self._all_num),
+			str(self._cur_num),
+		] + [str(c) for c in self._commits[self._id:]]
+		self._state_path(STATE_FILE).write_text(''.join(line + '\n' for line in lines))
 
 	def _load_state(self, remove=True):
-		ret = True
 		try:
 			self._load_state_raised(remove)
-		except IOError:
+		except (OSError, ValueError):
 			self._log_error('State file is missed or corrupted: nothing to continue.')
-			ret = False
-		return ret
+			return False
+		return True
 
 	def _load_state_raised(self, remove):
-		with open(self._repo.working_dir + '/' + STATE_FILE, 'r') as f:
-			strs = [q.split()[0] for q in f.readlines() if len(q.split()) > 0]
-		if len(strs) < 6:
-			raise IOError
+		path = self._state_path(STATE_FILE)
+		strs = [q.split()[0] for q in path.read_text().splitlines() if q.split()]
+		if len(strs) < 8:
+			raise ValueError('state file is too short')
 		self._saved_branches[self._upstream] = strs[0]
 		self._saved_branches[self._rebased] = strs[1]
 		self._saved_branches[self._mainline] = strs[2]
@@ -895,10 +787,9 @@ class GitUpstream(object):
 		self._state = int(strs[5])
 		self._all_num = int(strs[6])
 		self._cur_num = int(strs[7])
-		for i in xrange(8, len(strs)):
-			self._commits.append(strs[i])
+		self._commits.extend(strs[8:])
 		if remove:
-			os.unlink(self._repo.working_dir + '/' + STATE_FILE)
+			path.unlink()
 
 	def _log_error(self, mess):
 		if self._with_log and mess:
@@ -909,7 +800,7 @@ class GitUpstream(object):
 			print(mess)
 
 	def _log_unexpected_head(self, mainline, wrong, right):
-		self._log_error('You have an unexpected HEAD of %s branch (%s instead of %s).' % \
+		self._log_error('You have an unexpected HEAD of %s branch (%s instead of %s).' %
 				(mainline, wrong, right))
 
 	def _init_merge(self):
@@ -922,19 +813,18 @@ class GitUpstream(object):
 
 	def _apply_patch_am(self, directory, patch, **kwargs):
 		self._log('Applying patch: ' + patch)
-		self._repo.git.am(directory + '/' + patch, **kwargs)
+		self._repo.git.am('--keep-cr', str(Path(directory) / patch), **kwargs)
 
 	def _diffapply(self, diff, message):
 		try:
 			if diff:
 				self._log('Applying result diff between %s and %s' % (self._mainline, self._rebased))
-				interactive = False if message else True
-				self._stage3('update current', diff, interactive, message)
+				self._stage3('update current', diff, interactive=not message, message=message)
 		except PatchError as e:
 			self._save_state()
 			self._log_error(e.message)
-			raise PatchFailed
-		except:
+			raise PatchFailed from e
+		except BaseException:
 			self._save_state()
 			raise
 		self._save_repo_state(self._mainline if diff else '', message)

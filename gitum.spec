@@ -1,31 +1,35 @@
+%def_with check
+
 Name: gitum
-Version: 0.8.6
-Release: alt2
+Version: 0.9.0
+Release: alt1
 
 Summary: Git Upstream Manager
 
-License: GPLv2
+License: GPL-2.0-or-later
 Group: Development/Other
-Url: http://wiki.etersoft.ru/GitUM
+Url: https://wiki.etersoft.ru/GitUM
 
-Packager: Konstantin Artyushkin <akv@altlinux.org>
+Packager: Vitaly Lipatov <lav@altlinux.ru>
 
 # Source-git: https://github.com/Etersoft/gitum.git
 Source: %name-%version.tar
 
 BuildArch: noarch
 
-BuildRequires: rpm-build-intro
+BuildRequires(pre): rpm-build-pyproject
+BuildRequires: python3-module-setuptools
 
-BuildRequires: python-module-setuptools
-BuildRequires: git-core >= 1.7
+%if_with check
+BuildRequires: git-core
+BuildRequires: python3-module-GitPython
+BuildRequires: python3-module-pytest
+%endif
 
-Requires: git-core >= 1.7
+Requires: git-core
 
-%py_use GitPython >= 0.3.0
-
-Provides: gitum
-Obsoletes: git-um
+Provides: git-um = %EVR
+Obsoletes: git-um < %EVR
 
 %description
 Git Upstream Manager is the development tool that maintains your current
@@ -37,20 +41,31 @@ and ready for a submission in the same time.
 %setup
 
 %build
-%python_build
+%pyproject_build
 
 %install
-%python_install
+%pyproject_install
 
 %check
-%python_test
+%pyproject_run_pytest
 
 %files
-%python_sitelibdir/gitupstream/
-%python_sitelibdir/gitum*.egg-info
 %_bindir/%name
+%python3_sitelibdir/gitupstream/
+%python3_sitelibdir/%name-%version.dist-info/
 
 %changelog
+* Wed Nov 11 2026 Vitaly Lipatov <lav@altlinux.ru> 0.9.0-alt1
+- port to Python 3 and GitPython 3, build with pyproject
+- move the CLI to gitupstream.cli (gitum entry point, python3 -m gitupstream)
+- exit with status 1 on errors
+- restore --keep-cr for git am (fix lost in a merge)
+- fix gitum status reporting local changes when there are new commits
+- fix --author passed with literal quotes
+- use the repository git dir for state files instead of a hardcoded .git/
+- find the repository from subdirectories again
+- rewrite tests with pytest, add more tests
+
 * Fri Jul 13 2018 Vitaly Lipatov <lav@altlinux.ru> 0.8.6-alt2
 - cleanup spec, fix build
 

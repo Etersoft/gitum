@@ -3,5 +3,7 @@
 *~
 *pyc
 *egg*
-git-um/build
-git-um/dist
+gitum/build
+gitum/dist
+__pycache__/
+.pytest_cache/

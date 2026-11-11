@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-#
 # git-um - Git Upstream Manager.
 # Copyright (C) 2012  Pavel Shilovsky <piastry@etersoft.ru>
 #
