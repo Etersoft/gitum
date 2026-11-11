@@ -47,8 +47,10 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
   - The `Tracker` matches new commits to ids in this order: `Gitum-Id` trailer, sync sha mapping, same sha, patch-id, subject.
   - It records events and fates. Changes with a fate in `DROP_FATES` are dropped by sync (`dropped-marked`) once the condition holds.
 - **Series.** `series.py` keeps `series/<name>/{definition, *.patch, meta.json}`, compatible with the wine-staging layout.
-  - Import/export of that layout; `checkout` builds a branch with dependencies first.
-- **Upstream check.** `upstreamcheck.py` matches by patch-id, then scores candidates touching the same files by subject + diff similarity (`merged-modified` ≥ 0.75, `suspect` ≥ 0.5).
+  - Import/export of that layout. Series may sit at any depth (`export_dir`).
+  - Export touches only managed files (`definition`, `*.patch`); everything else in a series directory belongs to people.
+  - `checkout` builds a branch with dependencies first.
+- **Upstream check.** `upstreamcheck.py` matches by patch-id, then scores candidates touching the same files by subject + diff similarity. `merged-modified` requires verified content (`content_in`: a three-way apply onto upstream changes nothing). A similar but unverified match is `suspect` and is never recorded or dropped automatically.
 - **Forges.** `forge.py` reads GitHub/GitLab/Forgejo REST APIs (tokens from env) and supports JSON import/export.
 - **Generated layers.** A layer with `generator = "staging"` (`staging-repo`, `staging-ref` = `v{version}`, `staging-exclude`) or `"command"` is rebuilt on the new base instead of cherry-picked.
   - `post-command` runs afterwards (autoreconf etc.).

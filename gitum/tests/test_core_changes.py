@@ -155,7 +155,8 @@ def test_check_upstream_exact_and_modified(stack, capsys):
 	res = {e['subject']: e for e in data['results']}
 	assert res['etersoft: feature']['status'] == 'merged'
 	assert res['etersoft: feature']['release'] == 'v1.1'
-	assert res['etersoft: change base line']['status'] in ('merged-modified', 'suspect')
+	assert res['etersoft: change base line']['status'] == 'merged-modified'
+	assert res['etersoft: change base line']['content_in_upstream'] is True
 	assert res['etersoft: change base line']['upstream_subject'] == 'base: change line 2 like Etersoft does.'
 	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:basealt', '-v')
 	assert data['results'][0]['status'] == 'not-found'
@@ -369,3 +370,63 @@ def test_check_upstream_since(stack, capsys):
 	assert [e['status'] for e in data['results']] == ['not-found']
 	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft', '--since', 'v1.0', '--ref', 'v1.1')
 	assert code == 0
+
+
+def test_check_upstream_similar_but_not_contained_is_suspect(stack, capsys):
+	"""A similar upstream commit whose content differs never drops our change by itself."""
+	up, work = stack
+	up.commit('etersoft: change base line', {'base': 'line1\nUPSTREAM WAY\nline3\nline4\nline5\n'})
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft', '--apply')
+	res = {e['subject']: e for e in data['results']}
+	assert code == EXIT_NEEDS_HUMAN
+	assert res['etersoft: change base line']['status'] == 'suspect'
+	assert res['etersoft: change base line']['content_in_upstream'] is False
+	assert data['applied'] == []
+	assert by_subject(work)['etersoft: change base line']['fate'] == 'local'
+
+
+def test_series_export_keeps_foreign_files(with_series, tmp_path, capsys):
+	up, work = with_series
+	out = tmp_path / 'patches'
+	work_dir = out / 'ntdll-use'
+	(work_dir / 'src').mkdir(parents=True)
+	(work_dir / 'src' / 'probe.c').write_text('int main;\n')
+	(work_dir / 'README.md').write_text('notes\n')
+	(work_dir / 'run-tests.sh').write_text('#!/bin/sh\n')
+	(work_dir / '0009-stale.patch').write_text('old\n')
+	assert gitum(work, 'series', 'export', 'ntdll-use', '--dir', str(out)) == 0
+	assert sorted(p.name for p in work_dir.iterdir()) == [
+		'0001-ntdll-Use-the-helper-bug-123.patch', '0002-ntdll-tests-Test-the-helper.patch', 'README.md',
+		'definition', 'run-tests.sh', 'src']
+	assert (work_dir / 'src' / 'probe.c').read_text() == 'int main;\n'
+	# foreign files do not make the copy stale
+	(work_dir / 'notes.tsv').write_text('a\tb\n')
+	assert gitum(work, 'series', 'export', 'ntdll-use', '--dir', str(out), '--check') == 0
+
+
+def test_series_nested_directories_and_reimport(with_series, tmp_path, capsys):
+	"""Series at any depth: font/bold and font/regular are two series with their own export_dir."""
+	up, work = with_series
+	patch = journal(work).read('series/ntdll-base/0001-ntdll-Add-a-helper.patch')
+	src = tmp_path / 'incoming'
+	for sub in ('font/bold', 'font/regular'):
+		(src / sub).mkdir(parents=True)
+		(src / sub / '0001-a.patch').write_bytes(patch)
+	(src / 'font' / 'README.md').write_text('two merge requests\n')
+	code, data = gitum_json(work, capsys, 'series', 'import-staging', str(src), '--base', 'upstream:winehq')
+	assert sorted(data['imported']) == ['font-bold', 'font-regular']
+	assert journal(work).read_json('series/font-bold/meta.json')['export_dir'] == 'font/bold'
+	assert gitum(work, 'series', 'set', 'font-bold', 'state=sent', 'pr=https://example.org/mr/21') == 0
+	# re-import keeps the metadata, updates definition and patches
+	(src / 'font' / 'bold' / 'definition').write_text('Fixes: [5] Bold strikes\n')
+	assert gitum(work, 'series', 'import-staging', str(src), '--base', 'upstream:winehq', 'font/bold') == 0
+	meta = journal(work).read_json('series/font-bold/meta.json')
+	assert meta['state'] == 'sent' and meta['pr'] == 'https://example.org/mr/21'
+	assert meta['fixes'] == ['[5] Bold strikes']
+	out = tmp_path / 'out'
+	assert gitum(work, 'series', 'export', 'font-bold', '--dir', str(out)) == 0
+	assert sorted(p.name for p in (out / 'font' / 'bold').iterdir()) == ['0001-a.patch', 'definition']
+	assert gitum(work, 'series', 'set', 'font-bold', 'export_dir=../escape') == 0
+	assert gitum(work, 'series', 'export', 'font-bold', '--dir', str(out)) == 1

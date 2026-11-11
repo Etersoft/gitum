@@ -19,7 +19,22 @@ from .journal import JOURNAL_REF, JournalWriter, LayerState, describe_changes
 STATES = ('draft', 'review', 'queued', 'sent', 'merged', 'rejected', 'disabled')
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+-]*$')
 SET_KEYS = {'state', 'pr', 'internal_mr', 'bugs', 'depends', 'disabled', 'title', 'version', 'base', 'branch',
-	    'note', 'upstream_commit', 'fixes', 'upstream'}
+	    'note', 'upstream_commit', 'fixes', 'upstream', 'export_dir'}
+# files of a series directory that gitum writes; everything else there belongs to people
+MANAGED = ('definition',)
+
+
+def is_managed(path):
+	return path.is_file() and (path.name in MANAGED or path.name.endswith('.patch'))
+
+
+def export_dir(meta):
+	"""Directory of a series relative to an export root: export_dir or the series name."""
+	rel = meta.get('export_dir') or meta['name']
+	parts = Path(rel).parts
+	if Path(rel).is_absolute() or '..' in parts or not parts:
+		raise GitumError('series %s: bad export_dir %r' % (meta['name'], rel))
+	return Path(*parts)
 
 
 def meta_path(name):
@@ -256,8 +271,10 @@ def remove(repo, name):
 
 
 def export(repo, names, directory, check=False):
-	"""Write series in the wine-staging layout: <dir>/<name>/definition + patches.
+	"""Write series in the wine-staging layout: <dir>/<export_dir>/definition + patches.
 
+	Only the files gitum manages (definition and *.patch) are written, compared
+	and removed when stale; other files and subdirectories are never touched.
 	With check, compare instead and return the names whose copy is stale.
 	"""
 	journal = repo.journal()
@@ -270,8 +287,8 @@ def export(repo, names, directory, check=False):
 			raise GitumError('no series %s' % name)
 		files = {f: journal.read('series/%s/%s' % (name, f)) for f in journal.list('series/' + name)
 			 if f != 'meta.json'}
-		target = directory / name
-		current = {p.name: p.read_bytes() for p in target.iterdir()} if target.is_dir() else {}
+		target = directory / export_dir(all_series[name])
+		current = {p.name: p.read_bytes() for p in target.iterdir() if is_managed(p)} if target.is_dir() else {}
 		if current != files:
 			stale.append(name)
 			if not check:
@@ -283,36 +300,58 @@ def export(repo, names, directory, check=False):
 	return {'series': names, 'stale': stale, 'written': [] if check else stale}
 
 
-def import_staging(repo, directory, base, names=None):
-	"""Import wine-staging style series: <dir>/<name>/{definition, *.patch}.
+def series_dirs(directory):
+	"""Directories with a definition or patches, at any depth: [(relative path, path)]."""
+	result = []
+	for d in sorted(p for p in [directory, *directory.rglob('*')] if p.is_dir()):
+		if any(is_managed(p) for p in d.iterdir()):
+			result.append((d.relative_to(directory), d))
+	return result
 
-	The series are recorded in the journal without branches; gitum series
-	checkout builds a branch from them.
+
+def import_staging(repo, directory, base, names=None):
+	"""Import wine-staging style series: directories with a definition and *.patch files.
+
+	A series may sit at any depth; its name is the relative path with '/'
+	replaced by '-', and a nested path is kept as export_dir. Re-importing a
+	known series updates its definition and patches and keeps the rest of its
+	metadata (state, links, branch). Branches are not created; gitum series
+	checkout builds one.
 	"""
 	directory = Path(directory)
 	with repo.lock():
 		journal = repo.journal()
+		known = load_all(journal)
 		writer = JournalWriter(repo.git, journal.sha)
 		imported = []
-		for d in sorted(p for p in directory.iterdir() if p.is_dir()):
-			if names and d.name not in names:
+		for rel, d in series_dirs(directory):
+			if rel == Path('.'):
 				continue
-			patches = sorted(p for p in d.iterdir() if p.name.endswith('.patch'))
-			if not patches and not (d / 'definition').exists():
+			name = '-'.join(rel.parts)
+			if names and name not in names and str(rel) not in names:
 				continue
-			check_name(d.name)
-			meta = {'name': d.name, 'base': base, 'branch': '', 'state': 'draft', 'changes': None, 'fixes': [],
-				'depends': []}
-			if (d / 'definition').exists():
-				meta.update(parse_definition((d / 'definition').read_text(errors='replace')))
-			if meta.get('disabled'):
+			check_name(name)
+			meta = dict(known.get(name) or {'name': name, 'base': base, 'branch': '', 'state': 'draft',
+							 'changes': None})
+			definition = parse_definition((d / 'definition').read_text(errors='replace')) \
+				if (d / 'definition').exists() else {'fixes': [], 'depends': [], 'disabled': ''}
+			meta.update(fixes=definition['fixes'], depends=definition['depends'],
+				    disabled=definition.get('disabled', ''))
+			if definition.get('helps'):
+				meta['helps'] = definition['helps']
+			if meta['disabled']:
 				meta['state'] = 'disabled'
-			writer.remove_dir('series/%s' % d.name)
-			writer.put_json(meta_path(d.name), meta)
-			writer.put('series/%s/definition' % d.name, definition_text(meta))
-			for p in patches:
-				writer.put('series/%s/%s' % (d.name, p.name), p.read_bytes())
-			imported.append(d.name)
+			elif meta.get('state') == 'disabled':
+				meta['state'] = 'draft'
+			if len(rel.parts) > 1:
+				meta['export_dir'] = str(rel)
+			writer.remove_dir('series/%s' % name)
+			writer.put_json(meta_path(name), meta)
+			writer.put('series/%s/definition' % name, definition_text(meta))
+			for p in sorted(d.iterdir()):
+				if p.is_file() and p.name.endswith('.patch'):
+					writer.put('series/%s/%s' % (name, p.name), p.read_bytes())
+			imported.append(name)
 		if not imported:
 			raise GitumError('no series found in %s' % directory)
 		_commit(repo, journal, writer, 'gitum: import %d series from %s' % (len(imported), directory.name))

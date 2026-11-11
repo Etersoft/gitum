@@ -2,11 +2,16 @@
 
 For every change: exact patch-id match first; then candidates among the
 upstream commits touching the same files, scored by subject and diff
-similarity. The first release tag containing the found commit is reported.
+similarity. A similar commit counts as "merged-modified" only when the
+content is verified: our change applied onto upstream changes nothing.
+Everything else similar is "suspect" and needs a person. The first release
+tag containing the found commit is reported.
 """
 
 import difflib
+import os
 import re
+import tempfile
 
 from . import changes as changes_mod
 from . import series as series_mod
@@ -14,7 +19,6 @@ from .errors import GitumError
 from .journal import JOURNAL_REF, JournalWriter
 from .git import RefTransaction
 
-MERGED_SCORE = 0.75
 SUSPECT_SCORE = 0.5
 MAX_CANDIDATES = 30
 SUBJECT_NOISE = re.compile(r'\(?(?:eter)?bug\s*#?\s*\d+\)?|\[[^\]]*\]|\s+', re.I)
@@ -39,11 +43,30 @@ def diff_lines(git, sha, relative=''):
 	return lines, files
 
 
+def content_in(git, sha, ref, relative=''):
+	"""Whether the change of commit sha is already contained in ref.
+
+	A three-way apply of the commit onto ref must leave the tree of ref
+	unchanged. For a vendored tree (relative) the reverse patch must apply.
+	"""
+	if relative:
+		diff = git.run('show', '--format=', '--relative=' + relative, sha).stdout
+		with tempfile.TemporaryDirectory() as tmp:
+			g = git.with_env(GIT_INDEX_FILE=os.path.join(tmp, 'index'))
+			g.run('read-tree', ref)
+			return bool(diff.strip()) and g.ok('apply', '--cached', '-R', '--check', input=diff)
+	if not git.rev(sha + '^'):
+		return False
+	res = git.run('merge-tree', '--write-tree', '--merge-base=%s^' % sha, ref, sha, check=False)
+	return res.returncode == 0 and res.stdout.decode().split()[:1] == [git.tree(ref)]
+
+
 class UpstreamIndex:
 	"""Upstream commits of a range with their files and patch-ids."""
 
 	def __init__(self, git, base, ref):
 		self.git = git
+		self.ref = ref
 		self.commits = []
 		raw = git.run('log', '--no-merges', '--format=%x01%H%x00%ae%x00%s', '--name-only', '%s..%s' % (base, ref)).stdout
 		for block in raw.decode('utf-8', errors='replace').split('\x01')[1:]:
@@ -89,9 +112,18 @@ class UpstreamIndex:
 			score = round(0.35 * s_ratio + 0.65 * d_ratio, 3)
 			if not best or score > best['similarity']:
 				best = {'upstream_commit': c['sha'], 'upstream_subject': c['subject'], 'similarity': score}
+		present = content_in(self.git, sha, self.ref, relative)
 		if not best or best['similarity'] < SUSPECT_SCORE:
+			if present:
+				return {'status': 'suspect', 'content_in_upstream': True,
+					'note': 'the content is in upstream, the commit is unknown'}
 			return {'status': 'not-found'}
-		best['status'] = 'merged-modified' if best['similarity'] >= MERGED_SCORE else 'suspect'
+		best['content_in_upstream'] = present
+		if present:
+			best['status'] = 'merged-modified'
+		else:
+			best['status'] = 'suspect'
+			best['note'] = 'similar upstream commit, but our change is not contained in %s' % self.ref
 		return best
 
 
