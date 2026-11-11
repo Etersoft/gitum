@@ -11,7 +11,6 @@ from pathlib import Path
 
 from . import series as series_mod
 from .errors import GitumError, NeedsHuman
-from .git import RefTransaction
 
 SPEC_BEGIN = '# BEGIN gitum patches'
 SPEC_END = '# END gitum patches'
@@ -217,6 +216,11 @@ def _patch_message(path):
 
 def import_patches(repo, into, source, fmt):
 	"""Apply a quilt series or the Patch lines of a spec file onto a layer branch."""
+	with repo.lock():
+		return _import_patches(repo, into, source, fmt)
+
+
+def _import_patches(repo, into, source, fmt):
 	git = repo.git
 	journal = repo.journal()
 	cfg = journal.config
@@ -259,13 +263,8 @@ def import_patches(repo, into, source, fmt):
 		new_tip = wt.rev('HEAD')
 	finally:
 		repo.remove_worktree(wt.cwd)
-	found = repo.check_checkouts([branch])
-	tr = RefTransaction(git)
-	tr.update('refs/heads/' + branch, new_tip, tip)
-	tr.commit()
-	repo.follow_checkouts([(branch, tip, new_tip)], found)
 	from . import state
-	state.save(repo, [into], 'import %d patches from %s' % (len(imported), source.name))
+	state.move_layer(repo, into, new_tip, 'import %d patches from %s' % (len(imported), source.name))
 	return {'layer': into, 'imported': imported, 'tip': new_tip}
 
 

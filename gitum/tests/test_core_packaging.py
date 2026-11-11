@@ -328,3 +328,21 @@ def test_staging_conflict_skip(staged_conflict, capsys):
 	res = {r['subject']: r['result'] for r in data['report']['layers']['staging']['results']}
 	assert res['eee: Change README.'] == 'skipped'
 	assert work.subjects('v1.2..rebased') == ['aaa: Base.', 'bbb: Uses base.']
+
+
+def test_staging_generator_killed_and_continued(staged, capsys):
+	"""Killed while applying wine-staging patches: gitum continue redoes the interrupted patch."""
+	import os
+	import subprocess
+	import sys
+	from pathlib import Path
+	import gitum as gitum_pkg
+	up, st, work = staged
+	env = {**os.environ, 'PYTHONPATH': str(Path(gitum_pkg.__file__).resolve().parents[1]),
+	       'GITUM_TEST_CRASH': 'am:2:after'}
+	res = subprocess.run([sys.executable, '-m', 'gitum', '--repo', str(work.path), 'sync', '--next-release'], env=env)
+	assert res.returncode == 137
+	assert gitum(work, 'continue') == 0
+	assert work.subjects('v1.1..rebased') == ['aaa: Base.', 'bbb: Uses base.']
+	assert work.subjects('rebased..rebased-etersoft') == ['etersoft: own']
+	assert GitumRepo(work.path).load_op() is None

@@ -15,6 +15,8 @@ from .journal import JOURNAL_REF, Journal
 
 LOCK_FILE = 'lock'
 OP_FILE = 'operation.json'
+COMMIT_FILE = 'committing.json'
+CANDIDATE_FILE = 'candidate.json'
 
 
 def now_id():
@@ -42,6 +44,7 @@ class Repo:
 		self.common_dir = self.git.common_dir()
 		self.gitum_dir = self.common_dir / 'gitum'
 		self._lock_fd = None
+		self.recovered = []
 
 	# journal
 
@@ -88,6 +91,7 @@ class Repo:
 		os.write(fd, json.dumps(owner_info()).encode())
 		self._lock_fd = fd
 		try:
+			self.recovered = self.recover()
 			yield
 		finally:
 			os.ftruncate(fd, 0)
@@ -114,6 +118,94 @@ class Repo:
 		finally:
 			os.close(fd)
 
+	# crash safety
+
+	def write_json(self, name, data):
+		"""Write a state file atomically (a crash leaves the old or the new content, never a mix)."""
+		path = self.gitum_dir / name
+		path.parent.mkdir(parents=True, exist_ok=True)
+		tmp = path.with_name(path.name + '.tmp')
+		with open(tmp, 'w') as f:
+			json.dump(data, f, indent=1, ensure_ascii=False)
+			f.flush()
+			os.fsync(f.fileno())
+		tmp.replace(path)
+
+	def read_json(self, name):
+		path = self.gitum_dir / name
+		return json.loads(path.read_text()) if path.exists() else None
+
+	@contextlib.contextmanager
+	def committing(self, tr, moves=(), **info):
+		"""Commit a ref transaction so that a crash at any point can be recovered.
+
+		moves: (branch, old, new) of the branches the transaction moves; their
+		clean user work trees are updated first and put back if the transaction
+		fails. The marker file stays until the body of the with-block (cleanup,
+		hooks) is done; recover() finishes or undoes an interrupted commit.
+		"""
+		found = self.check_checkouts([m[0] for m in moves])
+		follow = [(found[b], old, new) for b, old, new in moves if b in found and old and new and old != new]
+		refs = {ref: new for op, ref, new, _old in tr.updates if op == 'update'}
+		self.write_json(COMMIT_FILE, {'refs': refs, 'checkouts': follow, **info})
+		done = []
+		try:
+			for path, old, new in follow:
+				self.git.at(path).run('read-tree', '-m', '-u', old, new)
+				done.append((path, old, new))
+			tr.commit()
+		except BaseException:
+			for path, old, new in reversed(done):
+				self.git.at(path).run('read-tree', '-m', '-u', new, old, check=False)
+			(self.gitum_dir / COMMIT_FILE).unlink(missing_ok=True)
+			raise
+		yield
+		(self.gitum_dir / COMMIT_FILE).unlink(missing_ok=True)
+
+	def recover(self):
+		"""Finish or undo what an interrupted gitum left; called with the lock held."""
+		done = []
+		marker = self.read_json(COMMIT_FILE)
+		if marker:
+			committed = all(self.git.ref(ref) == new for ref, new in marker['refs'].items())
+			if committed:
+				done.append('finished the interrupted %s' % marker.get('kind', 'commit'))
+				self._finish_commit(marker)
+			else:
+				for path, old, new in marker.get('checkouts', []):
+					if Path(path).is_dir():
+						self.git.at(path).run('read-tree', '-m', '-u', new, old, check=False)
+				done.append('undid the interrupted %s (nothing was changed)' % marker.get('kind', 'commit'))
+			(self.gitum_dir / COMMIT_FILE).unlink(missing_ok=True)
+		op = self.load_op()
+		keep = Path(op['worktree']).resolve() if op and op.get('worktree') else None
+		wt_dir = self.gitum_dir / 'wt'
+		if wt_dir.is_dir():
+			for path in wt_dir.iterdir():
+				if path.resolve() != keep:
+					self.remove_worktree(path)
+					done.append('removed the leftover work tree %s' % path.name)
+		return done
+
+	def _finish_commit(self, marker):
+		kind = marker.get('kind')
+		if kind in ('sync', 'accept'):
+			op = self.load_op()
+			if op and op.get('run') == marker.get('run'):
+				if op.get('worktree'):
+					self.remove_worktree(op['worktree'])
+				self.clear_op()
+			if kind == 'accept':
+				(self.gitum_dir / CANDIDATE_FILE).unlink(missing_ok=True)
+				for ref in marker.get('delete_refs', []):
+					if self.git.ref(ref):
+						self.git.run('update-ref', '-d', ref, check=False)
+			if marker.get('hooks_report'):
+				from . import hooks
+				report = self.journal().read_json(marker['hooks_report'])
+				if report:
+					hooks.run_hooks(self, report)
+
 	# operation in progress
 
 	def op_path(self):
@@ -124,10 +216,7 @@ class Repo:
 		return json.loads(path.read_text()) if path.exists() else None
 
 	def save_op(self, op):
-		self.gitum_dir.mkdir(parents=True, exist_ok=True)
-		tmp = self.op_path().with_suffix('.tmp')
-		tmp.write_text(json.dumps(op, indent=1, ensure_ascii=False))
-		tmp.replace(self.op_path())
+		self.write_json(OP_FILE, op)
 
 	def clear_op(self):
 		self.op_path().unlink(missing_ok=True)
@@ -176,11 +265,12 @@ class Repo:
 		"""Branches checked out in user work trees: {branch: path}.
 
 		Such a branch can move only if its work tree is clean: the work tree then
-		follows it (follow_checkouts). Local changes stop the operation.
+		follows it (see committing). Local changes stop the operation.
 		"""
 		found = {}
+		checkouts = self.git.branch_checkouts() if branches else {}
 		for branch in branches:
-			path = self.checked_out(branch)
+			path = self._user_checkout(checkouts.get('refs/heads/' + branch))
 			if not path:
 				continue
 			if not self.git.at(path).is_clean():
@@ -189,16 +279,11 @@ class Repo:
 			found[branch] = path
 		return found
 
-	def follow_checkouts(self, moves, found):
-		"""Update the clean work trees of moved branches: moves is [(branch, old, new)]."""
-		for branch, old, new in moves:
-			path = found.get(branch)
-			if path and old and new and old != new:
-				self.git.at(path).run('read-tree', '-m', '-u', old, new)
-
 	def checked_out(self, branch):
 		"""Work tree path where a branch is checked out (ignoring our own), or None."""
-		path = self.git.branch_checkouts().get('refs/heads/' + branch)
+		return self._user_checkout(self.git.branch_checkouts().get('refs/heads/' + branch))
+
+	def _user_checkout(self, path):
 		if path and Path(path).resolve().is_relative_to((self.gitum_dir / 'wt').resolve()):
 			return None
 		return path

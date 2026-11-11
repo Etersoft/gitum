@@ -16,6 +16,26 @@ BASE_ENV = {
 
 ZERO_SHA = '0' * 40
 
+# Tests only: GITUM_TEST_CRASH="<git command>:<n>[:after]" ends the process like kill -9
+# before (or right after) the n-th run of that git command, to test recovery.
+_CRASH = os.environ.get('GITUM_TEST_CRASH', '').split(':') if os.environ.get('GITUM_TEST_CRASH') else None
+_CALLS = {}
+
+
+def _maybe_crash(args, after):
+	if not _CRASH:
+		return
+	args = list(args)
+	while args[:1] == ['-c']:
+		args = args[2:]
+	if not args or args[0] != _CRASH[0]:
+		return
+	if not after:
+		_CALLS[args[0]] = _CALLS.get(args[0], 0) + 1
+	wanted_after = len(_CRASH) > 2 and _CRASH[2] == 'after'
+	if after == wanted_after and _CALLS.get(args[0]) == int(_CRASH[1]):
+		os._exit(137)
+
 
 class Git:
 	"""Runs git in a work tree (or a git dir) with a non-interactive environment."""
@@ -35,8 +55,10 @@ class Git:
 		full_env = {**os.environ, **BASE_ENV, **self.env, **(env or {})}
 		if isinstance(input, str):
 			input = input.encode()
+		_maybe_crash(args, False)
 		res = subprocess.run(['git', *args], cwd=self.cwd, input=input, env=full_env,
 				     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		_maybe_crash(args, True)
 		if check and res.returncode != 0:
 			raise GitError(args, res.returncode, res.stdout, res.stderr)
 		return res

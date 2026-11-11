@@ -29,6 +29,12 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
 
 - **No GitPython.** `git.py` has `Git` (subprocess runner with a non-interactive env: `GIT_EDITOR=true`, no prompts) and `RefTransaction` (`update-ref --stdin` with old-value checks).
   - Branches change **only** through such a transaction at the end of an operation.
+  - **Crash safety is a hard requirement** (README "Reliability"):
+    - Every operation must be resumable or undoable after a kill at any point.
+    - Save `operation.json` before acting. Mark each step (`picking`/`head`, `gen.applying`/`head`) so that `Sync._recover` can redo it.
+    - Move refs only through `repo.committing(tr, moves, kind=...)`. It writes the `committing.json` marker, updates clean user work trees first and undoes them on failure; `repo.recover()` (run on every lock) finishes or undoes an interrupted commit and removes leftover private work trees.
+    - Write state files with `repo.write_json`. Move a layer together with the journal through `state.move_layer`.
+    - Test new paths with `GITUM_TEST_CRASH="<git cmd>:<n>[:after]"` (`tests/test_core_recovery.py`).
   - **Performance:** almost all the time is spent in git processes (5–12 ms each on a wine-sized repository); Python itself is under 5%. Never run git once per object in a loop. Use the batch helpers instead: `read_blobs` (cat-file --batch), `Journal.read_files`, `commit_infos`, `diffs`, `hash_blobs`, `patch_ids`.
   - Work happens in private work trees under `<common dir>/gitum/wt/`; never reset or clean a user's work tree.
   - A branch checked out in a clean user work tree moves together with it (`repo.check_checkouts` before the transaction, `repo.follow_checkouts` after it, via `read-tree -m -u old new`). A dirty work tree means `NeedsHuman`.

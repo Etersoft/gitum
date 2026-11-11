@@ -241,7 +241,49 @@ def status(repo):
 	op = repo.load_op()
 	if op:
 		result['operation'] = {k: op.get(k) for k in ('kind', 'run', 'layer', 'stopped_at', 'worktree', 'message')}
+		if not op.get('stopped_at'):
+			result['operation']['message'] = 'running' if result['lock'] else \
+				'interrupted; gitum continue resumes it, gitum abort drops it'
+	if (repo.gitum_dir / 'committing.json').exists():
+		result['interrupted_commit'] = repo.read_json('committing.json').get('kind')
 	cand = repo.gitum_dir / 'candidate.json'
 	if cand.exists():
 		result['candidate'] = json.loads(cand.read_text())
 	return result
+
+
+def move_layer(repo, name, new_tip, message, adjust=None):
+	"""Move a layer branch to new_tip and record it in the journal in one transaction.
+
+	The new tip must stand on the recorded base of the layer. adjust(tracker,
+	state) may set fates of the changes before they are written.
+	"""
+	git = repo.git
+	journal = repo.journal()
+	cfg = journal.config
+	layer = cfg.layers[name]
+	old = journal.layer(name)
+	ref = 'refs/heads/' + layer.branch
+	current = git.rev(ref)
+	if not git.is_ancestor(old.base, new_tip):
+		raise GitumError('layer %s: %s is not based on %s' % (name, new_tip[:12], old.base[:12]))
+	state = LayerState(name, {'base': old.base, 'tip': new_tip, 'branch': layer.branch,
+				  'upstream_ref': cfg.root_upstream(layer).ref,
+				  'changes': [c.to_json() for c in describe_changes(git, old.base, new_tip)]})
+	tracker = changes_mod.Tracker(journal)
+	tracker.track_layer(name, old, state.changes, context=message)
+	if adjust:
+		adjust(tracker, state)
+	writer = JournalWriter(git, journal.sha)
+	writer.put_layer(state)
+	tracker.write(writer)
+	tr = RefTransaction(git)
+	tr.update(ref, new_tip, current or None)
+	hist_old = git.rev(history_ref(name))
+	tr.update(history_ref(name), history_commit(git, name, new_tip, hist_old, '%s: %s\n\ntip %s\n' % (
+		name, message, new_tip)), hist_old or None)
+	tr.update(JOURNAL_REF, writer.write('gitum: %s: %s' % (name, message), [new_tip]), journal.sha)
+	with repo.committing(tr, [(layer.branch, current, new_tip)], kind='layer'):
+		pass
+	return state
+

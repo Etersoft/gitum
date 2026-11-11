@@ -129,6 +129,7 @@ class Sync:
 			if not any(self._layer_moves(journal, l) for l in cfg.ordered_layers()):
 				shutil.rmtree(run_dir, ignore_errors=True)
 				return {'changed': False, 'message': 'everything is up to date', 'targets': targets}
+		repo.save_op(self.op)		# from here on gitum continue can resume after a crash
 		return self._run()
 
 	def resume(self, action):
@@ -147,6 +148,10 @@ class Sync:
 			self.repo.clear_op()
 			return {'changed': False, 'aborted': True, 'run': op['run'],
 				'message': 'sync aborted; branches are unchanged'}
+		if action == 'continue' and not op.get('stopped_at'):
+			# not stopped on a conflict: the previous gitum was killed; redo the interrupted step
+			self._recover()
+			return self._run()
 		if not cur or not wt:
 			raise GitumError('nothing to %s' % action)
 		if cur.get('gen'):
@@ -228,6 +233,34 @@ class Sync:
 				snap['refs/tags/' + layer.compat_start_tag] = self.git.ref('refs/tags/' + layer.compat_start_tag)
 		return snap
 
+	def _recover(self):
+		"""Bring the private work tree back to the state before the interrupted step."""
+		op = self.op
+		cur = op.get('current')
+		path = op.get('worktree')
+		if path and not Path(path).is_dir():
+			# the work tree is gone: start the current layer again
+			self.repo.git.run('worktree', 'prune', check=False)
+			op['worktree'] = None
+			if cur:
+				op['pending'].insert(0, cur['layer'])
+				op['current'] = None
+			self.repo.save_op(op)
+			return
+		if not path:
+			return
+		wt = self.git.at(path)
+		wt.run('cherry-pick', '--abort', check=False)
+		wt.run('am', '--abort', check=False)
+		if cur and cur.get('picking'):
+			wt.run('reset', '-q', '--hard', cur['head'])
+			cur.pop('picking')
+		gen = (cur or {}).get('gen')
+		if gen and gen.get('applying') is not None:
+			wt.run('reset', '-q', '--hard', gen['head'])
+			gen.pop('applying')
+		self.repo.save_op(op)
+
 	def _check_checkouts(self):
 		"""Layer branches checked out in clean user work trees follow the sync; dirty ones stop it."""
 		cfg = self.repo.journal(self.op['journal']).config
@@ -257,6 +290,8 @@ class Sync:
 				layer = cfg.layers[name]
 				if not self._start_layer(journal, layer):
 					continue
+			elif op['current'].get('gen'):
+				self._continue_generation()		# resumed in the middle of a generated layer
 			self._continue_layer()
 			self._finish_layer()
 		return self._finish()
@@ -348,6 +383,8 @@ class Sync:
 		layer = self.repo.journal(op['journal']).config.layers[cur['layer']]
 		while gen['pos'] < len(gen['plan']):
 			item = gen['plan'][gen['pos']]
+			gen['applying'], gen['head'] = gen['pos'], wt.rev('HEAD')
+			self.repo.save_op(op)
 			res = packaging.apply_plan_item(wt, item)
 			if res.returncode != 0:
 				files = wt.unmerged_files()
@@ -362,6 +399,7 @@ class Sync:
 									 ' (%s)' % ', '.join(files) if files else '', op['worktree']),
 					worktree=op['worktree'], series=item['series'], patch=item['patch'], files=files, run=op['run'])
 			gen['pos'] += 1
+			gen.pop('applying', None)
 			self.repo.save_op(op)
 		post = packaging.post_command(self.repo, wt, layer.options, self._env(layer.name), op['run_dir'], layer.name)
 		if post:
@@ -443,6 +481,9 @@ class Sync:
 				cur['todo'].pop(0)
 				continue
 			before = wt.rev('HEAD')
+			# a step marker: after a crash the work tree goes back to `head` and the step is redone
+			cur['picking'], cur['head'] = sha, before
+			self.repo.save_op(op)
 			pick = wt.run('-c', 'rerere.enabled=true', '-c', 'rerere.autoUpdate=true', 'cherry-pick',
 				      '--allow-empty', '--empty=drop', sha, check=False)
 			if pick.returncode == 0:
@@ -453,6 +494,7 @@ class Sync:
 			else:
 				self._resolve(wt, res, pick)
 			cur['todo'].pop(0)
+			cur.pop('picking', None)
 			self.repo.save_op(op)
 
 	def _resolve(self, wt, res, pick):
@@ -621,9 +663,11 @@ class Sync:
 			hooks.run_hooks(self.repo, report, candidate=True)
 			raise NeedsHuman('the update needs a review: %s; then gitum accept' % result['message'],
 					 report=report, candidate=result)
-		commit_states(self.repo, op, report)
-		self._cleanup()
-		hooks.run_hooks(self.repo, report)
+		tr, moves = commit_states(self.repo, op, report)
+		with self.repo.committing(tr, moves, kind='sync', run=op['run'],
+					  hooks_report='runs/%s/report.json' % op['run']):
+			self._cleanup()
+			hooks.run_hooks(self.repo, report)
 		result = {'changed': True, 'report': report, 'run_dir': op['run_dir']}
 		if op['options']['publish']:
 			from . import publish
@@ -655,7 +699,7 @@ def new_states(repo, op, tips=None):
 
 
 def commit_states(repo, op, report, tips=None):
-	"""Move branches, history, START tags and the journal in one transaction."""
+	"""The transaction moving branches, history, START tags and the journal: (tr, moves)."""
 	git = repo.git
 	journal = repo.journal(op['journal'])
 	cfg = journal.config
@@ -694,10 +738,7 @@ def commit_states(repo, op, report, tips=None):
 	message = 'gitum: sync to %s\n\n%s' % (op['target_desc'], summary_text(report))
 	new_journal = writer.write(message, [s.tip for s in states.values()])
 	tr.update(JOURNAL_REF, new_journal, journal.sha)
-	found = repo.check_checkouts([b for b, _, _ in moved])
-	tr.commit()
-	repo.follow_checkouts(moved, found)
-	return new_journal
+	return tr, moved
 
 
 def save_candidate(repo, op, report):
@@ -718,7 +759,7 @@ def save_candidate(repo, op, report):
 		pushed = True
 	data = {'run': op['run'], 'op': {k: v for k, v in op.items() if k not in ('current', 'pending')},
 		'refs': refs, 'pushed': pushed, 'report': report}
-	(repo.gitum_dir / 'candidate.json').write_text(json.dumps(data, indent=1, ensure_ascii=False))
+	repo.write_json('candidate.json', data)
 	where = ' and %s' % cfg.publish_remote if pushed else ''
 	return {'refs': refs, 'pushed': pushed,
 		'message': 'the result is in %s*%s' % (cfg.candidate_prefix, where)}
@@ -741,26 +782,27 @@ def summary_text(report):
 def accept(repo, publish_=False):
 	"""Publish a reviewed candidate (the candidate branches may have been edited)."""
 	git = repo.git
-	path = repo.gitum_dir / 'candidate.json'
-	if not path.exists():
-		raise GitumError('no candidate to accept')
-	cand = json.loads(path.read_text())
-	op = cand['op']
-	cfg = repo.journal(op['journal']).config
 	with repo.lock():
+		path = repo.gitum_dir / 'candidate.json'
+		if not path.exists():
+			raise GitumError('no candidate to accept')
+		cand = json.loads(path.read_text())
+		op = cand['op']
+		cfg = repo.journal(op['journal']).config
 		if cand['pushed'] and cfg.publish_remote:
 			git.run('fetch', '--quiet', cfg.publish_remote,
 				*['+%s:%s' % (r, r) for r in cand['refs'].values()])
 		tips = {name: git.rev(ref) for name, ref in cand['refs'].items()}
-		commit_states(repo, op, cand['report'], tips)
-		tr = RefTransaction(git)
+		tr, moves = commit_states(repo, op, cand['report'], tips)
 		for ref in cand['refs'].values():
 			tr.delete(ref)
-		tr.commit()
-		if cand['pushed'] and cfg.publish_remote:
-			git.run('push', '--quiet', cfg.publish_remote, *[':' + r for r in cand['refs'].values()], check=False)
-		path.unlink()
-	hooks.run_hooks(repo, cand['report'])
+		with repo.committing(tr, moves, kind='accept', run=op['run'], delete_refs=list(cand['refs'].values()),
+				     hooks_report='runs/%s/report.json' % op['run']):
+			if cand['pushed'] and cfg.publish_remote:
+				git.run('push', '--quiet', cfg.publish_remote, *[':' + r for r in cand['refs'].values()],
+					check=False)
+			path.unlink()
+			hooks.run_hooks(repo, cand['report'])
 	result = {'changed': True, 'report': cand['report'], 'accepted': cand['run']}
 	if publish_:
 		from . import publish
@@ -832,6 +874,9 @@ def resume(repo, action):
 	with repo.lock():
 		op = repo.load_op()
 		if not op:
+			if repo.recovered:
+				return {'changed': True, 'recovered': repo.recovered,
+					'message': 'recovered: %s' % '; '.join(repo.recovered)}
 			raise GitumError('no operation in progress')
 		if op['kind'] != 'sync':
 			raise GitumError('unknown operation %s' % op['kind'])

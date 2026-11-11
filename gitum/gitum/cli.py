@@ -111,6 +111,9 @@ def format_status(data):
 		lines.append('%s in progress (run %s): %s' % (op['kind'], op['run'], op.get('message') or ''))
 		if op.get('worktree'):
 			lines.append('  work tree: %s' % op['worktree'])
+	if data.get('interrupted_commit'):
+		lines.append('an interrupted %s will be finished or undone by the next gitum command '
+			     '(for example gitum continue)' % data['interrupted_commit'])
 	if data.get('candidate'):
 		lines.append('candidate waiting for review: run %s (gitum accept)' % data['candidate'].get('run'))
 	if data.get('lock'):

@@ -525,7 +525,6 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 		branch = branch or meta.get('branch') or 'series/' + name
 		ref = 'refs/heads/' + branch
 		old = git.rev(ref)
-		found = repo.check_checkouts([branch]) if old else {}
 		names = order(all_series, [name]) if with_depends else [name]
 		wt = repo.add_worktree(start, 'checkout-' + name)
 		applied = []
@@ -546,13 +545,13 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 			repo.remove_worktree(wt.cwd)
 		tr = RefTransaction(git)
 		tr.update(ref, tip, old or None)
-		tr.commit()
-		repo.follow_checkouts([(branch, old, tip)], found)
 		if not meta.get('branch'):
 			meta['branch'] = branch
 			writer = JournalWriter(git, journal.sha)
 			writer.put_json(meta_path(name), meta)
-			_commit(repo, journal, writer, 'gitum: series %s: branch %s' % (name, branch))
+			tr.update(JOURNAL_REF, writer.write('gitum: series %s: branch %s' % (name, branch)), journal.sha)
+		with repo.committing(tr, [(branch, old, tip)], kind='branch'):
+			pass
 		return {'branch': branch, 'tip': tip, 'applied': applied, 'base': start}
 
 

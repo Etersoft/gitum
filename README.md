@@ -326,6 +326,30 @@ Hooks:
 moves together with its work tree. If that work tree has local changes,
 gitum stops with exit code 2 and changes nothing.
 
+## Reliability
+
+gitum may be interrupted at any moment — killed, out of memory, power loss —
+and nothing is lost or left half-done:
+
+- Work happens in a private work tree. Your branches move only at the end,
+  all together in one atomic ref transaction, or not at all.
+- Every step of a sync is recorded before it is done and can be redone:
+  after a crash `gitum continue` puts the private work tree back to the
+  start of the interrupted step and goes on. `gitum abort` drops the
+  operation instead; your branches stay as they were.
+- A clean work tree that follows a moved branch is updated before the branch
+  moves and put back if the transaction fails.
+- A marker file describes every commit in progress. The next gitum command
+  finishes a commit that happened (cleanup, hooks) or undoes one that did not.
+  It also removes private work trees left by a killed gitum.
+- State files are written atomically. Branches, history and journal change
+  together in one transaction, also for `backport`, `import` and the commits
+  `publish` puts on top.
+
+`gitum status` shows an interrupted operation and what to do about it. The
+test suite kills gitum at many points (`GITUM_TEST_CRASH`) and checks that
+`gitum continue` reaches exactly the result of an uninterrupted run.
+
 ## Development
 
 ```sh

@@ -67,19 +67,13 @@ def publish(repo, remote=None):
 				leases[branch] = theirs or ''
 			elif published and git.is_ancestor(published, theirs):
 				new_tip, commits = _integrate(repo, branch, published, theirs, local)
-				found = repo.check_checkouts([branch])
-				tr = RefTransaction(git)
-				tr.update('refs/heads/' + branch, new_tip, local)
-				tr.commit()
-				repo.follow_checkouts([(branch, local, new_tip)], found)
+				state.move_layer(repo, layer.name, new_tip, 'integrate commits from %s' % remote)
 				integrated[layer.name] = [git.commit_info(c)['subject'] for c in commits]
 				leases[branch] = theirs
 			elif git.is_ancestor(local, theirs):
 				raise NeedsHuman('%s/%s is ahead of the local %s: gitum pull first' % (remote, branch, branch))
 			else:
 				raise NeedsHuman('%s/%s and the local %s have diverged' % (remote, branch, branch))
-		if integrated:
-			state.save(repo, list(integrated), 'integrate commits from %s' % remote)
 		journal = git.rev(JOURNAL_REF)
 		their_journal = git.rev(remote_ref(remote, JOURNAL_BRANCH))
 		if their_journal and not git.is_ancestor(their_journal, journal):
@@ -163,9 +157,8 @@ def pull(repo, remote=None):
 				tr.update(history_ref(layer.name), hist, '')
 			tr.update(published_ref(remote, layer.branch), git.rev(remote_ref(remote, layer.branch)) or st.tip, '')
 		tr.update(JOURNAL_REF, target, local_journal or None)
-		found = repo.check_checkouts([m[0] for m in moved])
-		tr.commit()
-		repo.follow_checkouts(moved, found)
+		with repo.committing(tr, moved, kind='pull'):
+			pass
 		return {'changed': True, 'remote': remote, 'journal': target, 'merged': target != theirs,
 			'moved': [m[0] for m in moved]}
 

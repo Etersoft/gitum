@@ -7,7 +7,6 @@ import os
 import re
 from pathlib import Path
 
-from . import changes as changes_mod
 from . import series as series_mod
 from . import state
 from .errors import GitumError, NeedsHuman
@@ -42,11 +41,10 @@ def _set_branch(repo, branch, tip):
 	old = repo.git.rev(ref)
 	if old == tip:
 		return
-	found = repo.check_checkouts([branch]) if old else {}
 	tr = RefTransaction(repo.git)
 	tr.update(ref, tip, old or None)
-	tr.commit()
-	repo.follow_checkouts([(branch, old, tip)], found)
+	with repo.committing(tr, [(branch, old, tip)], kind='branch'):
+		pass
 
 
 def base_short(spec):
@@ -262,6 +260,11 @@ def prepare(repo, name, onto=None, branch=None, push=None, directory=None, strip
 	Dependencies must be merged upstream already; with force their commits
 	are included instead.
 	"""
+	with repo.lock():
+		return _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depends, now, force)
+
+
+def _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depends, now, force):
 	git = repo.git
 	series_mod.check_claims(repo, [name])
 	journal = repo.journal()
@@ -397,22 +400,18 @@ def backport(repo, specs, into, series_name=None, drop_on=None):
 			new_tip = wt.rev('HEAD')
 		finally:
 			repo.remove_worktree(wt.cwd)
-		_set_branch(repo, layer.branch, new_tip)
-		state.save(repo, [into], 'backport %s' % ', '.join(p['origin'][:12] for p in picked))
-		journal = repo.journal()
-		tracker = changes_mod.Tracker(journal)
-		by_sha = {c.sha: c.gitum_id for c in journal.layer(into).changes}
-		for p in picked:
-			meta = {'origin': p['origin']}
-			if drop_on:
-				meta['drop_on'] = drop_on
-			if series_name:
-				meta['series'] = series_name
-			tracker.set(by_sha[p['sha']], 'backport', **meta)
-			p['id'] = by_sha[p['sha']]
-		writer = JournalWriter(git, journal.sha)
-		tracker.write(writer)
-		_commit_journal(repo, journal, writer, 'gitum: backport into %s' % into)
+		def mark(tracker, st):
+			by_sha = {c.sha: c.gitum_id for c in st.changes}
+			for p in picked:
+				meta = {'origin': p['origin']}
+				if drop_on:
+					meta['drop_on'] = drop_on
+				if series_name:
+					meta['series'] = series_name
+				tracker.set(by_sha[p['sha']], 'backport', **meta)
+				p['id'] = by_sha[p['sha']]
+
+		state.move_layer(repo, into, new_tip, 'backport %s' % ', '.join(p['origin'][:12] for p in picked), mark)
 		return {'layer': into, 'picked': picked}
 
 
