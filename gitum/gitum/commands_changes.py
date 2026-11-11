@@ -373,7 +373,7 @@ def cmd_bugs(repo, args, out):
 	md = journal.config.queue.get('markdown', {})
 	rows = bugs_mod.index(journal.config, series.load_all(journal), args.bug)
 	if args.format == 'md':
-		text = bugs_mod.markdown(rows, md.get('titles', {}).get('bugs', 'Bugs'), md.get('bug-titles'))
+		text = bugs_mod.markdown(rows, md.get('titles', {}).get('bugs', 'Bugs'), md.get('bug-titles'), md.get('timezone'))
 	else:
 		text = bugs_mod.text(rows)
 	if args.output:

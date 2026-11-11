@@ -426,7 +426,7 @@ def test_bugs_with_trackers(ser, tmp_path, capsys):
 	# the winehq bug is the Fixes line already written, not a second one
 	assert j.read_text('series/ntdll-base/definition') == 'Fixes: [60741] Tahoma is wrong\n'
 	assert gitum(work, 'series', 'set', 'ntdll-use', 'bugs=etersoft:19979,winehq:5') == 0
-	assert 'Fixes: [5]\n' in journal(work).read_text('series/ntdll-use/definition')
+	assert 'Fixes: [5] ntdll: Use the helper.\n' in journal(work).read_text('series/ntdll-use/definition')
 
 	code, data = gitum_json(work, capsys, 'series', 'list', '--bug', '19979')
 	assert sorted(data) == ['ntdll-base', 'ntdll-use']
@@ -449,7 +449,7 @@ def test_bugs_with_trackers(ser, tmp_path, capsys):
 	capsys.readouterr()
 	assert gitum(work, 'queue', '--format', 'md') == 0
 	md = capsys.readouterr().out
-	assert '[#19979](https://bugs.etersoft.ru/show_bug.cgi?id=19979), [winehq 60741]' in md and '## Bugs' in md
+	assert '[#19979](https://bugs.etersoft.ru/show_bug.cgi?id=19979), [winehq 60741]' in md and '\n### Bugs\n' in md
 
 	# a state change runs [hooks] series with the bugs and their trackers
 	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=sent', 'version=v1') == 0
@@ -471,3 +471,11 @@ def test_bugs_import(stack, tmp_path, capsys):
 	(tmp_path / 'items.json').write_text(json.dumps(items))
 	assert gitum(work, 'series', 'import-json', str(tmp_path / 'items.json')) == 0
 	assert journal(work).read_json('series/old-one/meta.json')['bugs'] == ['etersoft:19819', 'winehq:60629']
+
+
+def test_local_date():
+	from gitum.upstreamwork import local_date
+	assert local_date('2026-11-11T21:30:00+00:00', '+03:00') == '2026-11-12'
+	assert local_date('2026-11-11T21:30:00+00:00', '-0100') == '2026-11-11'
+	assert local_date('2026-11-11') == '2026-11-11'
+	assert local_date('') == ''

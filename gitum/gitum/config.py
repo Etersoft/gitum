@@ -113,7 +113,7 @@ KNOWN = {
 		   'mr-assets-dir', 'bug-tracker', 'fixes-tracker'},
 	'queue': {'one-at-a-time', 'done-limit', 'markdown'},
 	'queue.markdown': {'title', 'generated', 'next', 'nothing', 'paused', 'sections', 'fields', 'done-fields', 'titles',
-			   'bug-titles'},
+			   'bug-titles', 'timezone'},
 	'forge.*': {'type', 'url', 'api', 'token-env', 'mr-url', 'project'},
 	'tracker.*': {'url', 'label'},
 	'identity': {'aliases'},

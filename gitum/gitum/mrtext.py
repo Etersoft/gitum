@@ -108,9 +108,10 @@ def _store(repo, name, text, assets, message):
 		for file, data in assets.items():
 			writer.put(asset_path(name, file), data)
 		meta['mr'] = {'assets': {f: hashlib.sha256(d).hexdigest() for f, d in assets.items()},
-			      'uploads': (meta.get('mr') or {}).get('uploads', {})}
+			      'uploads': (meta.get('mr') or {}).get('uploads', {}), 'title': split_title(text)[0]}
 		series_mod.touch(meta, event='mr text')
 		writer.put_json(series_mod.meta_path(name), meta)
+		writer.put('series/%s/definition' % name, series_mod.definition_text(meta, journal.config))
 		new = writer.write('gitum: series %s: %s' % (name, message))
 		tr = RefTransaction(repo.git)
 		tr.update(JOURNAL_REF, new, journal.sha)

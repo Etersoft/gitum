@@ -232,14 +232,39 @@ def md_link(url):
 	return '[%s!%s](%s)' % (m.group(1), m.group(2), url) if m else (url or '')
 
 
-def md_cell(row, field, index):
+def local_date(value, tz=None):
+	"""The date of an ISO timestamp in the local time zone, or in tz ("Europe/Moscow", "+03:00")."""
+	if not value:
+		return ''
+	try:
+		t = datetime.datetime.fromisoformat(value)
+	except ValueError:
+		return value[:10]
+	if t.tzinfo is None:
+		return t.date().isoformat()
+	if tz:
+		m = re.match(r'^([+-])(\d\d):?(\d\d)$', tz)
+		if m:
+			delta = datetime.timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
+			zone = datetime.timezone(delta if m.group(1) == '+' else -delta)
+		else:
+			import zoneinfo
+			try:
+				zone = zoneinfo.ZoneInfo(tz)
+			except (zoneinfo.ZoneInfoNotFoundError, ValueError) as e:
+				raise GitumError('unknown time zone %r: %s' % (tz, e)) from e
+		return t.astimezone(zone).date().isoformat()
+	return t.astimezone().date().isoformat()
+
+
+def md_cell(row, field, index, tz=None):
 	value = row.get(field)
 	if field == 'position':
 		return str(index)
 	if field == 'state':
 		return row['state'] + ((' ' + row['version']) if row.get('version') else '')
 	if field in ('updated', 'merged_at'):
-		return (value or row.get('updated') or '')[:10]
+		return local_date(value or row.get('updated') or '', tz)
 	if field in ('pr', 'internal_mr'):
 		return md_link(value)
 	if field == 'upstream_commit':
@@ -253,10 +278,10 @@ def md_cell(row, field, index):
 	return '' if value is None else str(value).replace('|', '\\|')
 
 
-def _md_table(fields, titles, rows):
+def _md_table(fields, titles, rows, tz=None):
 	lines = ['| ' + ' | '.join(titles.get(f, f) for f in fields) + ' |', '|' + '---|' * len(fields)]
 	for i, r in enumerate(rows, 1):
-		lines.append('| ' + ' | '.join(md_cell(r, f, i) for f in fields) + ' |')
+		lines.append('| ' + ' | '.join(md_cell(r, f, i, tz) for f in fields) + ' |')
 	return lines
 
 
@@ -286,9 +311,11 @@ def queue_markdown(data, labels=None):
 			else:
 				rows, fields = [r for r in q['rows'] if r['state'] in SECTION_STATES.get(section, ())], conf['fields']
 			if rows:
-				lines += ['### ' + titles.get(section, section), ''] + _md_table(fields, titles, rows) + ['']
+				lines += ['### ' + titles.get(section, section), ''] + _md_table(fields, titles, rows, conf.get('timezone')) + ['']
 	if 'bugs' in conf['sections'] and data.get('bugs'):
-		lines += ['## ' + titles.get('bugs', 'Bugs'), ''] + bugs_mod.markdown_table(data['bugs'], conf.get('bug-titles')) + ['']
+		level = '## ' if len(data['queues']) > 1 else '### '
+		lines += [level + titles.get('bugs', 'Bugs'), ''] + \
+			bugs_mod.markdown_table(data['bugs'], conf.get('bug-titles'), conf.get('timezone')) + ['']
 	return '\n'.join(lines).rstrip('\n') + '\n'
 
 
