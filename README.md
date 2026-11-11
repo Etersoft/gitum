@@ -47,11 +47,17 @@ run `gitum continue`. A crash at any moment loses nothing.
 
 gitum needs Python 3.11 and git 2.45, nothing else.
 
+In ALT Linux:
+
+```sh
+epm install gitum
+```
+
+From the sources:
+
 ```sh
 pip install ./gitum
 ```
-
-For ALT Linux, build the package from `gitum.spec` with gear.
 
 ## Quick start
 

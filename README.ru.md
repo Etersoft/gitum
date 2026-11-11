@@ -47,11 +47,17 @@ git-ветке, а каждое состояние записано в исто�
 
 Нужны Python 3.11 и git 2.45, больше ничего.
 
+В ALT Linux:
+
+```sh
+epm install gitum
+```
+
+Из исходников:
+
 ```sh
 pip install ./gitum
 ```
-
-Для ALT Linux пакет собирается из `gitum.spec` с помощью gear.
 
 ## Быстрый старт
 
