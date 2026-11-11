@@ -10,21 +10,21 @@ license = "GPL-2.0-or-later"
 license-files = ["COPYING"]
 authors = [{ name = "Pavel Shilovsky", email = "piastry@etersoft.ru" }]
 maintainers = [{ name = "Etersoft" }]
-requires-python = ">=3.9"
-dependencies = ["GitPython>=3.1"]
+requires-python = ">=3.11"
+dependencies = []
 
 [project.urls]
 Homepage = "https://wiki.etersoft.ru/GitUM"
 Source = "https://github.com/Etersoft/gitum"
 
 [project.scripts]
-gitum = "gitupstream.cli:main"
+gitum = "gitum.cli:main"
 
 [tool.setuptools]
-packages = ["gitupstream"]
+packages = ["gitum"]
 
 [tool.setuptools.dynamic]
-version = { attr = "gitupstream.__version__" }
+version = { attr = "gitum.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

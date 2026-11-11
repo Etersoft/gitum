@@ -22,7 +22,6 @@ BuildRequires: python3-module-setuptools
 
 %if_with check
 BuildRequires: git-core
-BuildRequires: python3-module-GitPython
 BuildRequires: python3-module-pytest
 %endif
 
