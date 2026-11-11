@@ -1,0 +1,405 @@
+"""Working with upstream: series variants, the submission queue, preparing a
+series for upstream, backports, branch bookkeeping and upstream mirrors."""
+
+import datetime
+import hashlib
+import os
+import re
+from pathlib import Path
+
+from . import changes as changes_mod
+from . import series as series_mod
+from . import state
+from .errors import GitumError, NeedsHuman
+from .git import RefTransaction
+from .journal import JOURNAL_REF, JournalWriter
+
+DEFAULT_STRIP = ['Co-Authored-By', 'Co-authored-by', 'Gitum-Id']
+COMMIT_URL_RE = re.compile(r'/(?:-/)?commits?/([0-9a-f]{7,40})\b')
+
+
+def _commit_journal(repo, journal, writer, message, extra=()):
+	new = writer.write(message, extra)
+	tr = RefTransaction(repo.git)
+	tr.update(JOURNAL_REF, new, journal.sha)
+	tr.commit()
+	return new
+
+
+def _pick_all(repo, wt, commits, what):
+	for sha in commits:
+		res = wt.run('-c', 'rerere.enabled=true', 'cherry-pick', '--allow-empty', '--empty=drop', sha, check=False)
+		if res.returncode != 0:
+			files = wt.unmerged_files()
+			wt.run('cherry-pick', '--abort', check=False)
+			raise NeedsHuman('%s: %s (%s) does not apply: %s' % (what, repo.git.commit_info(sha)['subject'],
+									 sha[:12], ', '.join(files) or res.stderr.decode().strip()),
+					 commit=sha, files=files)
+
+
+def _set_branch(repo, branch, tip):
+	ref = 'refs/heads/' + branch
+	old = repo.git.rev(ref)
+	if old == tip:
+		return
+	if old and repo.checked_out(branch):
+		raise NeedsHuman('%s is checked out in %s' % (branch, repo.checked_out(branch)))
+	tr = RefTransaction(repo.git)
+	tr.update(ref, tip, old or None)
+	tr.commit()
+
+
+def base_short(spec):
+	return spec.split(':', 1)[-1].replace('/', '-')
+
+
+# variants
+
+def port(repo, name, to, branch=None):
+	"""Put the changes of a series onto another base as a variant branch."""
+	git = repo.git
+	with repo.lock():
+		journal = repo.journal()
+		meta = series_mod.load(journal, name)
+		if meta.get('changes') is None:
+			raise GitumError('series %s has no branch recorded: gitum series checkout first' % name)
+		start = git.rev(series_mod.base_ref(journal.config, to))
+		if not start:
+			raise GitumError('base %s does not exist' % to)
+		branch = branch or 'series/%s@%s' % (name, base_short(to))
+		commits = [c['sha'] for c in meta['changes']]
+		# changes already in the target base are not ported again
+		in_base = {line.split()[1] for line in git.lines('cherry', start, meta['tip'], meta['base_sha'])
+			   if line.startswith('-')}
+		wt = repo.add_worktree(start, 'port-' + name)
+		try:
+			_pick_all(repo, wt, [c for c in commits if c not in in_base], 'port of %s' % name)
+			tip = wt.rev('HEAD')
+		finally:
+			repo.remove_worktree(wt.cwd)
+		_set_branch(repo, branch, tip)
+		journal = repo.journal()
+		meta = series_mod.load(journal, name)
+		meta.setdefault('variants', {})[to] = {'branch': branch, 'base_sha': start, 'tip': tip}
+		writer = JournalWriter(git, journal.sha)
+		writer.put_json(series_mod.meta_path(name), meta)
+		_commit_journal(repo, journal, writer, 'gitum: series %s: variant on %s' % (name, to), [tip])
+		return {'branch': branch, 'tip': tip, 'already_in_base': sorted(in_base), 'ported': len(commits) - len(in_base)}
+
+
+def variants(repo, name):
+	"""Compare the main branch of a series with its variants (patch-ids and range-diff)."""
+	git = repo.git
+	journal = repo.journal()
+	meta = series_mod.load(journal, name)
+	result = {}
+	main_range = (meta['base_sha'], meta['tip'])
+	main_pids = git.patch_ids(git.rev_list('%s..%s' % main_range))
+	main_subjects = {git.commit_info(s)['subject']: pid for s, pid in main_pids.items()}
+	for spec, v in (meta.get('variants') or {}).items():
+		tip = git.rev('refs/heads/' + v['branch']) or v['tip']
+		base = git.merge_base(git.rev(series_mod.base_ref(journal.config, spec)) or v['base_sha'], tip) or v['base_sha']
+		pids = git.patch_ids(git.rev_list('%s..%s' % (base, tip)))
+		subjects = {git.commit_info(s)['subject']: pid for s, pid in pids.items()}
+		only_main = sorted(set(main_subjects) - set(subjects))
+		only_variant = sorted(set(subjects) - set(main_subjects))
+		differ = sorted(s for s in set(main_subjects) & set(subjects) if main_subjects[s] != subjects[s])
+		rd = git.out('range-diff', '--no-color', '%s..%s' % main_range, '%s..%s' % (base, tip), check=False)
+		result[spec] = {'branch': v['branch'], 'only_main': only_main, 'only_variant': only_variant,
+				'differ': differ, 'diverged': bool(only_main or only_variant or differ), 'range_diff': rd}
+	return result
+
+
+# queue
+
+def queue(repo):
+	"""Series waiting for upstream in order, and which one can be sent next."""
+	journal = repo.journal()
+	all_series = series_mod.load_all(journal)
+	one_at_a_time = journal.config.queue.get('one-at-a-time', True)
+	active = [n for n, m in all_series.items() if m.get('state') in ('queued', 'sent', 'review')]
+	ordered = sorted(active, key=lambda n: (all_series[n].get('state') != 'sent',
+						all_series[n].get('position', 10 ** 6), n))
+	sent = [n for n in ordered if all_series[n]['state'] == 'sent']
+	rows, next_ = [], None
+	for n in ordered:
+		m = all_series[n]
+		blocked = [d for d in m.get('depends', []) if all_series.get(d, {}).get('state') != 'merged']
+		row = {'name': n, 'state': m['state'], 'position': m.get('position'), 'depends': m.get('depends', []),
+		       'blocked_by': blocked, 'pr': m.get('pr', ''), 'internal_mr': m.get('internal_mr', ''),
+		       'bugs': m.get('bugs', []), 'patches': len(m.get('changes') or [])}
+		rows.append(row)
+		if next_ is None and m['state'] == 'queued' and not blocked and not (one_at_a_time and sent):
+			next_ = n
+	reason = ''
+	if next_ is None:
+		if one_at_a_time and sent:
+			reason = 'waiting for %s (one at a time)' % ', '.join(sent)
+		elif not any(r['state'] == 'queued' for r in rows):
+			reason = 'the queue is empty'
+		else:
+			reason = 'all queued series wait for their dependencies'
+	return {'rows': rows, 'next': next_, 'reason': reason}
+
+
+def queue_add(repo, name, position=None):
+	values = {'state': 'queued'}
+	journal = repo.journal()
+	if position is None:
+		positions = [m.get('position', 0) for m in series_mod.load_all(journal).values() if m.get('position')]
+		position = max(positions, default=0) + 1
+	with repo.lock():
+		journal = repo.journal()
+		meta = series_mod.load(journal, name)
+		meta.update(values, position=int(position))
+		writer = JournalWriter(repo.git, journal.sha)
+		writer.put_json(series_mod.meta_path(name), meta)
+		_commit_journal(repo, journal, writer, 'gitum: queue %s at %d' % (name, int(position)))
+	return meta
+
+
+def queue_markdown(data):
+	lines = ['# Upstream queue', '', 'Generated by gitum; do not edit by hand.', '']
+	if data['next']:
+		lines.append('Next to send: **%s**' % data['next'])
+	elif data['reason']:
+		lines.append('Nothing to send now: %s.' % data['reason'])
+	lines += ['', '| # | Series | State | Patches | Internal MR | Upstream MR | Bugs | Depends |',
+		  '|---|---|---|---|---|---|---|---|']
+	for i, r in enumerate(data['rows'], 1):
+		deps = ', '.join(('~~%s~~' % d) if d not in r['blocked_by'] else d for d in r['depends'])
+		lines.append('| %d | %s | %s | %d | %s | %s | %s | %s |' % (
+			i, r['name'], r['state'], r['patches'], r['internal_mr'], r['pr'], ', '.join(r['bugs']), deps))
+	return '\n'.join(lines) + '\n'
+
+
+# preparing for upstream
+
+def clean_message(message, strip):
+	keep = []
+	for line in message.rstrip('\n').split('\n'):
+		if any(line.lower().startswith(t.lower() + ':') for t in strip):
+			continue
+		keep.append(line)
+	while keep and not keep[-1].strip():
+		keep.pop()
+	return '\n'.join(keep) + '\n'
+
+
+def prepare(repo, name, onto=None, branch=None, push=None, directory=None, strip=None, lint=True,
+	    with_depends=True, now=None):
+	"""Build the upstream form of a series: fresh base, clean messages, new dates; optionally push it."""
+	git = repo.git
+	journal = repo.journal()
+	cfg = journal.config
+	all_series = series_mod.load_all(journal)
+	meta = series_mod.load(journal, name)
+	if meta.get('changes') is None:
+		raise GitumError('series %s has no branch recorded' % name)
+	upstream_spec = meta['base'] if meta['base'].startswith('upstream:') else None
+	if not onto:
+		if not upstream_spec:
+			names = [n for n in series_mod.order(all_series, [name])]
+			specs = [all_series[n]['base'] for n in names if all_series[n]['base'].startswith('upstream:')]
+			upstream_spec = specs[0] if specs else None
+		if not upstream_spec:
+			raise GitumError('series %s: no upstream base, use --onto' % name)
+		onto = series_mod.base_ref(cfg, upstream_spec)
+	start = git.rev(onto)
+	if not start:
+		raise GitumError('%s does not exist' % onto)
+	strip = strip if strip is not None else cfg.series.get('strip-trailers', DEFAULT_STRIP)
+	lint_re = re.compile(cfg.series['subject-lint']) if lint and cfg.series.get('subject-lint') else None
+	names = series_mod.order(all_series, [name]) if with_depends else [name]
+	commits = []
+	for n in names:
+		m = all_series[n]
+		if m.get('state') == 'merged' and n != name:
+			continue
+		commits += [c['sha'] for c in (m.get('changes') or [])]
+	in_base = {line.split()[1] for line in git.lines('cherry', start, meta['tip'], meta['base_sha'])
+		   if line.startswith('-')} if meta.get('tip') else set()
+	commits = [c for c in commits if c not in in_base]
+	if not commits:
+		raise GitumError('series %s: nothing left to send, everything is in %s' % (name, onto))
+	problems = []
+	date = now or datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S%z')
+	wt = repo.add_worktree(start, 'prepare-' + name)
+	try:
+		for sha in commits:
+			info = git.commit_info(sha)
+			before = wt.rev('HEAD')
+			if directory:
+				patch = git.run('format-patch', '--stdout', '-1', '--relative=' + directory, sha).stdout
+				res = wt.run('am', '--keep-cr', '-3', input=patch, check=False)
+				if res.returncode != 0:
+					wt.run('am', '--abort', check=False)
+					raise NeedsHuman('%s: %s does not apply under %s' % (name, info['subject'], directory))
+			else:
+				_pick_all(repo, wt, [sha], 'prepare %s' % name)
+			if wt.rev('HEAD') == before:
+				continue		# already upstream: dropped as empty
+			message = clean_message(info['message'], strip)
+			wt.run('commit', '--amend', '--allow-empty', '--no-verify', '-q', '--date=' + date, '-F', '-',
+			       input=message)
+			subject = message.split('\n', 1)[0]
+			if lint_re and not lint_re.match(subject):
+				problems.append('subject does not match %s: %s' % (lint_re.pattern, subject))
+		tip = wt.rev('HEAD')
+	finally:
+		repo.remove_worktree(wt.cwd)
+	if problems:
+		raise NeedsHuman('series %s is not ready: %s' % (name, '; '.join(problems)), problems=problems)
+	branch = branch or meta.get('upstream_branch') or name
+	ref_branch = 'upstream/' + branch
+	_set_branch(repo, ref_branch, tip)
+	result = {'series': name, 'branch': ref_branch, 'tip': tip, 'onto': start, 'commits': len(commits),
+		  'skipped_in_base': sorted(in_base)}
+	if push:
+		git.run('push', '--quiet', '--force', push, '%s:refs/heads/%s' % (tip, branch))
+		result['pushed'] = '%s/%s' % (push, branch)
+	with repo.lock():
+		journal = repo.journal()
+		meta = series_mod.load(journal, name)
+		meta['prepared'] = {'onto': start, 'tip': tip, 'branch': ref_branch, 'pushed': result.get('pushed', ''),
+				    'date': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}
+		if push:
+			meta['upstream_branch'] = branch
+		writer = JournalWriter(git, journal.sha)
+		writer.put_json(series_mod.meta_path(name), meta)
+		_commit_journal(repo, journal, writer, 'gitum: prepare %s on %s' % (name, start[:12]), [tip])
+	return result
+
+
+# backports
+
+def resolve_commit(git, spec):
+	"""A commit from a sha or a forge commit URL."""
+	m = COMMIT_URL_RE.search(spec)
+	sha = git.rev(m.group(1) if m else spec)
+	if not sha:
+		raise GitumError('commit %s is not in the repository: fetch the upstream first' % spec)
+	return sha, spec if m else ''
+
+
+def backport(repo, specs, into, series_name=None, drop_on=None):
+	"""Cherry-pick upstream commits onto a layer with an Origin: trailer and fate backport."""
+	git = repo.git
+	with repo.lock():
+		journal = repo.journal()
+		cfg = journal.config
+		if into not in cfg.layers:
+			raise GitumError('unknown layer %s' % into)
+		layer = cfg.layers[into]
+		tip = git.rev('refs/heads/' + layer.branch)
+		st = journal.layer(into)
+		layer_pids = {c.patch_id for c in st.changes} if st else set()
+		layer_text = git.out('log', '--format=%B', '%s..%s' % (st.base, tip)) if st else ''
+		wt = repo.add_worktree(tip, 'backport-' + into)
+		picked = []
+		try:
+			for spec in specs:
+				sha, url = resolve_commit(git, spec)
+				if git.is_ancestor(sha, tip) or sha in layer_text or \
+						git.patch_ids([sha]).get(sha) in layer_pids:
+					raise GitumError('%s is already in %s' % (sha[:12], layer.branch))
+				_pick_all(repo, wt, [sha], 'backport')
+				message = git.commit_info(sha)['message'].rstrip('\n')
+				message += '\n\n' if not re.search(r'\n[A-Za-z-]+: .*$', message) else '\n'
+				message += 'Origin: %s\n' % (url or 'upstream commit ' + sha)
+				wt.run('commit', '--amend', '--no-verify', '-q', '-F', '-', input=message)
+				picked.append({'origin': sha, 'sha': wt.rev('HEAD'), 'subject': git.commit_info(sha)['subject']})
+			new_tip = wt.rev('HEAD')
+		finally:
+			repo.remove_worktree(wt.cwd)
+		_set_branch(repo, layer.branch, new_tip)
+		state.save(repo, [into], 'backport %s' % ', '.join(p['origin'][:12] for p in picked))
+		journal = repo.journal()
+		tracker = changes_mod.Tracker(journal)
+		by_sha = {c.sha: c.gitum_id for c in journal.layer(into).changes}
+		for p in picked:
+			meta = {'origin': p['origin']}
+			if drop_on:
+				meta['drop_on'] = drop_on
+			if series_name:
+				meta['series'] = series_name
+			tracker.set(by_sha[p['sha']], 'backport', **meta)
+			p['id'] = by_sha[p['sha']]
+		writer = JournalWriter(git, journal.sha)
+		tracker.write(writer)
+		_commit_journal(repo, journal, writer, 'gitum: backport into %s' % into)
+		return {'layer': into, 'picked': picked}
+
+
+# branch bookkeeping
+
+def branches(repo, remote=None, prune=False):
+	"""Series and upstream branches with their state; stale ones after merge or rejection."""
+	git = repo.git
+	journal = repo.journal()
+	all_series = series_mod.load_all(journal)
+	known = {}
+	for name, m in all_series.items():
+		done = m.get('state') in ('merged', 'rejected')
+		for b in [m.get('branch')] + [v['branch'] for v in (m.get('variants') or {}).values()]:
+			if b:
+				known[b] = (name, m.get('state'), done)
+		prepared = (m.get('prepared') or {}).get('branch')
+		if prepared:
+			known[prepared] = (name, m.get('state'), done)
+	rows = []
+	for b in git.lines('for-each-ref', '--format=%(refname:short)', 'refs/heads/series/', 'refs/heads/upstream/'):
+		name, st, done = known.get(b, (None, None, False))
+		rows.append({'branch': b, 'series': name, 'state': st, 'stale': done, 'unknown': name is None,
+			     'where': 'local'})
+	if remote:
+		git.run('fetch', '--quiet', '--prune', remote, check=False)
+		for b in git.lines('for-each-ref', '--format=%(refname:short)', 'refs/remotes/%s/' % remote):
+			short = b.split('/', 1)[1]
+			hit = next(((n, m) for n, m in all_series.items() if m.get('upstream_branch') == short), None)
+			if hit:
+				done = hit[1].get('state') in ('merged', 'rejected')
+				rows.append({'branch': short, 'series': hit[0], 'state': hit[1].get('state'), 'stale': done,
+					     'unknown': False, 'where': remote})
+	deleted = []
+	if prune:
+		for r in rows:
+			if not r['stale']:
+				continue
+			if r['where'] == 'local':
+				if repo.checked_out(r['branch']):
+					continue
+				git.run('branch', '-D', r['branch'])
+			else:
+				git.run('push', '--quiet', remote, ':refs/heads/' + r['branch'])
+			deleted.append('%s:%s' % (r['where'], r['branch']))
+	return {'branches': rows, 'deleted': deleted}
+
+
+# upstream mirrors
+
+def cache_dir():
+	return Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'gitum' / 'mirrors'
+
+
+def mirror(repo, name):
+	"""Keep a shared bare mirror of an upstream URL and fetch it into this repository."""
+	git = repo.git
+	cfg = repo.journal().config
+	if name not in cfg.upstreams:
+		raise GitumError('unknown upstream %s' % name)
+	up = cfg.upstreams[name]
+	if not up.url:
+		raise GitumError('upstream %s has no url in gitum.toml' % name)
+	key = re.sub(r'[^A-Za-z0-9._-]+', '_', up.url.split('://')[-1]).strip('_')
+	path = cache_dir() / ('%s-%s.git' % (key[-60:], hashlib.sha1(up.url.encode()).hexdigest()[:8]))
+	if not path.exists():
+		path.parent.mkdir(parents=True, exist_ok=True)
+		git.run('clone', '--quiet', '--mirror', up.url, str(path))
+	else:
+		git.at(path).run('remote', 'update', '--prune')
+	remote = up.remote or name
+	if git.run('remote', 'get-url', remote, check=False).returncode != 0:
+		git.run('remote', 'add', remote, str(path))
+	git.run('fetch', '--quiet', '--tags', remote)
+	return {'upstream': name, 'mirror': str(path), 'remote': remote}
