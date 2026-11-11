@@ -101,6 +101,67 @@ def format_series(all_series, journal):
 	return '\n'.join(lines)
 
 
+def series_tree(repo, journal, with_variants=False):
+	"""Series as a tree by their dependencies with state, base lag, claims and variants."""
+	from . import upstreamwork
+	git = repo.git
+	cfg = journal.config
+	all_series = series.load_all(journal)
+	rows = {}
+	for name, meta in all_series.items():
+		up_name = meta.get('upstream') or (meta['base'].split(':', 1)[1] if meta['base'].startswith('upstream:') else '')
+		up = cfg.upstreams.get(up_name)
+		lag = None
+		if up and meta.get('base_sha') and git.rev(up.ref):
+			lag = git.count('%s..%s' % (meta['base_sha'], up.ref))
+		row = {'name': name, 'state': meta.get('state', ''), 'version': meta.get('version', ''),
+		       'patches': len(meta.get('changes') or []), 'depends': meta.get('depends', []),
+		       'target': meta.get('target') or upstreamwork.DEFAULT_TARGET, 'base_behind': lag,
+		       'claimed_by': (series.claim_owner(repo, name) or {}).get('session'), 'updated': meta.get('updated', ''),
+		       'variants': sorted(meta.get('variants') or {}), 'pr': meta.get('pr', '')}
+		if with_variants and meta.get('variants'):
+			row['diverged'] = sorted(spec for spec, v in upstreamwork.variants(repo, name).items() if v['diverged'])
+		rows[name] = row
+	children = {}
+	roots = []
+	for name in sorted(rows):
+		deps = [d for d in rows[name]['depends'] if d in rows]
+		if deps:
+			children.setdefault(deps[0], []).append(name)
+		else:
+			roots.append(name)
+	ordered = []
+
+	def walk(name, depth):
+		ordered.append({**rows[name], 'depth': depth})
+		for child in children.get(name, []):
+			walk(child, depth + 1)
+
+	for name in roots:
+		walk(name, 0)
+	return ordered
+
+
+def format_tree(rows):
+	lines = []
+	for r in rows:
+		notes = []
+		if r['base_behind']:
+			notes.append('base %d behind' % r['base_behind'])
+		if r.get('diverged'):
+			notes.append('diverged: ' + ', '.join(r['diverged']))
+		elif r['variants']:
+			notes.append('variants: ' + ', '.join(r['variants']))
+		if len(r['depends']) > 1:
+			notes.append('also depends on ' + ', '.join(r['depends'][1:]))
+		if r['claimed_by']:
+			notes.append('claimed by ' + r['claimed_by'])
+		state = r['state'] + ((' ' + r['version']) if r['version'] else '')
+		lines.append('%-40s %-12s %3d patches  %s' % ('  ' * r['depth'] + r['name'], state, r['patches'],
+							   '; '.join(notes)))
+	return '\n'.join(lines)
+
+
 def cmd_series(repo, args, out):
 	a = args.action
 	if a == 'list':
@@ -136,6 +197,16 @@ def cmd_series(repo, args, out):
 	elif a == 'import-staging':
 		data = series.import_staging(repo, args.dir, args.base, args.names or None)
 		out.result(data, 'Imported %d series.' % len(data['imported']))
+	elif a == 'claim':
+		data = series.claim(repo, args.name, args.reason or '', args.force)
+		out.result(data, 'Series %s claimed by %s.' % (args.name, data['session']))
+	elif a == 'release':
+		data = series.release(repo, args.name, args.force)
+		out.result(data or {}, 'Series %s released.' % args.name if data else 'Series %s was not claimed.' % args.name)
+	elif a == 'import-json':
+		text = sys.stdin.read() if args.file in (None, '-') else Path(args.file).read_text()
+		data = series.import_json(repo, json.loads(text))
+		out.result(data, 'Created: %s; updated: %s' % (', '.join(data['created']) or '-', ', '.join(data['updated']) or '-'))
 	elif a == 'checkout':
 		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends)
 		out.result(data, '%s: %d patches on %s' % (data['branch'], len(data['applied']), short(data['base'])))
@@ -154,6 +225,8 @@ def cmd_check_upstream(repo, args, out):
 			where = ' as %s (%.0f%%)%s' % (short(e['upstream_commit']), e['similarity'] * 100,
 						     ' in ' + e['release'] if e.get('release') else '')
 		lines.append('%-15s %-8s %s%s' % (e['status'], e.get('id') or '-', e['subject'], where))
+		if e.get('note'):
+			lines.append('%24s%s' % ('', e['note']))
 	if data['applied']:
 		lines.append('Recorded as merged: %s' % ', '.join(data['applied']))
 	out.result(data, '\n'.join(lines) or 'Nothing found upstream.')
@@ -173,6 +246,9 @@ def cmd_forge(repo, args, out):
 	else:
 		data = forge.refresh(repo)
 	text = 'Updated: %s' % (', '.join(data['updated']) or 'nothing')
+	for o in data.get('outdated', []):
+		text += '\n%s: the merge request head %s is not the prepared %s' % (o['series'], short(o['head']),
+										 short(o['prepared']))
 	for err in data.get('errors', []):
 		text += '\nerror: ' + err
 	out.result(data, text)
@@ -256,6 +332,15 @@ def register(sub):
 	p.add_argument('dir')
 	p.add_argument('--base', required=True, help='base of the imported series, e.g. upstream:winehq')
 	p.add_argument('names', nargs='*')
+	p = ss.add_parser('claim', help='mark a series as being worked on by this session (GITUM_SESSION)')
+	p.add_argument('name')
+	p.add_argument('--reason')
+	p.add_argument('--force', action='store_true', help='take it from another session')
+	p = ss.add_parser('release', help='release a claimed series')
+	p.add_argument('name')
+	p.add_argument('--force', action='store_true')
+	p = ss.add_parser('import-json', help='create or update series from a JSON list')
+	p.add_argument('file', nargs='?')
 	p = ss.add_parser('checkout', help='build a branch from the patches of a series')
 	p.add_argument('name')
 	p.add_argument('--onto', help='base commit (default: the series base)')

@@ -273,9 +273,14 @@ def test_parse_request_urls():
 class FakeGitLab(http.server.BaseHTTPRequestHandler):
 	states = {}
 
+	approvals = {}
+
 	def do_GET(self):
-		iid = int(self.path.rsplit('/', 1)[1])
-		data = self.states.get(iid)
+		parts = self.path.rstrip('/').split('/')
+		if parts[-1] == 'approvals':
+			data = {'approved': self.approvals.get(int(parts[-2]), False)}
+		else:
+			data = self.states.get(int(parts[-1]))
 		self.send_response(200 if data else 404)
 		self.send_header('Content-Type', 'application/json')
 		self.end_headers()
@@ -430,3 +435,56 @@ def test_series_nested_directories_and_reimport(with_series, tmp_path, capsys):
 	assert sorted(p.name for p in (out / 'font' / 'bold').iterdir()) == ['0001-a.patch', 'definition']
 	assert gitum(work, 'series', 'set', 'font-bold', 'export_dir=../escape') == 0
 	assert gitum(work, 'series', 'export', 'font-bold', '--dir', str(out)) == 1
+
+
+def test_forge_approved_and_outdated_head(with_series, tmp_path, capsys):
+	up, work = with_series
+	server = http.server.HTTPServer(('127.0.0.1', 0), FakeGitLab)
+	threading.Thread(target=server.serve_forever, daemon=True).start()
+	base = 'http://127.0.0.1:%d' % server.server_port
+	try:
+		(tmp_path / 'c.toml').write_text(journal(work).config_text + '\n[forge.test]\ntype = "gitlab"\nurl = "%s"\n' % base)
+		assert gitum(work, 'config', 'load', str(tmp_path / 'c.toml')) == 0
+		assert gitum(work, 'prepare', 'ntdll-base', '--no-lint') == 0
+		gitum(work, 'series', 'set', 'ntdll-base', 'state=sent', 'pr=%s/wine/wine/-/merge_requests/3' % base)
+		prepared = journal(work).read_json('series/ntdll-base/meta.json')['prepared']['tip']
+		FakeGitLab.states = {3: {'state': 'opened', 'sha': prepared}}
+		FakeGitLab.approvals = {3: True}
+		code, data = gitum_json(work, capsys, 'forge', 'refresh')
+		meta = journal(work).read_json('series/ntdll-base/meta.json')
+		assert meta['state'] == 'approved' and data['outdated'] == []
+		assert meta['history'][-1] == {'date': meta['updated'], 'state': 'approved', 'previous': 'sent',
+					       'source': 'forge'}
+		FakeGitLab.states = {3: {'state': 'opened', 'sha': 'f' * 40}}
+		FakeGitLab.approvals = {}
+		code, data = gitum_json(work, capsys, 'forge', 'refresh')
+		assert data['outdated'] == [{'series': 'ntdll-base', 'head': 'f' * 40, 'prepared': prepared}]
+		assert journal(work).read_json('series/ntdll-base/meta.json')['state'] == 'sent'
+	finally:
+		server.shutdown()
+
+
+def test_check_upstream_one_to_one_and_aliases(stack, tmp_path, capsys):
+	"""Two of our changes squashed into one upstream commit; the author uses another address."""
+	up, work = stack
+	from gitum import upstreamcheck
+	cfg = journal(work).config
+	assert upstreamcheck.identities(cfg, 'Tester', 'a@x') == {'tester', 'a@x'}
+	load_config(work, tmp_path, '[identity]\naliases = [["tester@localhost", "tester@upstream.org"]]\n')
+	assert 'tester@upstream.org' in upstreamcheck.identities(journal(work).config, 'T', 'tester@localhost')
+	up.commit('etersoft: feature and base line together',
+		  {'eter': 'eter\n', 'base': 'line1\nETER\nline3\nline4\nline5\n'}, author='Tester <tester@upstream.org>')
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft', '-v')
+	res = {e['subject']: e for e in data['results']}
+	a, b = res['etersoft: feature'], res['etersoft: change base line']
+	assert a['upstream_commit'] == b['upstream_commit']
+	assert {a['status'], b['status']} == {'merged-modified'}
+	assert any('also matches' in (e.get('note') or '') for e in (a, b))
+
+
+def load_config(work, tmp_path, extra):
+	path = tmp_path / 'cfg-extra.toml'
+	path.write_text(journal(work).config_text + '\n' + extra)
+	assert gitum(work, 'config', 'load', str(path)) == 0

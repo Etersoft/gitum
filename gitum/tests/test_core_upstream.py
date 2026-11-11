@@ -6,7 +6,7 @@ from gitum import changes as changes_mod
 from gitum.cli import main
 from gitum.errors import EXIT_NEEDS_HUMAN
 from gitum.repo import Repo as GitumRepo
-from gitum.upstreamwork import clean_message
+from gitum.upstreamwork import clean_message, queue_markdown
 
 from core_helpers import INIT_ARGS, Repo, make_stack
 
@@ -90,6 +90,11 @@ def test_port_skips_changes_already_in_base(ser, capsys):
 
 # queue
 
+def queue_of(work, capsys, *args):
+	code, data = gitum_json(work, capsys, 'queue', *args)
+	return data['queues']['upstream']
+
+
 def test_queue_one_at_a_time_and_dependencies(ser, tmp_path, capsys):
 	up, work = ser
 	work.run('checkout', '-q', '-b', 'series/kernel32', 'v1.0')
@@ -99,22 +104,48 @@ def test_queue_one_at_a_time_and_dependencies(ser, tmp_path, capsys):
 	assert gitum(work, 'queue', 'add', 'ntdll-use') == 0
 	assert gitum(work, 'queue', 'add', 'ntdll-base') == 0
 	assert gitum(work, 'queue', 'add', 'kernel32') == 0
-	code, data = gitum_json(work, capsys, 'queue')
-	assert [r['name'] for r in data['rows']] == ['ntdll-use', 'ntdll-base', 'kernel32']
-	assert data['rows'][0]['blocked_by'] == ['ntdll-base']
-	assert data['next'] == 'ntdll-base'
-	# one at a time: while a series is sent, nothing else goes
-	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=sent', 'pr=https://gitlab.winehq.org/wine/wine/-/merge_requests/1') == 0
-	code, data = gitum_json(work, capsys, 'queue', 'next')
-	assert data['next'] is None and 'one at a time' in data['reason']
+	q = queue_of(work, capsys)
+	assert [r['name'] for r in q['rows']] == ['ntdll-use', 'ntdll-base', 'kernel32']
+	assert q['rows'][0]['blocked_by'] == ['ntdll-base']
+	assert q['next'] == 'ntdll-base'
+	# one at a time: while a series is sent and not approved, nothing else goes
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=sent', 'version=v2',
+		     'pr=https://gitlab.winehq.org/wine/wine/-/merge_requests/1') == 0
+	q = queue_of(work, capsys, 'next')
+	assert q['next'] is None and 'one at a time' in q['reason']
+	# an approved series does not block the next one
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=approved') == 0
+	assert queue_of(work, capsys)['next'] == 'kernel32'
 	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=merged') == 0
-	code, data = gitum_json(work, capsys, 'queue', 'next')
-	assert data['next'] == 'ntdll-use'
+	assert queue_of(work, capsys)['next'] == 'ntdll-use'
+	# pause and resume
+	assert gitum(work, 'queue', 'pause', '--reason', 'CI is broken') == 0
+	q = queue_of(work, capsys)
+	assert q['next'] is None and q['reason'] == 'paused: CI is broken'
+	assert gitum(work, 'queue', 'resume') == 0
+	assert queue_of(work, capsys)['next'] == 'ntdll-use'
 	md = tmp_path / 'UPSTREAM-QUEUE.md'
 	assert gitum(work, 'queue', '--format', 'md', '-o', str(md)) == 0
 	text = md.read_text()
-	assert 'Next to send: **ntdll-use**' in text and '| 1 | ntdll-use | queued |' in text
+	assert 'Next to send: **ntdll-use**' in text
+	assert '### Queue' in text and '### Done' in text and '| 1 | ntdll-use | queued |' in text
 	assert '~~ntdll-base~~' in text
+
+
+def test_queue_targets_and_labels(ser, tmp_path, capsys):
+	up, work = ser
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'target=staging', 'state=sent', 'note=waits for CI') == 0
+	assert gitum(work, 'queue', 'add', 'ntdll-use') == 0
+	code, data = gitum_json(work, capsys, 'queue')
+	assert set(data['queues']) == {'staging', 'upstream'}
+	# each target has its own one-at-a-time rule; ntdll-use still waits for its dependency
+	assert data['queues']['staging']['rows'][0]['note'] == 'waits for CI'
+	assert data['queues']['upstream']['reason'] == 'all queued series wait for their dependencies'
+	load_config(work, tmp_path, '[queue.markdown]\ntitle = "Очередь в апстрим"\nqueued = "Очередь"\n'
+		    'columns = ["#", "Серия", "Состояние", "Дата", "Патчи", "Внутр. MR", "MR", "Баги", "Зависит", "Заметка"]\n')
+	code, data = gitum_json(work, capsys, 'queue', '--target', 'upstream', '--format', 'md')
+	text = queue_markdown(data, journal(work).config.queue['markdown'])
+	assert text.startswith('# Очередь в апстрим') and '### Очередь' in text and '| # | Серия |' in text
 
 
 # prepare
@@ -127,6 +158,8 @@ def test_prepare_for_upstream(ser, tmp_path, capsys):
 	work.run('fetch', '-q', 'winehq')
 	load_config(work, tmp_path, '[series]\nsubject-lint = \'^[a-z0-9_./-]+: [A-Z].*\\.$\'\n')
 	code, data = gitum_json(work, capsys, 'prepare', 'ntdll-use', '--push', 'fork')
+	assert code == EXIT_NEEDS_HUMAN and data['depends'] == ['ntdll-base']
+	code, data = gitum_json(work, capsys, 'prepare', 'ntdll-use', '--push', 'fork', '--force')
 	assert code == 0, data
 	assert data['branch'] == 'upstream/ntdll-use' and data['commits'] == 2
 	assert work.git.is_ancestor('winehq/master', 'upstream/ntdll-use')
@@ -145,7 +178,7 @@ def test_prepare_lint_and_merged_dependency(ser, tmp_path, capsys):
 	work.commit('bad subject', {'bad': 'b\n'})
 	work.run('checkout', '-q', '--detach')
 	assert gitum(work, 'series', 'save') == 0
-	code, data = gitum_json(work, capsys, 'prepare', 'ntdll-use')
+	code, data = gitum_json(work, capsys, 'prepare', 'ntdll-use', '--force')
 	assert code == EXIT_NEEDS_HUMAN and 'bad subject' in data['error']
 	# a merged dependency is already upstream: only the own changes are prepared
 	up.commit('ntdll: Add a helper.', {'ntdll': 'helper\n'})
@@ -232,3 +265,61 @@ def test_mirror(stack, tmp_path, capsys, monkeypatch):
 	up.commit('more', {'more': 'm\n'})
 	gitum_json(work, capsys, 'mirror', 'lib')
 	assert work.rev('libup/master') == up.rev('master')
+
+
+def test_prepare_dates_and_range_diff(ser, capsys):
+	up, work = ser
+	up.commit('ntdll: Add a helper.', {'ntdll': 'helper\n'})
+	work.run('fetch', '-q', 'winehq')
+	gitum(work, 'series', 'set', 'ntdll-base', 'state=merged')
+	work.run('checkout', '-q', 'series/ntdll-use')
+	work.commit('ntdll: Second change.', {'ntdll2': 'x\n'})
+	work.run('checkout', '-q', '--detach')
+	gitum(work, 'series', 'save')
+	code, data = gitum_json(work, capsys, 'prepare', 'ntdll-use', '--no-depends')
+	assert code == 0, data
+	dates = work.git.lines('log', '--reverse', '--format=%at', 'winehq/master..upstream/ntdll-use')
+	assert [int(d) - int(dates[0]) for d in dates] == [0, 1]
+	assert 'ntdll: Use the helper.' in data['range_diff']
+
+
+def test_series_claims(ser, capsys, monkeypatch):
+	up, work = ser
+	monkeypatch.setenv('GITUM_SESSION', 'session-a')
+	assert gitum(work, 'series', 'claim', 'ntdll-use', '--reason', 'rebasing') == 0
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'note=mine') == 0
+	monkeypatch.setenv('GITUM_SESSION', 'session-b')
+	code, data = gitum_json(work, capsys, 'series', 'set', 'ntdll-use', 'note=theirs')
+	assert code == 75 and data['owner']['session'] == 'session-a'
+	assert gitum(work, 'prepare', 'ntdll-use', '--force') == 75
+	code, data = gitum_json(work, capsys, 'status', '--series')
+	rows = {r['name']: r for r in data['series_tree']}
+	assert rows['ntdll-use']['claimed_by'] == 'session-a' and rows['ntdll-use']['depth'] == 1
+	assert gitum(work, 'series', 'release', 'ntdll-use') == 75
+	assert gitum(work, 'series', 'release', 'ntdll-use', '--force') == 0
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'note=theirs') == 0
+
+
+def test_series_import_json(stack, tmp_path, capsys):
+	up, work = stack
+	work.run('checkout', '-q', '-b', 'series/fix', 'v1.0')
+	work.commit('fix: Something.', {'fix': 'f\n'})
+	work.run('checkout', '-q', '--detach')
+	items = [
+		{'name': 'on-top', 'base': 'series:fix', 'depends': ['fix'], 'state': 'queued', 'position': 2},
+		{'name': 'fix', 'base': 'upstream:winehq', 'branch': 'series/fix', 'state': 'sent', 'version': 'v3',
+		 'pr': 'https://gitlab.example/wine/-/merge_requests/9', 'bugs': ['123'], 'note': 'ping reviewer'},
+	]
+	(tmp_path / 's.json').write_text(json.dumps(items))
+	code, data = gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 's.json'))
+	assert code == 0 and sorted(data['created']) == ['fix', 'on-top']
+	fix = journal(work).read_json('series/fix/meta.json')
+	assert fix['state'] == 'sent' and fix['version'] == 'v3' and len(fix['changes']) == 1
+	assert fix['history'][0]['state'] == 'sent'
+	on_top = journal(work).read_json('series/on-top/meta.json')
+	assert on_top['changes'] is None and on_top['position'] == 2
+	(tmp_path / 's.json').write_text(json.dumps([{'name': 'fix', 'state': 'merged'}]))
+	code, data = gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 's.json'))
+	assert data['updated'] == ['fix'] and journal(work).read_json('series/fix/meta.json')['state'] == 'merged'
+	(tmp_path / 'bad.json').write_text(json.dumps([{'name': 'x', 'base': 'upstream:winehq', 'colour': 1}]))
+	assert gitum(work, 'series', 'import-json', str(tmp_path / 'bad.json')) == 1

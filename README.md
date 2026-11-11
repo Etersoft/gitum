@@ -140,18 +140,18 @@ Nothing asks questions interactively.
 | Command | What it does |
 |---|---|
 | `init` | Create the journal from existing branches. |
-| `status [--changes] [--series]` | Upstreams, layers, operations in progress, locks, the "change → fate → action" table. |
+| `status [--changes] [--series [--variants]]` | Upstreams, layers, operations in progress, locks, the "change → fate → action" table, series as a tree by dependencies (state, base lag, claims, diverged variants). |
 | `sync [--to REF \| --next-release] [--step] [--candidate auto\|always\|never] [--publish] [--find-culprit] [--allow-rewrite]` | Move the stack onto a new upstream. |
 | `continue`, `skip`, `abort` | Resume, drop the conflicting change, or cancel a stopped sync. |
 | `accept`, `drop-candidate` | Publish or drop a result waiting for review in `candidate/*`. |
 | `save` | Record work done on layer branches with plain git. |
 | `publish`, `pull` | Share the state. Commits others pushed meanwhile are put on top; journals of parallel sessions merge. |
 | `change list\|show\|set` | Changes and their fates: `gitum change set ID fate=merged upstream_commit=SHA`. |
-| `check-upstream [layer:X\|series:Y] [--since REF] [--apply]` | Find our changes upstream: patch-id, then subject and diff similarity. |
-| `series add\|save\|list\|show\|set\|remove\|export\|import-staging\|checkout` | Series of changes. |
+| `check-upstream [layer:X\|series:Y] [--since REF] [--apply]` | Find our changes upstream: patch-id, then subject and diff similarity. A match counts as accepted with edits only when the content is verified (our change applied onto upstream changes nothing); anything else is `suspect` and waits for a person. |
+| `series add\|save\|list\|show\|set\|remove\|export\|import-staging\|import-json\|checkout\|claim\|release` | Series of changes. States: draft → review (internal) → queued → sent (version vN) → approved → merged, rejected or superseded. A series may sit at any depth of an export directory (`export_dir`); export touches only `definition` and `*.patch`. `claim` marks a series as worked on by a session (`GITUM_SESSION`); other sessions get exit code 75 for it. |
 | `port`, `variants` | A series on another base, and how its variants differ. |
-| `queue [next\|add]`, `queue --format md` | The upstream submission queue (one at a time, dependencies); generates `UPSTREAM-QUEUE.md`. |
-| `prepare SERIES [--push FORK]` | Upstream form of a series: fresh base, new dates, no Co-Authored-By/Gitum-Id trailers, subject check, path remapping for vendored trees. You open the merge request yourself. |
+| `queue [next\|add\|pause\|resume] [--target T]`, `queue --format md` | Upstream submission queues, one per target (series field `target`). One series at a time until it is approved or merged, dependencies first. `pause --reason` stops a queue. Generates `UPSTREAM-QUEUE.md`; its titles come from `[queue.markdown]`. |
+| `prepare SERIES [--push FORK] [--force]` | Upstream form of a series: fresh base, new dates one second apart, no Co-Authored-By/Gitum-Id trailers, subject check, path remapping for vendored trees, a range-diff against the saved series. Dependencies must be merged first (`--force` includes them). You open the merge request yourself; `forge refresh` warns if its head differs from the prepared branch. |
 | `backport SHA\|URL --into LAYER` | Take an upstream commit with an `Origin:` trailer; it is dropped automatically once the base contains it. |
 | `branches [--remote FORK] [--prune]` | Series and upstream branches; stale ones after merge. |
 | `forge refresh\|import-json\|export-json` | Merge request states from GitHub, GitLab or Forgejo, or as JSON from your own scripts. |

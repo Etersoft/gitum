@@ -32,38 +32,49 @@ def cmd_variants(repo, args, out):
 
 
 def cmd_queue(repo, args, out):
+	target = args.target or uw.DEFAULT_TARGET
 	if args.action == 'add':
 		meta = uw.queue_add(repo, args.name, args.position)
 		out.result(meta, '%s queued at %d' % (args.name, meta['position']))
 		return
-	data = uw.queue(repo)
+	if args.action in ('pause', 'resume'):
+		data = uw.queue_pause(repo, target, args.action == 'pause', args.reason or '')
+		out.result(data, 'Queue %s %s.' % (target, 'paused' if data['paused'] else 'resumed'))
+		return
+	data = uw.queue(repo, args.target)
 	if args.format == 'md':
-		text = uw.queue_markdown(data)
+		labels = repo.journal().config.queue.get('markdown', {})
+		text = uw.queue_markdown(data, labels)
 		if args.output:
 			Path(args.output).write_text(text)
 			out.result(data, 'Written %s' % args.output)
 		else:
 			out.result(data, text)
 		return
-	if args.action == 'next':
-		out.result(data, data['next'] or 'Nothing to send: %s.' % data['reason'])
-		return
 	lines = []
-	for i, r in enumerate(data['rows'], 1):
-		blocked = (' blocked by ' + ', '.join(r['blocked_by'])) if r['blocked_by'] else ''
-		lines.append('%2d %-32s %-8s %3d patches%s%s' % (i, r['name'], r['state'], r['patches'], blocked,
-							      ('  ' + r['pr']) if r['pr'] else ''))
-	lines.append('next: %s' % (data['next'] or 'none (%s)' % data['reason']))
+	for t, q in data['queues'].items():
+		if args.action == 'next':
+			lines.append('%s: %s' % (t, q['next'] or 'nothing to send (%s)' % q['reason']))
+			continue
+		lines.append('== %s%s' % (t, ' (paused: %s)' % q['pause_reason'] if q['paused'] else ''))
+		for i, r in enumerate(q['rows'], 1):
+			blocked = (' blocked by ' + ', '.join(r['blocked_by'])) if r['blocked_by'] else ''
+			version = (' ' + r['version']) if r['version'] else ''
+			lines.append('%2d %-32s %-9s %3d patches%s%s' % (i, r['name'], r['state'] + version, r['patches'],
+								      blocked, ('  ' + r['pr']) if r['pr'] else ''))
+		lines.append('next: %s' % (q['next'] or 'none (%s)' % q['reason']))
 	out.result(data, '\n'.join(lines))
 
 
 def cmd_prepare(repo, args, out):
 	strip = args.strip.split(',') if args.strip is not None else None
 	data = uw.prepare(repo, args.name, args.onto, args.branch, args.push, args.directory, strip,
-			  not args.no_lint, not args.no_depends)
+			  not args.no_lint, not args.no_depends, force=args.force)
 	text = '%s: %d commits on %s' % (data['branch'], data['commits'], short(data['onto']))
 	if data.get('pushed'):
 		text += ', pushed to %s (open the merge request by hand)' % data['pushed']
+	if data.get('range_diff'):
+		text += '\n\nrange-diff of the saved series and the prepared branch:\n' + data['range_diff']
 	out.result(data, text)
 
 
@@ -103,9 +114,11 @@ def register(sub):
 	s.set_defaults(func=cmd_variants)
 
 	s = sub.add_parser('queue', help='the upstream submission queue')
-	s.add_argument('action', nargs='?', default='list', choices=['list', 'next', 'add'])
+	s.add_argument('action', nargs='?', default='list', choices=['list', 'next', 'add', 'pause', 'resume'])
 	s.add_argument('name', nargs='?')
 	s.add_argument('--position', type=int)
+	s.add_argument('--target', help='queue of this target (series field target; default: all)')
+	s.add_argument('--reason', help='why the queue is paused')
 	s.add_argument('--format', choices=['text', 'md'], default='text')
 	s.add_argument('-o', '--output', help='write the markdown queue to a file')
 	s.set_defaults(func=cmd_queue)
@@ -119,6 +132,7 @@ def register(sub):
 	s.add_argument('--strip', metavar='TRAILERS', help='comma separated trailers to remove')
 	s.add_argument('--no-lint', action='store_true')
 	s.add_argument('--no-depends', action='store_true')
+	s.add_argument('--force', action='store_true', help='include commits of dependencies not merged yet')
 	s.set_defaults(func=cmd_prepare)
 
 	s = sub.add_parser('backport', help='take upstream commits into a layer with an Origin: trailer')

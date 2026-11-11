@@ -122,7 +122,7 @@ def format_status(data):
 def cmd_status(repo, args, out):
 	from . import changes as changes_mod
 	from . import series as series_mod
-	from .commands_changes import change_rows, format_change_table, format_series
+	from .commands_changes import change_rows, format_change_table
 	data = state.status(repo)
 	journal = repo.journal()
 	fates = {}
@@ -145,7 +145,10 @@ def cmd_status(repo, args, out):
 		data['changes'] = rows
 		text += '\n\n' + (format_change_table(rows) or 'No changes need attention.')
 	if args.series and all_series:
-		text += '\n\n' + format_series(all_series, journal)
+		from .commands_changes import format_tree, series_tree
+		rows = series_tree(repo, journal, args.variants)
+		data['series_tree'] = rows
+		text += '\n\n' + format_tree(rows)
 	out.result(data, text)
 
 
@@ -209,7 +212,8 @@ def build_parser():
 
 	s = sub.add_parser('status', help='where every layer stands')
 	s.add_argument('--changes', action='store_true', help='table: change -> fate -> action needed')
-	s.add_argument('--series', action='store_true', help='list series')
+	s.add_argument('--series', action='store_true', help='series as a tree by dependencies')
+	s.add_argument('--variants', action='store_true', help='with --series: check whether variants diverged')
 	s.add_argument('--all', action='store_true', help='with --changes: also changes without an action')
 	s.set_defaults(func=cmd_status)
 

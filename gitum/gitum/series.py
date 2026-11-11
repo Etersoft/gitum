@@ -7,26 +7,90 @@ In the journal a series is a directory compatible with wine-staging:
 Work on a series happens in its git branch; `gitum series save` records it.
 """
 
+import datetime
 import json
+import os
 import re
+import socket
 import tempfile
 from pathlib import Path
 
 from . import changes as changes_mod
-from .errors import GitumError, NeedsHuman
+from .errors import Busy, GitumError, NeedsHuman
 from .git import RefTransaction
 from .journal import JOURNAL_REF, JournalWriter, LayerState, describe_changes
 
-STATES = ('draft', 'review', 'queued', 'sent', 'merged', 'rejected', 'disabled')
+# draft -> review (internal) -> queued -> sent (upstream, version vN) -> approved (by an upstream
+# reviewer) -> merged | rejected | superseded (upstream solved it another way); disabled: not applied
+STATES = ('draft', 'review', 'queued', 'sent', 'approved', 'merged', 'rejected', 'superseded', 'disabled')
+DONE_STATES = ('merged', 'rejected', 'superseded')
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+-]*$')
 SET_KEYS = {'state', 'pr', 'internal_mr', 'bugs', 'depends', 'disabled', 'title', 'version', 'base', 'branch',
-	    'note', 'upstream_commit', 'fixes', 'upstream', 'export_dir'}
+	    'note', 'upstream_commit', 'fixes', 'upstream', 'export_dir', 'target', 'reviewer', 'position'}
 # files of a series directory that gitum writes; everything else there belongs to people
 MANAGED = ('definition',)
 
 
 def is_managed(path):
 	return path.is_file() and (path.name in MANAGED or path.name.endswith('.patch'))
+
+
+def now():
+	return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+
+
+def touch(meta, **event):
+	"""Mark a series as updated; state changes go to its history."""
+	meta['updated'] = now()
+	if event:
+		meta.setdefault('history', []).append({'date': meta['updated'], **event})
+
+
+def check_claims(repo, names):
+	"""Stop if another session holds one of the series (see claim)."""
+	me = session_id()
+	for name in names:
+		owner = claim_owner(repo, name)
+		if owner and owner.get('session') != me:
+			raise Busy('series %s is claimed by %s (since %s); gitum series release %s --force to take it'
+				   % (name, owner.get('session'), owner.get('since'), name), owner=owner)
+
+
+def session_id():
+	return os.environ.get('GITUM_SESSION') or '%s@%s' % (os.environ.get('USER', ''), socket.gethostname())
+
+
+def claims_dir(repo):
+	return repo.gitum_dir / 'claims'
+
+
+def claim_owner(repo, name):
+	path = claims_dir(repo) / ('%s.json' % name)
+	return json.loads(path.read_text()) if path.exists() else None
+
+
+def claim(repo, name, reason='', force=False):
+	"""Mark a series as being worked on by this session (shared by all work trees of the repository)."""
+	load(repo.journal(), name)
+	owner = claim_owner(repo, name)
+	if owner and owner.get('session') != session_id() and not force:
+		raise Busy('series %s is claimed by %s since %s' % (name, owner.get('session'), owner.get('since')),
+			   owner=owner)
+	data = {'series': name, 'session': session_id(), 'pid': os.getpid(), 'host': socket.gethostname(),
+		'since': now(), 'reason': reason}
+	claims_dir(repo).mkdir(parents=True, exist_ok=True)
+	(claims_dir(repo) / ('%s.json' % name)).write_text(json.dumps(data, ensure_ascii=False))
+	return data
+
+
+def release(repo, name, force=False):
+	owner = claim_owner(repo, name)
+	if not owner:
+		return None
+	if owner.get('session') != session_id() and not force:
+		raise Busy('series %s is claimed by %s; use --force' % (name, owner.get('session')), owner=owner)
+	(claims_dir(repo) / ('%s.json' % name)).unlink()
+	return owner
 
 
 def export_dir(meta):
@@ -192,6 +256,7 @@ def add(repo, name, branch, base, depends=(), state='draft', **meta):
 				raise GitumError('unknown dependency %s' % dep)
 		data = {'name': name, 'branch': branch, 'base': base, 'depends': list(depends), 'state': state,
 			'fixes': [], 'changes': None, **{k: v for k, v in meta.items() if v}}
+		touch(data, state=state)
 		writer = JournalWriter(git, journal.sha)
 		tracker = changes_mod.Tracker(journal)
 		_record(repo, journal, writer, tracker, name, data, tip, 'series add')
@@ -208,6 +273,8 @@ def save(repo, names=None):
 		writer = JournalWriter(git, journal.sha)
 		tracker = changes_mod.Tracker(journal)
 		saved, tips = [], []
+		if names:
+			check_claims(repo, names)
 		for name in names or sorted(all_series):
 			if name not in all_series:
 				raise GitumError('no series %s' % name)
@@ -222,6 +289,8 @@ def save(repo, names=None):
 			if tip == meta.get('tip'):
 				continue
 			_record(repo, journal, writer, tracker, name, meta, tip, 'series save')
+			touch(meta, event='saved', tip=tip)
+			writer.put_json(meta_path(name), meta)
 			saved.append(name)
 			tips.append(tip)
 		if not saved:
@@ -233,8 +302,10 @@ def save(repo, names=None):
 
 def set_(repo, name, values):
 	with repo.lock():
+		check_claims(repo, [name])
 		journal = repo.journal()
 		meta = load(journal, name)
+		old_state = meta.get('state')
 		for key, value in values.items():
 			if key not in SET_KEYS:
 				raise GitumError('unknown key %s (known: %s)' % (key, ', '.join(sorted(SET_KEYS))))
@@ -248,10 +319,16 @@ def set_(repo, name, values):
 						if dep not in known:
 							raise GitumError('unknown dependency %s' % dep)
 					order({**known, name: {**meta, 'depends': value}}, [name])
+			if key == 'position' and value not in ('', None):
+				value = int(value)
 			if value in ('', None, []):
 				meta.pop(key, None)
 			else:
 				meta[key] = value
+		if meta.get('state') != old_state:
+			touch(meta, state=meta.get('state'), previous=old_state)
+		else:
+			touch(meta)
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.put_json(meta_path(name), meta)
 		writer.put('series/%s/definition' % name, definition_text(meta))
@@ -401,3 +478,67 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 			writer.put_json(meta_path(name), meta)
 			_commit(repo, journal, writer, 'gitum: series %s: branch %s' % (name, branch))
 		return {'branch': branch, 'tip': tip, 'applied': applied, 'base': start}
+
+
+IMPORT_KEYS = SET_KEYS | {'name', 'branch', 'base', 'depends', 'state'}
+
+
+def import_json(repo, items):
+	"""Create or update series from records (for an initial import of existing work).
+
+	A record needs name and, for a new series, base. With an existing branch
+	the series gets its changes from it; without one only the metadata is
+	recorded.
+	"""
+	created, updated = [], []
+	journal = repo.journal()
+	known = load_all(journal)
+	names = {i['name'] for i in items}
+	for item in sorted(items, key=lambda i: len(i.get('depends', []))):
+		unknown = set(item) - IMPORT_KEYS
+		if unknown:
+			raise GitumError('series %s: unknown keys %s' % (item.get('name'), ', '.join(sorted(unknown))))
+		for dep in item.get('depends', []):
+			if dep not in known and dep not in names:
+				raise GitumError('series %s: unknown dependency %s' % (item['name'], dep))
+	pending = list(items)
+	while pending:
+		progress = False
+		for item in list(pending):
+			known = load_all(repo.journal())
+			if any(dep not in known for dep in item.get('depends', [])):
+				continue
+			name = item['name']
+			rest = {k: v for k, v in item.items() if k not in ('name', 'branch', 'base', 'depends', 'state')}
+			if name not in known:
+				if not item.get('base'):
+					raise GitumError('series %s: base is required' % name)
+				branch = item.get('branch') or ''
+				if branch and repo.git.rev('refs/heads/' + branch):
+					add(repo, name, branch, item['base'], item.get('depends', []), item.get('state', 'draft'))
+				else:
+					check_name(name)
+					with repo.lock():
+						j = repo.journal()
+						meta = {'name': name, 'base': item['base'], 'branch': branch,
+							'depends': item.get('depends', []), 'state': item.get('state', 'draft'),
+							'fixes': [], 'changes': None}
+						touch(meta, state=meta['state'])
+						writer = JournalWriter(repo.git, j.sha)
+						writer.put_json(meta_path(name), meta)
+						writer.put('series/%s/definition' % name, definition_text(meta))
+						_commit(repo, j, writer, 'gitum: series import %s' % name)
+				created.append(name)
+			else:
+				updated.append(name)
+			values = dict(rest)
+			if name in updated:
+				values.update({k: item[k] for k in ('state', 'depends', 'base', 'branch') if k in item})
+			if values:
+				set_(repo, name, values)
+			pending.remove(item)
+			progress = True
+		if not progress:
+			raise GitumError('series dependency cycle among %s' % ', '.join(i['name'] for i in pending))
+	return {'created': created, 'updated': updated}
+

@@ -82,11 +82,12 @@ class UpstreamIndex:
 		self.ref = ref
 		self.ref_tree = git.tree(ref)
 		self.commits = []
-		raw = git.run('log', '--no-merges', '--format=%x01%H%x00%ae%x00%s', '--name-only', '%s..%s' % (base, ref)).stdout
+		raw = git.run('log', '--no-merges', '--format=%x01%H%x00%ae%x00%an%x00%s', '--name-only',
+			      '%s..%s' % (base, ref)).stdout
 		for block in raw.decode('utf-8', errors='replace').split('\x01')[1:]:
 			head, _, names = block.partition('\n')
-			sha, email, subject = head.split('\x00', 2)
-			self.commits.append({'sha': sha, 'email': email, 'subject': subject,
+			sha, email, name, subject = head.split('\x00', 3)
+			self.commits.append({'sha': sha, 'email': email.lower(), 'name': name.strip().lower(), 'subject': subject,
 					     'files': {n for n in names.splitlines() if n}})
 		self.by_file = {}
 		for c in self.commits:
@@ -106,8 +107,11 @@ class UpstreamIndex:
 			self.prefetch([sha])
 		return self._lines.get(sha, [])
 
-	def candidates(self, files, subject, email):
-		"""Upstream commits touching the same files, best first, with their subject similarity."""
+	def candidates(self, files, subject, author):
+		"""Upstream commits touching the same files, best first, with their subject similarity.
+
+		author: the set of identities (lowercase emails and names) of our author.
+		"""
 		found = {}
 		for f in files:
 			for c in self.by_file.get(f, []):
@@ -117,7 +121,8 @@ class UpstreamIndex:
 		for c in found.values():
 			overlap = len(files & c['files']) / max(len(files | c['files']), 1)
 			s_ratio = difflib.SequenceMatcher(None, subj, norm_subject(c['subject'])).ratio()
-			scored.append((overlap + s_ratio + (0.2 if c['email'] == email else 0), c, s_ratio))
+			same_author = c['email'] in author or c['name'] in author
+			scored.append((overlap + s_ratio + (0.2 if same_author else 0), c, s_ratio))
 		scored.sort(key=lambda t: -t[0])
 		return [(c, s_ratio) for _, c, s_ratio in scored[:MAX_CANDIDATES]]
 
@@ -145,6 +150,38 @@ class UpstreamIndex:
 			best['status'] = 'suspect'
 			best['note'] = 'similar upstream commit, but our change is not contained in %s' % self.ref
 		return best
+
+
+def identities(cfg, name, email):
+	"""An author as a set of lowercase names and emails, extended by [identity] aliases."""
+	ids = {name.strip().lower(), email.lower()}
+	for group in cfg.raw.get('identity', {}).get('aliases', []):
+		group = {g.strip().lower() for g in group}
+		if ids & group:
+			ids |= group
+	return ids
+
+
+def one_to_one(found):
+	"""Give each upstream commit to its best match; others keep it only with verified content."""
+	by_commit = {}
+	for e in found:
+		if e.get('upstream_commit') and e['status'] != 'merged':
+			by_commit.setdefault(e['upstream_commit'], []).append(e)
+	for commit, entries in by_commit.items():
+		if len(entries) < 2:
+			continue
+		entries.sort(key=lambda e: -e.get('similarity', 0))
+		ids = [e.get('id') or e['sha'][:12] for e in entries]
+		for e in entries:
+			e['shared_with'] = [i for i in ids if i != (e.get('id') or e['sha'][:12])]
+		for e in entries[1:]:
+			if e['status'] == 'merged-modified':
+				e['note'] = 'upstream commit %s also matches %s (several changes merged into one?)' % (
+					commit[:12], ', '.join(e['shared_with']))
+			else:
+				e['status'] = 'suspect'
+				e['note'] = 'upstream commit %s matches %s better' % (commit[:12], entries[0].get('id') or '')
 
 
 def first_release(git, upstream, sha):
@@ -212,7 +249,8 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 		infos = git.commit_infos(shas)
 		ours = diff_lines(git, shas, prefix)
 		pids = relative_patch_ids(git, shas, prefix) if prefix else {c.sha: c.patch_id for c in chs}
-		cands = {c.sha: index.candidates(ours.get(c.sha, ([], set()))[1], c.subject, infos[c.sha]['email'])
+		cands = {c.sha: index.candidates(ours.get(c.sha, ([], set()))[1], c.subject,
+						 identities(journal.config, infos[c.sha]['author'], infos[c.sha]['email']))
 			 for c in chs}
 		index.prefetch(u['sha'] for lst in cands.values() for u, _ in lst)
 		for c in chs:
@@ -224,6 +262,7 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 			if res.get('upstream_commit'):
 				entry['release'] = first_release(git, upstream, res['upstream_commit'])
 			found.append(entry)
+	one_to_one(found)
 	applied = []
 	if apply:
 		with repo.lock():

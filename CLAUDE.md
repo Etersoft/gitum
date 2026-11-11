@@ -51,6 +51,9 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
   - Import/export of that layout. Series may sit at any depth (`export_dir`).
   - Export touches only managed files (`definition`, `*.patch`); everything else in a series directory belongs to people.
   - `checkout` builds a branch with dependencies first.
+  - States are listed in `series.STATES`. Every metadata change sets `updated`; state changes go to `history`.
+  - Claims live in `<common dir>/gitum/claims/`; `check_claims` guards series operations.
+  - Queues are per `target` and are paused through `queue/<target>.json` in the journal.
 - **Upstream check.** `upstreamcheck.py` matches by patch-id, then scores candidates touching the same files by subject + diff similarity. `merged-modified` requires verified content (`content_in`: a three-way apply onto upstream changes nothing). A similar but unverified match is `suspect` and is never recorded or dropped automatically.
 - **Forges.** `forge.py` reads GitHub/GitLab/Forgejo REST APIs (tokens from env) and supports JSON import/export.
 - **Generated layers.** A layer with `generator = "staging"` (`staging-repo`, `staging-ref` = `v{version}`, `staging-exclude`) or `"command"` is rebuilt on the new base instead of cherry-picked.

@@ -62,27 +62,42 @@ def _get(url, token, kind):
 		raise GitumError('%s: %s' % (url, e)) from e
 
 
+def _approved(url, token, kind):
+	"""Whether an open request is approved by a reviewer (best effort: False if unknown)."""
+	try:
+		data = _get(url, token, kind)
+	except GitumError:
+		return False
+	if kind == 'gitlab':
+		return bool(data.get('approved') or data.get('approved_by'))
+	return any(r.get('state') == 'APPROVED' for r in data if isinstance(r, dict))
+
+
 def request_state(url, forges=None):
-	"""{'state': open|merged|closed, 'merge_commit': sha or ''} of a pull/merge request."""
+	"""State of a pull/merge request: open, approved, merged or closed; merge commit and head commit."""
 	kind, api, path, num, conf = parse_url(url, forges)
 	token = os.environ.get(conf.get('token-env') or TOKEN_ENV[kind], '')
-	if kind == 'github':
-		data = _get('%s/repos/%s/pulls/%d' % (api, path, num), token, kind)
-		state = 'merged' if data.get('merged') else data.get('state', 'open')
-		commit = data.get('merge_commit_sha') if data.get('merged') else ''
-	elif kind == 'gitlab':
-		data = _get('%s/projects/%s/merge_requests/%d' % (api, urllib.parse.quote(path, safe=''), num), token, kind)
+	if kind == 'gitlab':
+		base = '%s/projects/%s/merge_requests/%d' % (api, urllib.parse.quote(path, safe=''), num)
+		data = _get(base, token, kind)
 		state = {'opened': 'open', 'merged': 'merged', 'closed': 'closed', 'locked': 'open'}.get(data.get('state'), 'open')
 		commit = (data.get('merge_commit_sha') or data.get('squash_commit_sha') or '') if state == 'merged' else ''
+		head = data.get('sha') or ''
+		reviews = base + '/approvals'
 	else:
-		data = _get('%s/repos/%s/pulls/%d' % (api, path, num), token, kind)
+		base = '%s/repos/%s/pulls/%d' % (api, path, num)
+		data = _get(base, token, kind)
 		state = 'merged' if data.get('merged') else data.get('state', 'open')
-		commit = data.get('merge_commit_sha') or '' if data.get('merged') else ''
-	return {'state': state, 'merge_commit': commit or '', 'url': url}
+		commit = (data.get('merge_commit_sha') or '') if data.get('merged') else ''
+		head = (data.get('head') or {}).get('sha', '')
+		reviews = base + '/reviews'
+	if state == 'open' and _approved(reviews, token, kind):
+		state = 'approved'
+	return {'state': state, 'merge_commit': commit or '', 'head': head, 'url': url}
 
 
-CHANGE_FATE = {'open': 'sent', 'merged': 'merged', 'closed': 'rejected'}
-SERIES_STATE = {'open': 'sent', 'merged': 'merged', 'closed': 'rejected'}
+CHANGE_FATE = {'open': 'sent', 'approved': 'sent', 'merged': 'merged', 'closed': 'rejected'}
+SERIES_STATE = {'open': 'sent', 'approved': 'approved', 'merged': 'merged', 'closed': 'rejected'}
 
 
 def _apply(tracker, all_series, item):
@@ -91,7 +106,8 @@ def _apply(tracker, all_series, item):
 		meta = all_series.get(item['series'])
 		if meta is None:
 			raise GitumError('no series %s' % item['series'])
-		before = dict(meta)
+		before = json.dumps(meta, sort_keys=True)
+		old_state = meta.get('state')
 		state = item.get('state')
 		if state in SERIES_STATE:
 			state = SERIES_STATE[state]
@@ -99,14 +115,24 @@ def _apply(tracker, all_series, item):
 			if state not in series_mod.STATES:
 				raise GitumError('unknown series state %s' % state)
 			meta['state'] = state
-		for key in ('pr', 'internal_mr', 'upstream_commit', 'version'):
+		for key in ('pr', 'internal_mr', 'upstream_commit', 'version', 'reviewer', 'note'):
 			if item.get(key):
 				meta[key] = item[key]
-		return ('series ' + item['series']) if meta != before else None
+		if item.get('merge_commit'):
+			meta['upstream_commit'] = item['merge_commit']
+		if item.get('head'):
+			meta['mr_head'] = item['head']
+		if json.dumps(meta, sort_keys=True) == before:
+			return None
+		if meta.get('state') != old_state:
+			series_mod.touch(meta, state=meta['state'], previous=old_state, source='forge')
+		else:
+			series_mod.touch(meta)
+		return 'series ' + item['series']
 	rec = tracker.get(item['id'])
 	before = json.dumps(rec, sort_keys=True)
 	fate = item.get('fate') or CHANGE_FATE.get(item.get('state'))
-	meta = {k: item[k] for k in changes_mod.META_KEYS if item.get(k)}
+	meta = {k: item[k] for k in changes_mod.META_KEYS if item.get(k) and k != 'series'}
 	if item.get('merge_commit'):
 		meta['upstream_commit'] = item['merge_commit']
 	tracker.set(rec['id'], fate, **meta)
@@ -157,16 +183,23 @@ def refresh(repo, fetcher=request_state):
 				items.append({'id': rec['id'], **fetcher(url, forges)})
 			except GitumError as e:
 				errors.append(str(e))
+	outdated = []
 	for meta in series_mod.load_all(journal).values():
 		url = meta.get('pr')
-		if url and meta.get('state') not in ('merged', 'rejected', 'disabled'):
+		if url and meta.get('state') not in series_mod.DONE_STATES + ('disabled',):
 			try:
-				items.append({'series': meta['name'], **fetcher(url, forges)})
+				state = fetcher(url, forges)
 			except GitumError as e:
 				errors.append(str(e))
+				continue
+			items.append({'series': meta['name'], **state})
+			prepared = (meta.get('prepared') or {}).get('tip')
+			if state.get('head') and prepared and state['head'] != prepared and state['state'] != 'merged':
+				outdated.append({'series': meta['name'], 'head': state['head'], 'prepared': prepared})
 	for i in items:
 		i.pop('url', None)
 	result = import_json(repo, items) if items else {'updated': []}
 	result['errors'] = errors
 	result['checked'] = len(items)
+	result['outdated'] = outdated
 	return result
