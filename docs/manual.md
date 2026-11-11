@@ -239,6 +239,30 @@ gitum check-upstream series:ntdll-fix --apply    # confirm the acceptance by con
 
 Once the series is accepted, its changes leave the layers at the next sync and the queue moves on.
 
+The merge request text travels with the series, images included. Write it once
+(or take it from the internal merge request) and render it for each forge:
+
+```sh
+gitum mr set ntdll-fix mr.md                     # mr.md and the local images it shows
+gitum mr import ntdll-fix internal:etersoft/wine!7   # or: title, text and images of an MR
+gitum mr render ntdll-fix --forge upstream -o out.md # without the internal parts
+```
+
+The first line `# Title` is the title. Lines between `<!-- internal -->` and
+`<!-- /internal -->` (or from `<!-- internal -->` to the end) are for internal
+review only and are left out unless `--internal` is given. The text is stored
+as `series/NAME/mr.md`, the images as `series/NAME/assets/`; `series save` and
+export leave them alone. For a GitLab forge with a token, `render` uploads the
+images to the project (`--project`, or the project of the series' `pr`/`internal_mr`
+link, or `[forge.NAME] project`) and remembers their URLs by content, so a new
+version of the text uploads only new or changed images. For other forges, or
+with `--no-upload`, the text gets placeholders `{{gitum-asset:FILE}}` and the
+images are written to `<common dir>/gitum/mr/NAME/` (listed under `pending` in
+`--json`); after uploading them some other way, `gitum mr record NAME
+FILE=URL... --forge F` makes later renders use those URLs. gitum does not open
+or edit merge requests itself: a person or an agent does that with the rendered
+text.
+
 ### A distribution package
 
 The changes of a package are commits in a layer on top of the real upstream history.
@@ -326,6 +350,7 @@ Nothing asks questions interactively.
 | `change list\|show\|set\|confirm` | Changes and their fates: `gitum change set ID fate=merged upstream_commit=SHA`; `gitum change confirm ID [SHA]` accepts a suspect found by `check-upstream`. |
 | `check-upstream [layer:X\|series:Y] [--since REF] [--apply]` | Find our changes upstream: patch-id, then subject and diff similarity. A match counts as accepted with edits only when the content is verified (our change applied onto upstream changes nothing); anything else is `suspect` and waits for a person. |
 | `series add\|save\|list\|show\|set\|remove\|export\|import-staging\|import-json\|checkout\|claim\|release` | Series of changes. States: draft → review (internal) → queued → sent (version vN) → approved → merged, rejected or superseded. A series may sit at any depth of an export directory (`export_dir`); export touches only `definition` and the `*.patch` files the series wrote itself, so several series can share a directory: patch numbers continue after their dependencies, and the shared `definition` combines their Fixes. `series save NAME` always recounts a named series. `import-json` never moves a series back to an earlier state when the series changed after the record (`--force` does). The first export of hand-made patches rewrites them in gitum's normalized form (`From 0000…`, no signature). `claim` marks a series as worked on by a session (`GITUM_SESSION`); other sessions get exit code 75 for it. `pr` and `internal_mr` take a URL or `[forge:]group/project!N`, resolved through `[forge.NAME]` (defaults: `[series] pr-forge`, `internal-mr-forge`); a forge with other paths sets `mr-url = "{url}/{project}/merge_requests/{n}"`. |
+| `mr set\|import\|render\|record SERIES` | The merge request text of a series with its images; internal parts; images uploaded once per forge project (see "A series on its way upstream"). |
 | `port`, `variants` | A series on another base, and how its variants differ. |
 | `queue [next\|add\|pause\|resume] [--target T]`, `queue --format md` | Upstream submission queues, one per target (series field `target`). One series at a time until it is approved or merged, dependencies first. `pause --reason` stops a queue. Generates `UPSTREAM-QUEUE.md`: `[queue.markdown]` sets its sections (`sent`, `queued`, `review`, `draft`, `done`), the fields shown as columns (`fields`, `done-fields`: any series field such as `reviewer`, `release`, `merged_at`) and all titles (`titles`). |
 | `prepare SERIES [--push FORK] [--force]` | Upstream form of a series: fresh base, new dates one second apart, no Co-Authored-By/Gitum-Id trailers, subject check, path remapping for vendored trees, a range-diff against the saved series. Dependencies must be merged first (`--force` includes them). You open the merge request yourself; `forge refresh` warns if its head differs from the prepared branch. |

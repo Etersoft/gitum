@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
+from . import mrtext
 from . import upstreamwork as uw
-from .errors import EXIT_NEEDS_HUMAN, EXIT_OK
+from .errors import EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
 
 
 def short(sha):
@@ -100,7 +101,45 @@ def cmd_mirror(repo, args, out):
 	out.result(data, '%s: mirror %s, remote %s' % (data['upstream'], data['mirror'], data['remote']))
 
 
+def cmd_mr(repo, args, out):
+	if args.action in ('set', 'import') and not args.source:
+		raise GitumError('gitum mr %s needs %s' % (args.action, 'a file' if args.action == 'set' else 'a merge request'))
+	if args.action == 'set':
+		data = mrtext.set_from_file(repo, args.name, args.source)
+	elif args.action == 'import':
+		data = mrtext.import_mr(repo, args.name, args.source)
+	elif args.action == 'record':
+		pairs = dict(p.split('=', 1) for p in [args.source] + args.pairs if p and '=' in p)
+		data = mrtext.record_uploads(repo, args.name, args.forge, args.project, pairs)
+		out.result(data, 'Remembered %s for %s' % (', '.join(data['recorded']), data['forge']))
+		return
+	else:
+		data = mrtext.render(repo, args.name, args.forge, args.project, args.internal, not args.no_upload)
+		text = ('# %s\n\n' % data['title'] if data['title'] else '') + data['description']
+		if args.output:
+			Path(args.output).write_text(text)
+			text = 'Written %s' % args.output
+		notes = ['uploaded %s -> %s' % (u['file'], u['url']) for u in data['uploaded']]
+		notes += ['upload %s by hand and replace %s' % (p['path'], p['placeholder']) for p in data['pending']]
+		out.result(data, text.rstrip('\n') + ('\n\n' + '\n'.join(notes) if notes else ''))
+		return
+	out.result(data, '%s: merge request text%s, %d images' % (
+		args.name, (' "%s"' % data['title']) if data['title'] else '', len(data['assets'])))
+
+
 def register(sub):
+	s = sub.add_parser('mr', help='the merge request text of a series, with images')
+	s.add_argument('action', choices=['set', 'import', 'render', 'record'])
+	s.add_argument('name', help='series')
+	s.add_argument('source', nargs='?', help='set: a markdown file; import: [forge:]group/project!N or a URL')
+	s.add_argument('pairs', nargs='*', metavar='FILE=URL', help='record: images uploaded by hand')
+	s.add_argument('--forge', help='render/record: the [forge.NAME] the text is for')
+	s.add_argument('--project', help='render/record: the project there (default: from the series links)')
+	s.add_argument('--internal', action='store_true', help='render: keep the internal parts')
+	s.add_argument('--no-upload', action='store_true', help='render: placeholders instead of uploading')
+	s.add_argument('-o', '--output', metavar='FILE', help='render: write the text to FILE')
+	s.set_defaults(func=cmd_mr)
+
 	s = sub.add_parser('port', help='put a series onto another base as a variant branch')
 	s.add_argument('name')
 	s.add_argument('--to', required=True, help='upstream:NAME, layer:NAME or a ref')
