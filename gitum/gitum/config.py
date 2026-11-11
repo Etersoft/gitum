@@ -55,6 +55,7 @@ class Config:
 	queue: dict = field(default_factory=dict)
 	forges: dict = field(default_factory=dict)
 	raw: dict = field(default_factory=dict)
+	warnings: list = field(default_factory=list)
 
 	def ordered_layers(self):
 		"""Layers so that every layer comes after the layer it is based on."""
@@ -97,7 +98,47 @@ def _get(table, key, typ, default, where):
 	return value
 
 
-def parse(text):
+# every key gitum reads; anything else is a typo or an outdated setting that would be ignored
+KNOWN = {
+	'': {'version', 'upstream', 'layer', 'resolve', 'publish', 'hooks', 'series', 'queue', 'forge', 'identity'},
+	'upstream.*': {'ref', 'remote', 'url', 'release-tags', 'prefix', 'rewritten'},
+	'layer.*': {'base', 'branch', 'compat-start-tag', 'annihilate-reverts', 'generator', 'staging-repo', 'staging-ref',
+		    'staging-exclude', 'command', 'post-command', 'post-message'},
+	'resolve': {'chain', 'rules', 'agent', 'review-unless'},
+	'publish': {'remote', 'candidate-prefix', 'check'},
+	'hooks': {'change', 'run', 'publish'},
+	'series': {'subject-lint', 'strip-trailers', 'pr-forge', 'internal-mr-forge'},
+	'queue': {'one-at-a-time', 'done-limit', 'markdown'},
+	'queue.markdown': {'title', 'generated', 'next', 'nothing', 'paused', 'sections', 'fields', 'done-fields', 'titles'},
+	'forge.*': {'type', 'url', 'api', 'token-env'},
+	'identity': {'aliases'},
+}
+
+
+def unknown_keys(raw):
+	"""Dotted names of the keys gitum does not know."""
+	found = []
+
+	def check(table, pattern, prefix):
+		for key, value in table.items():
+			name = prefix + key
+			if key not in KNOWN[pattern]:
+				found.append(name)
+				continue
+			sub = (pattern + '.' if pattern else '') + key
+			if sub in KNOWN and isinstance(value, dict):
+				check(value, sub, name + '.')
+			elif sub + '.*' in KNOWN and isinstance(value, dict):
+				for item, body in value.items():
+					if isinstance(body, dict):
+						check(body, sub + '.*', '%s.%s.' % (name, item))
+
+	check(raw, '', '')
+	return sorted(found)
+
+
+def parse(text, strict=False):
+	"""Parse gitum.toml; strict refuses unknown keys, otherwise they become warnings."""
 	try:
 		raw = tomllib.loads(text)
 	except tomllib.TOMLDecodeError as e:
@@ -162,6 +203,11 @@ def parse(text):
 	cfg.queue = _get(raw, 'queue', dict, {}, 'queue')
 	cfg.forges = _get(raw, 'forge', dict, {}, 'forge')
 	cfg.ordered_layers()
+	unknown = unknown_keys(raw)
+	if unknown and strict:
+		raise ConfigError('%s: unknown settings (typos or outdated keys, they would be ignored): %s'
+				  % (CONFIG_FILE, ', '.join(unknown)), unknown=unknown)
+	cfg.warnings = ['unknown setting %s is ignored' % k for k in unknown]
 	return cfg
 
 

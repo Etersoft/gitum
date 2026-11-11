@@ -253,3 +253,17 @@ def test_not_a_gitum_repo(tmp_path, capsys):
 	assert 'gitum init' in capsys.readouterr().err
 	assert main(['--repo', str(tmp_path / 'nothing'), 'log']) == EXIT_ERROR
 
+
+
+def test_unknown_config_keys(inited, tmp_path, capsys):
+	"""Typos and outdated keys are refused on load instead of being ignored silently."""
+	up, work = inited
+	code, data = run_json(work, capsys, 'config', 'show')
+	text = data['config'] + '\n[queue.markdown]\nreview = "Ревью"\n[publish]\nremotes = "origin"\n'
+	(tmp_path / 'c.toml').write_text(text)
+	code, data = run_json(work, capsys, 'config', 'load', str(tmp_path / 'c.toml'))
+	assert code == EXIT_ERROR and data['unknown'] == ['publish.remotes', 'queue.markdown.review']
+	good = tmp_path / 'ok.toml'
+	good.write_text(text.replace('review = "Ревью"', '[queue.markdown.titles]\nreview = "Ревью"').replace('remotes', 'remote'))
+	assert run(work, 'config', 'load', str(good)) == 0
+	assert config_mod.unknown_keys({'layer': {'x': {'base': 'upstream:u', 'colour': 1}}}) == ['layer.x.colour']

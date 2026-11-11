@@ -47,7 +47,9 @@ def short(sha):
 
 def cmd_init(repo, args, out):
 	if args.config:
-		data = state.init(repo, config_text=Path(args.config).read_text())
+		text = Path(args.config).read_text()
+		config_mod.parse(text, strict=True)
+		data = state.init(repo, config_text=text)
 	else:
 		upstreams = []
 		for spec in args.upstream:
@@ -158,10 +160,12 @@ def cmd_status(repo, args, out):
 def cmd_config(repo, args, out):
 	journal = repo.journal()
 	if args.action == 'show':
-		out.result({'config': journal.config_text}, journal.config_text)
+		warnings = journal.config.warnings
+		out.result({'config': journal.config_text, 'warnings': warnings},
+			   journal.config_text + ''.join('# warning: %s\n' % w for w in warnings))
 		return
 	text = Path(args.file).read_text()
-	config_mod.parse(text)
+	config_mod.parse(text, strict=True)
 	with repo.lock():
 		journal = repo.journal()
 		writer = JournalWriter(repo.git, journal.sha)
