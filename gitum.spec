@@ -17,7 +17,7 @@ Source: %name-%version.tar
 
 BuildArch: noarch
 
-BuildRequires(pre): rpm-build-pyproject
+BuildRequires: rpm-build-pyproject
 BuildRequires: python3-module-setuptools
 
 %if_with check
@@ -79,7 +79,7 @@ upstream submission queue, wine-staging style series and RPM patch sets.
     sets, HTML reports
   + recovery from a crash at any point (gitum continue)
 - gitum 1 commands and repositories are no longer supported
-- end-to-end and crash tests run in %check
+- end-to-end and crash tests run in %%check
 
 * Fri Jul 13 2018 Vitaly Lipatov <lav@altlinux.ru> 0.8.6-alt2
 - cleanup spec, fix build
