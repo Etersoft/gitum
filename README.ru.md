@@ -116,6 +116,7 @@ subject-lint = '^[a-z0-9_./-]+: [A-Z].*\.$'
 [hooks]                          # получают JSON-события на stdin
 change = "tools/notify-bugs.py"
 run = "tools/notify-chat.sh"
+publish = "tools/set-version-branches.sh"
 ```
 
 Параметры апстрима:
@@ -158,6 +159,58 @@ run = "tools/notify-chat.sh"
 | `export`, `import` | Наборы патчей для spec-файлов RPM (строки Patch между `# BEGIN gitum patches` / `# END gitum patches`), quilt, wine-staging. |
 | `log [ИЗМЕНЕНИЕ\|series:X\|layer:X]`, `diff СОСТОЯНИЕ1 [СОСТОЯНИЕ2]`, `report [ПРОГОН] [--html ФАЙЛ]` | История и отчёты. |
 | `mirror ИМЯ` | Общее зеркало апстрима в `~/.cache/gitum` вместо разовых клонов. |
+
+## Команды, которые запускает gitum
+
+gitum запускает ваши команды для разрешения конфликтов, проверок,
+генерируемых слоёв и хуков. Все они неинтерактивны и получают одинаковое
+окружение `GITUM_*`:
+
+| Переменная | Значение |
+|---|---|
+| `GITUM_REPO` | основное рабочее дерево репозитория |
+| `GITUM_COMMON_DIR` | общий каталог git |
+| `GITUM_WORKTREE` | приватное рабочее дерево операции (только sync) |
+| `GITUM_RUN`, `GITUM_RUN_DIR` | идентификатор прогона и каталог его логов |
+| `GITUM_LAYER` | обрабатываемый слой |
+| `GITUM_UPSTREAM`, `GITUM_TARGET`, `GITUM_TARGET_TAG`, `GITUM_VERSION` | апстрим, целевой коммит, его релизный тег и версия из тега (`wine-11.20` → `11.20`) |
+| `GITUM_LOCK_FILE` | файл блокировки репозитория |
+| `GITUM_LOCK_HELD` | путь к файлу блокировки, пока gitum её держит |
+
+| Команда | Рабочий каталог | Дополнительные переменные | Результат |
+|---|---|---|---|
+| `resolve.rules`, `resolve.agent` | приватное дерево с конфликтом | `GITUM_COMMIT`, `GITUM_SUBJECT`, `GITUM_FILES` (по одному в строке), `GITUM_CONFLICT_DIR`, `GITUM_RESOLVER` | код 0, все конфликты разрешены и добавлены через `git add` |
+| `publish.check` | приватное дерево на вершине каждого листового слоя | `GITUM_TIP` | код 0, иначе ветки не меняются |
+| `generator = "command"` | приватное дерево на новой базе | `GITUM_BASE` | новые коммиты на HEAD |
+| `post-command` генерируемого слоя | приватное дерево | | коммиты; остаток коммитит gitum |
+| `hooks.change`, `hooks.run`, `hooks.publish` | основное рабочее дерево | `GITUM_EVENT` | JSON-событие на stdin; ошибка хука не роняет прогон |
+
+Хуки:
+- `hooks.change` получает по событию на каждое изменение, которое не
+  применилось просто так.
+- `hooks.run` получает весь отчёт sync (`event` — `sync` или `candidate`).
+- `hooks.publish` запускается после успешного `gitum publish`. Его событие
+  выглядит так:
+
+```json
+{"event": "publish", "remote": "origin", "journal": "<sha>",
+ "upstreams": {"winehq": {"ref": "winehq/master", "sha": "<sha>", "tag": "wine-11.20", "version": "11.20"}},
+ "layers": {"etersoft": {"branch": "rebased-etersoft", "old": "<sha до пуша>", "new": "<sha>",
+                         "base": "<sha>", "start_tag": "rebased-etersoft-START"}},
+ "integrated": {"etersoft": ["заголовки коммитов, поставленных сверху"]}}
+```
+
+**Блокировка** — стабильный интерфейс для ваших скриптов.
+- Это эксклюзивный `flock` на `$GIT_COMMON_DIR/gitum/lock`.
+- Пока она взята, в файле лежит JSON владельца:
+  `{"pid", "host", "user", "session", "since"}`. Сессия берётся из
+  `GITUM_SESSION`.
+- Команды, запущенные gitum, получают `GITUM_LOCK_HELD`, и запущенный из
+  них `gitum` не берёт блокировку повторно.
+
+**Ветки, checked out в рабочих каталогах.** Ветка слоя, checked out в
+чистом рабочем дереве, переезжает вместе с ним. Если в нём есть локальные
+изменения, gitum останавливается с кодом 2 и ничего не меняет.
 
 ## Разработка
 

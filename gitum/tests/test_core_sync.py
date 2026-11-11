@@ -1,7 +1,11 @@
 import json
 import shutil
+import sys
+from pathlib import Path
 
 import pytest
+
+import gitum as gitum_pkg
 
 from gitum import rrcache
 from gitum.cli import main
@@ -302,12 +306,15 @@ def test_new_commits_on_parent_cascade(stack, capsys):
 
 
 def test_checked_out_branch(stack, capsys):
+	"""A layer branch checked out in a clean work tree follows the sync; local changes stop it."""
 	up, work = stack
 	release(up, '1.1')
 	work.run('checkout', '-q', 'rebased-etersoft')
+	work.write('eter', 'local edit\n')
 	code, data = gitum_json(work, capsys, 'sync', '--next-release')
-	assert code == EXIT_NEEDS_HUMAN and 'checked out' in data['error']
-	code, data = gitum_json(work, capsys, 'sync', '--next-release', '--update-checked-out')
+	assert code == EXIT_NEEDS_HUMAN and 'local changes' in data['error']
+	work.run('checkout', '-q', '--', 'eter')
+	code, data = gitum_json(work, capsys, 'sync', '--next-release')
 	assert code == 0
 	assert work.git.is_clean() and work.read('VERSION') == '1.1\n'
 	assert work.git.out('symbolic-ref', 'HEAD') == 'refs/heads/rebased-etersoft'
@@ -457,3 +464,43 @@ def test_rewritten_upstream(tmp_path, capsys):
 	assert work.git.merge_base('staging-new', 'rebased-basealt') == work.rev('staging-new')
 	assert work.subjects('staging-new..rebased-etersoft') == ['basealt: tweak', 'etersoft: feature',
 								   'etersoft: change base line']
+
+
+def test_hook_environment_and_nested_gitum(stack, tmp_path, capsys):
+	"""Commands run by gitum get GITUM_* and may call gitum again without waiting for the lock."""
+	up, work = stack
+	envfile = tmp_path / 'env'
+	src = Path(gitum_pkg.__file__).resolve().parents[1]
+	check = ('env | grep ^GITUM_ | sort > %s; PYTHONPATH=%s %s -m gitum --repo "$GITUM_REPO" save >> %s.save'
+		 % (envfile, src, sys.executable, envfile))
+	load_config(work, tmp_path, '[publish]\ncheck = "%s"\n' % check.replace('"', '\\"'))
+	release(up, '1.1')
+	code, data = gitum_json(work, capsys, 'sync', '--next-release')
+	assert code == 0, data
+	env = dict(line.split('=', 1) for line in envfile.read_text().splitlines())
+	g = GitumRepo(work.path)
+	assert env['GITUM_REPO'] == str(work.path)
+	assert env['GITUM_WORKTREE'].startswith(str(g.gitum_dir / 'wt'))
+	assert env['GITUM_LAYER'] == 'etersoft'
+	assert env['GITUM_TARGET_TAG'] == 'v1.1' and env['GITUM_VERSION'] == '1.1'
+	assert env['GITUM_LOCK_HELD'] == env['GITUM_LOCK_FILE'] == str(g.gitum_dir / 'lock')
+	assert env['GITUM_RUN'] == data['report']['run']
+	assert 'Nothing to save' in (tmp_path / 'env.save').read_text()
+
+
+def test_publish_event(published, tmp_path, capsys):
+	up, work, bare = published
+	events = tmp_path / 'publish.json'
+	load_config(work, tmp_path, '[hooks]\npublish = "cat > %s; env | grep ^GITUM_VERSION= >> %s.env"\n'
+		    % (events, events))
+	old = {b: work.rev(b) for b in BRANCHES}
+	release(up, '1.1')
+	assert gitum(work, 'sync', '--next-release', '--publish') == 0
+	event = json.loads(events.read_text())
+	assert event['event'] == 'publish' and event['remote'] == 'origin'
+	assert event['upstreams']['winehq'] == {'ref': 'winehq/master', 'sha': up.rev('v1.1'), 'tag': 'v1.1',
+						'version': '1.1'}
+	eter = event['layers']['etersoft']
+	assert eter['branch'] == 'rebased-etersoft' and eter['old'] == old['rebased-etersoft']
+	assert eter['new'] == work.rev('rebased-etersoft') and eter['start_tag'] == 'rebased-etersoft-START'
+	assert (tmp_path / 'publish.json.env').read_text().strip() == 'GITUM_VERSION=1.1'

@@ -9,7 +9,7 @@ import secrets
 import socket
 from pathlib import Path
 
-from .errors import Busy, NotGitumRepo
+from .errors import Busy, NeedsHuman, NotGitumRepo
 from .git import Git
 from .journal import JOURNAL_REF, Journal
 
@@ -57,14 +57,26 @@ class Repo:
 
 	# lock
 
+	def lock_path(self):
+		return self.gitum_dir / LOCK_FILE
+
 	@contextlib.contextmanager
 	def lock(self, wait=False):
-		"""Exclusive lock for operations that change the gitum state of the repository."""
+		"""Exclusive lock for operations that change the gitum state of the repository.
+
+		The lock is a flock on <git common dir>/gitum/lock; the file holds the
+		owner as JSON. A command run by gitum while it holds the lock gets
+		GITUM_LOCK_HELD=<lock file>, and a gitum started from it does not lock again.
+		"""
 		if self._lock_fd is not None:
 			yield
 			return
+		path = self.lock_path()
+		held = os.environ.get('GITUM_LOCK_HELD')
+		if held and Path(held).resolve() == path.resolve():
+			yield
+			return
 		self.gitum_dir.mkdir(parents=True, exist_ok=True)
-		path = self.gitum_dir / LOCK_FILE
 		fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
 		try:
 			fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
@@ -85,7 +97,7 @@ class Repo:
 
 	def lock_owner(self):
 		"""Owner of the repository lock if it is held, else None."""
-		path = self.gitum_dir / LOCK_FILE
+		path = self.lock_path()
 		if not path.exists():
 			return None
 		fd = os.open(path, os.O_RDONLY)
@@ -142,6 +154,47 @@ class Repo:
 		if path.exists():
 			self.git.run('worktree', 'remove', '--force', str(path), check=False)
 		self.git.run('worktree', 'prune', check=False)
+
+	def hook_env(self, **values):
+		"""Environment for commands gitum runs (hooks, resolvers, checks, generators).
+
+		Every value becomes GITUM_<NAME>; None values are left out.
+		"""
+		env = {
+			'GITUM_REPO': str(self.worktree),
+			'GITUM_COMMON_DIR': str(self.common_dir),
+			'GITUM_LOCK_FILE': str(self.lock_path()),
+		}
+		if self._lock_fd is not None or os.environ.get('GITUM_LOCK_HELD'):
+			env['GITUM_LOCK_HELD'] = str(self.lock_path())
+		for key, value in values.items():
+			if value is not None:
+				env['GITUM_' + key.upper()] = str(value)
+		return {**os.environ, **env}
+
+	def check_checkouts(self, branches):
+		"""Branches checked out in user work trees: {branch: path}.
+
+		Such a branch can move only if its work tree is clean: the work tree then
+		follows it (follow_checkouts). Local changes stop the operation.
+		"""
+		found = {}
+		for branch in branches:
+			path = self.checked_out(branch)
+			if not path:
+				continue
+			if not self.git.at(path).is_clean():
+				raise NeedsHuman('%s is checked out in %s with local changes; commit or stash them first'
+						 % (branch, path), checked_out={branch: path})
+			found[branch] = path
+		return found
+
+	def follow_checkouts(self, moves, found):
+		"""Update the clean work trees of moved branches: moves is [(branch, old, new)]."""
+		for branch, old, new in moves:
+			path = found.get(branch)
+			if path and old and new and old != new:
+				self.git.at(path).run('read-tree', '-m', '-u', old, new)
 
 	def checked_out(self, branch):
 		"""Work tree path where a branch is checked out (ignoring our own), or None."""

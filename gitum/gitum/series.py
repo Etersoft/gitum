@@ -332,8 +332,7 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 		branch = branch or meta.get('branch') or 'series/' + name
 		ref = 'refs/heads/' + branch
 		old = git.rev(ref)
-		if old and repo.checked_out(branch):
-			raise NeedsHuman('%s is checked out in %s' % (branch, repo.checked_out(branch)))
+		found = repo.check_checkouts([branch]) if old else {}
 		names = order(all_series, [name]) if with_depends else [name]
 		wt = repo.add_worktree(start, 'checkout-' + name)
 		applied = []
@@ -355,6 +354,7 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 		tr = RefTransaction(git)
 		tr.update(ref, tip, old or None)
 		tr.commit()
+		repo.follow_checkouts([(branch, old, tip)], found)
 		if not meta.get('branch'):
 			meta['branch'] = branch
 			writer = JournalWriter(git, journal.sha)

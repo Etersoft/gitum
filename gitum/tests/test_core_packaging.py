@@ -277,3 +277,54 @@ def test_vendored_prefix_check_and_prepare(tmp_path, capsys):
 	assert main(['--repo', str(app.path), '--json', 'prepare', 'lib-fix', '--onto', 'lib/master~1']) == 0
 	assert app.show('upstream/lib-fix', 'src/a.c') == 'int a = 1;\n'
 	assert app.git.is_ancestor('lib/master~1', 'upstream/lib-fix')
+
+
+@pytest.fixture
+def staged_conflict(staged):
+	"""wine-staging v1.1 gets a patch that does not apply on the 1.1 upstream."""
+	up, st, work = staged
+	scratch = Repo(st.path.parent / 'scratch', init=False)
+	scratch.git = scratch.git.at(scratch.path)
+	scratch.run('checkout', '-q', '--detach', up.rev('v1.0'))
+	scratch.commit('eee: Change README.', {'README': 'staging readme\n'})
+	patch = scratch.git.run('format-patch', '--stdout', '-1', 'HEAD').stdout
+	up.run('checkout', '-q', 'master')
+	st.run('tag', '-d', 'v1.1')
+	# upstream 1.2 changes README too, so the staging patch conflicts there
+	up.commit('upstream: README for 1.2', {'README': 'upstream 1.2\n'})
+	up.commit('Release 1.2', {'VERSION': '1.2\n'})
+	up.run('tag', 'v1.2')
+	st.write('patches/eee-Readme/0001-eee.patch', patch)
+	st.run('add', '-A')
+	st.commit('Release v1.2')
+	st.run('tag', 'v1.2')
+	return up, st, work
+
+
+def test_staging_conflict_continue(staged_conflict, capsys):
+	up, st, work = staged_conflict
+	before = work.rev('rebased')
+	code, data = gitum_json(work, capsys, 'sync', '--to', 'v1.2')
+	assert code == EXIT_NEEDS_HUMAN, data
+	assert data['series'] == 'eee-Readme' and data['patch'] == '0001-eee.patch'
+	assert work.rev('rebased') == before
+	wt = Repo(data['worktree'], init=False)
+	wt.write('README', 'upstream 1.2 + staging\n')
+	wt.run('add', 'README')
+	code, data = gitum_json(work, capsys, 'continue')
+	assert code == 0, data
+	res = {r['subject']: r for r in data['report']['layers']['staging']['results']}
+	assert res['eee: Change README.']['result'] == 'resolved'
+	assert res['eee: Change README.']['resolver'] == 'manual'
+	assert work.show('rebased', 'README') == 'upstream 1.2 + staging\n'
+	assert work.subjects('v1.2..rebased') == ['aaa: Base.', 'bbb: Uses base.', 'eee: Change README.']
+
+
+def test_staging_conflict_skip(staged_conflict, capsys):
+	up, st, work = staged_conflict
+	assert gitum(work, 'sync', '--to', 'v1.2') == EXIT_NEEDS_HUMAN
+	code, data = gitum_json(work, capsys, 'skip')
+	assert code == 0, data
+	res = {r['subject']: r['result'] for r in data['report']['layers']['staging']['results']}
+	assert res['eee: Change README.'] == 'skipped'
+	assert work.subjects('v1.2..rebased') == ['aaa: Base.', 'bbb: Uses base.']

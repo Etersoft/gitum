@@ -42,11 +42,11 @@ def _set_branch(repo, branch, tip):
 	old = repo.git.rev(ref)
 	if old == tip:
 		return
-	if old and repo.checked_out(branch):
-		raise NeedsHuman('%s is checked out in %s' % (branch, repo.checked_out(branch)))
+	found = repo.check_checkouts([branch]) if old else {}
 	tr = RefTransaction(repo.git)
 	tr.update(ref, tip, old or None)
 	tr.commit()
+	repo.follow_checkouts([(branch, old, tip)], found)
 
 
 def base_short(spec):

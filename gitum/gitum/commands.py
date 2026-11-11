@@ -50,7 +50,7 @@ def cmd_sync(repo, args, out):
 			to[None] = spec
 	data = sync.sync(repo, to=to or None, next_release_=args.next_release, candidate=args.candidate,
 			 publish=args.publish, fetch=not args.no_fetch, find_culprit=args.find_culprit,
-			 update_checked_out=args.update_checked_out, wait=args.wait, step=args.step,
+			 wait=args.wait, step=args.step,
 			 allow_rewrite=args.allow_rewrite)
 	return _result(args, out, data)
 
@@ -81,7 +81,7 @@ def cmd_publish(repo, args, out):
 
 
 def cmd_pull(repo, args, out):
-	data = publish.pull(repo, args.remote, args.update_checked_out)
+	data = publish.pull(repo, args.remote)
 	if not data['changed']:
 		out.result(data, 'Already up to date.')
 		return EXIT_OK
@@ -110,8 +110,6 @@ def register(sub):
 		       help='one upstream commit at a time, recording a state after each (for bisect)')
 	s.add_argument('--find-culprit', action='store_true',
 		       help='on a conflict, find the upstream commit that broke the patch')
-	s.add_argument('--update-checked-out', action='store_true',
-		       help='also move layer branches checked out in clean work trees')
 	s.add_argument('--wait', action='store_true', help='wait for the repository lock')
 	s.set_defaults(func=cmd_sync)
 	for name, help_ in (('continue', 'continue a stopped sync after resolving the conflict'),
@@ -129,5 +127,4 @@ def register(sub):
 	s.set_defaults(func=cmd_publish)
 	s = sub.add_parser('pull', help='take the published state')
 	s.add_argument('remote', nargs='?')
-	s.add_argument('--update-checked-out', action='store_true')
 	s.set_defaults(func=cmd_pull)

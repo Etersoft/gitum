@@ -8,14 +8,13 @@ resume it from the state saved in <common dir>/gitum/operation.json.
 
 import datetime
 import json
-import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
 from . import changes as changes_mod
-from . import hooks, rrcache, state
+from . import hooks, packaging, rrcache, state
 from .errors import GitumError, NeedsHuman
 from .git import RefTransaction
 from .journal import (
@@ -98,7 +97,7 @@ class Sync:
 	op_allow_rewrite = False
 
 	def start(self, to=None, next_release_=False, candidate='auto', publish=False, fetch=True,
-		  find_culprit=False, update_checked_out=False, allow_rewrite=False):
+		  find_culprit=False, allow_rewrite=False):
 		repo, git = self.repo, self.git
 		self.op_allow_rewrite = allow_rewrite
 		if repo.load_op():
@@ -120,8 +119,7 @@ class Sync:
 		self.op = {
 			'kind': 'sync', 'run': run_id, 'run_dir': str(run_dir), 'started': utcnow(),
 			'journal': journal.sha, 'targets': targets, 'target_desc': target_desc,
-			'options': {'candidate': candidate, 'publish': publish, 'find_culprit': find_culprit,
-				    'update_checked_out': update_checked_out},
+			'options': {'candidate': candidate, 'publish': publish, 'find_culprit': find_culprit},
 			'snapshot': self._snapshot(journal), 'layers': {}, 'pending': [l.name for l in cfg.ordered_layers()],
 			'current': None, 'worktree': None, 'conflicts': 0,
 		}
@@ -140,6 +138,7 @@ class Sync:
 		if action == 'abort':
 			if wt:
 				wt.run('cherry-pick', '--abort', check=False)
+				wt.run('am', '--abort', check=False)
 				head = wt.rev('HEAD')
 				if head and cur:
 					self.git.run('update-ref', 'refs/gitum/failed/%s/%s' % (op['run'], cur['layer']), head)
@@ -149,6 +148,9 @@ class Sync:
 				'message': 'sync aborted; branches are unchanged'}
 		if not cur or not wt:
 			raise GitumError('nothing to %s' % action)
+		if cur.get('gen'):
+			self._resume_generation(wt, action)
+			return self._run()
 		res = next(r for r in cur['results'] if r['sha'] == op.get('stopped_at'))
 		if action == 'skip':
 			wt.run('cherry-pick', '--skip', check=False)
@@ -226,18 +228,21 @@ class Sync:
 		return snap
 
 	def _check_checkouts(self):
+		"""Layer branches checked out in clean user work trees follow the sync; dirty ones stop it."""
 		cfg = self.repo.journal(self.op['journal']).config
-		busy = {l.branch: self.repo.checked_out(l.branch) for l in cfg.layers.values()}
-		busy = {b: p for b, p in busy.items() if p}
-		if not busy:
-			return
-		if not self.op['options']['update_checked_out']:
-			raise NeedsHuman('layer branches are checked out: %s; check out something else or use '
-					 '--update-checked-out' % ', '.join('%s in %s' % i for i in busy.items()),
-					 checked_out=busy)
-		for branch, path in busy.items():
-			if not self.git.at(path).is_clean():
-				raise NeedsHuman('%s is checked out in %s with local changes' % (branch, path))
+		self.repo.check_checkouts([l.branch for l in cfg.layers.values()])
+
+	def _env(self, layer_name=None, **extra):
+		"""GITUM_* environment for the commands run on behalf of a layer."""
+		op = self.op
+		cfg = self.repo.journal(op['journal']).config
+		up = cfg.root_upstream(cfg.layers[layer_name]) if layer_name else \
+			(next(iter(cfg.upstreams.values())) if len(cfg.upstreams) == 1 else None)
+		target = op['targets'].get(up.name, {}) if up else {}
+		return self.repo.hook_env(
+			worktree=op.get('worktree'), layer=layer_name, run=op['run'], run_dir=op['run_dir'],
+			upstream=up.name if up else None, target=target.get('sha'), target_tag=target.get('tag', ''),
+			version=packaging.tag_version(up.release_tags, target.get('tag', '')) if up else '', **extra)
 
 	# the main loop
 
@@ -307,38 +312,111 @@ class Sync:
 
 	def _generate_layer(self, journal, layer, old, new_base):
 		"""Rebuild a layer by its generator (wine-staging, a command) on the new base."""
-		from . import packaging
-		op, git = self.op, self.git
+		op = self.op
 		cfg = journal.config
-		wt = self._worktree(new_base)
+		self._worktree(new_base)
 		up = cfg.root_upstream(layer)
 		target_tag = op['targets'].get(up.name, {}).get('tag', '')
+		cur = {'layer': layer.name, 'old_base': old.base, 'old_tip': old.tip, 'new_base': new_base,
+		       'todo': [], 'results': []}
 		try:
 			if layer.generator == 'staging':
-				info = packaging.generate_staging(self.repo, wt, layer.options, target_tag, up.release_tags,
-								  op['run_dir'])
+				info, plan = packaging.staging_plan(self.repo, layer.options, target_tag, up.release_tags,
+								    op['run_dir'], layer.name)
+				cur['gen'] = {'plan': plan, 'pos': 0, 'info': info, 'resolved': [], 'skipped': []}
 			else:
-				info = packaging.generate_command(self.repo, wt, layer.options, target_tag, new_base,
+				wt = self.git.at(op['worktree'])
+				info = packaging.generate_command(self.repo, wt, layer.options, self._env(layer.name, base=new_base),
 								  op['run_dir'], layer.name)
-			post = packaging.post_command(self.repo, wt, layer.options, op['run_dir'], layer.name)
-			if post:
-				info['post_log'] = post
+				cur['gen'] = {'plan': [], 'pos': 0, 'info': info, 'resolved': [], 'skipped': []}
 		except NeedsHuman:
 			self._cleanup()
 			raise
-		new_tip = wt.rev('HEAD')
-		generated = git.rev_list('--reverse', '%s..%s' % (new_base, new_tip))
+		op['current'] = cur
+		self.repo.save_op(op)
+		self._continue_generation()
+		return True
+
+	def _continue_generation(self):
+		"""Apply the rest of the generator plan; stop on a patch that does not apply."""
+		op = self.op
+		cur = op['current']
+		gen = cur['gen']
+		wt = self.git.at(op['worktree'])
+		layer = self.repo.journal(op['journal']).config.layers[cur['layer']]
+		while gen['pos'] < len(gen['plan']):
+			item = gen['plan'][gen['pos']]
+			res = packaging.apply_plan_item(wt, item)
+			if res.returncode != 0:
+				files = wt.unmerged_files()
+				op['stopped_at'] = '%s/%s' % (item['series'], item['patch'])
+				op['message'] = 'wine-staging %s does not apply' % op['stopped_at']
+				(Path(op['run_dir']) / ('staging-failed-%s.txt' % cur['layer'])).write_bytes(res.stdout + res.stderr)
+				self.repo.save_op(op)
+				raise NeedsHuman(
+					'%s: wine-staging patch %s does not apply%s.\nResolve it in %s (git am is in progress: '
+					'fix the files, git add them), then run gitum continue; gitum skip drops the patch, '
+					'gitum abort stops the sync.' % (cur['layer'], op['stopped_at'],
+									 ' (%s)' % ', '.join(files) if files else '', op['worktree']),
+					worktree=op['worktree'], series=item['series'], patch=item['patch'], files=files, run=op['run'])
+			gen['pos'] += 1
+			self.repo.save_op(op)
+		post = packaging.post_command(self.repo, wt, layer.options, self._env(layer.name), op['run_dir'], layer.name)
+		if post:
+			gen['info']['post_log'] = post
+		self._generation_results()
+
+	def _resume_generation(self, wt, action):
+		op = self.op
+		gen = op['current']['gen']
+		item = gen['plan'][gen['pos']]
+		if action == 'skip':
+			if not wt.ok('am', '--skip'):
+				wt.run('am', '--abort', check=False)
+			gen['skipped'].append({'series': item['series'], 'patch': item['patch'],
+					       'subject': packaging.patch_subject(item['path'])})
+		else:
+			unmerged = wt.unmerged_files()
+			if unmerged:
+				raise NeedsHuman('unresolved files in %s: %s' % (op['worktree'], ', '.join(unmerged)),
+						 files=unmerged)
+			if (Path(wt.git_dir()) / 'rebase-apply').exists():
+				res = wt.run('am', '--continue', check=False)
+				if res.returncode != 0:
+					raise NeedsHuman('git am --continue failed in %s: %s' % (
+						op['worktree'], res.stderr.decode(errors='replace').strip()))
+			gen['resolved'].append(wt.rev('HEAD'))
+		gen['pos'] += 1
+		op.pop('stopped_at', None)
+		op.pop('message', None)
+		self.repo.save_op(op)
+		self._continue_generation()
+
+	def _generation_results(self):
+		op, git = self.op, self.git
+		cur = op['current']
+		gen = cur['gen']
+		new_tip = git.at(op['worktree']).rev('HEAD')
+		generated = git.rev_list('--reverse', '%s..%s' % (cur['new_base'], new_tip))
 		new_pids = git.patch_ids(generated)
 		new_subjects = {git.commit_info(s)['subject'] for s in generated}
-		results = [{'sha': s, 'new_sha': s, 'subject': git.commit_info(s)['subject'], 'result': 'generated'}
-			   for s in generated]
+		results = []
+		for sha in generated:
+			r = {'sha': sha, 'new_sha': sha, 'subject': git.commit_info(sha)['subject'], 'result': 'generated'}
+			if sha in gen['resolved']:
+				r.update(result=RESOLVED, resolver='manual')
+			results.append(r)
+		for sk in gen['skipped']:
+			results.append({'sha': '', 'subject': sk['subject'], 'result': SKIPPED, 'resolver': 'manual',
+					'series': sk['series']})
+		old = self.repo.journal(op['journal']).layer(cur['layer'])
 		for c in old.changes:
 			if c.patch_id not in new_pids.values() and c.subject not in new_subjects:
 				results.append({'sha': c.sha, 'subject': c.subject, 'result': 'dropped-by-generator'})
-		op['current'] = {'layer': layer.name, 'old_base': old.base, 'old_tip': old.tip, 'new_base': new_base,
-				 'todo': [], 'results': results, 'generator': info}
+		cur['results'] = results
+		cur['generator'] = gen['info']
+		del cur['gen']
 		self.repo.save_op(op)
-		return True
 
 	def _worktree(self, rev):
 		op = self.op
@@ -395,11 +473,10 @@ class Sync:
 				cmd = cfg.resolve_rules if name == 'rules' else cfg.resolve_agent
 				if not cmd:
 					continue
-				env = {'GITUM_COMMIT': res['sha'], 'GITUM_SUBJECT': res['subject'],
-				       'GITUM_LAYER': op['current']['layer'], 'GITUM_FILES': '\n'.join(files),
-				       'GITUM_CONFLICT_DIR': str(cdir), 'GITUM_RUN_DIR': op['run_dir']}
+				env = self._env(op['current']['layer'], commit=res['sha'], subject=res['subject'],
+						files='\n'.join(files), conflict_dir=cdir, resolver=name)
 				log = (cdir / ('%s.log' % name)).open('wb')
-				proc = subprocess.run(['sh', '-c', cmd], cwd=wt.cwd, env={**os.environ, **env},
+				proc = subprocess.run(['sh', '-c', cmd], cwd=wt.cwd, env=env,
 						      stdout=log, stderr=subprocess.STDOUT)
 				log.close()
 				if proc.returncode == 0 and not wt.unmerged_files() and not self._has_markers(wt, files):
@@ -516,7 +593,7 @@ class Sync:
 			log = Path(self.op['run_dir']) / ('check-%s.log' % layer.name)
 			with log.open('wb') as f:
 				proc = subprocess.run(['sh', '-c', cfg.check], cwd=wt.cwd, stdout=f, stderr=subprocess.STDOUT,
-						      env={**os.environ, 'GITUM_LAYER': layer.name, 'GITUM_RUN_DIR': self.op['run_dir']})
+						      env=self._env(layer.name, tip=tip))
 			if proc.returncode != 0:
 				for name, l in self.op['layers'].items():
 					self.git.run('update-ref', 'refs/gitum/failed/%s/%s' % (self.op['run'], name), l['new_tip'])
@@ -614,12 +691,9 @@ def commit_states(repo, op, report, tips=None):
 	message = 'gitum: sync to %s\n\n%s' % (op['target_desc'], summary_text(report))
 	new_journal = writer.write(message, [s.tip for s in states.values()])
 	tr.update(JOURNAL_REF, new_journal, journal.sha)
-	checked_out = {b: repo.checked_out(b) for b, _, _ in moved}
+	found = repo.check_checkouts([b for b, _, _ in moved])
 	tr.commit()
-	for branch, old, new in moved:
-		path = checked_out.get(branch)
-		if path and old:
-			git.at(path).run('read-tree', '-m', '-u', old, new)
+	repo.follow_checkouts(moved, found)
 	return new_journal
 
 
@@ -733,7 +807,7 @@ def sync(repo, step=False, **kwargs):
 		cfg = repo.journal().config
 		if kwargs.get('fetch', True) and cfg.publish_remote:
 			from . import publish
-			publish.pull(repo, update_checked_out=kwargs.get('update_checked_out', False))
+			publish.pull(repo)
 		if not step:
 			return Sync(repo).start(**kwargs)
 		if kwargs.get('fetch', True):

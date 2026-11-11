@@ -3,11 +3,9 @@ spec files, quilt and wine-staging layouts, and HTML run reports."""
 
 import html
 import io
-import os
 import re
 import subprocess
 import tarfile
-import tempfile
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -58,8 +56,12 @@ def staging_series(directory, exclude=()):
 	return order, {n: defs[n] for n in defs if defs[n].get('disabled')}
 
 
-def generate_staging(repo, wt, layer_conf, target_tag, release_pattern, run_dir):
-	"""Apply wine-staging onto the work tree HEAD; return information for the report."""
+def staging_plan(repo, layer_conf, target_tag, release_pattern, run_dir, layer_name):
+	"""Extract wine-staging for the target into the run directory; return (info, plan).
+
+	The plan is the list of patches to apply in patchinstall order. It lives in
+	the run directory, so that a stopped sync can continue applying it.
+	"""
 	staging_repo = Path(layer_conf['staging-repo'])
 	if not staging_repo.is_absolute():
 		staging_repo = (repo.worktree / staging_repo).resolve()
@@ -71,40 +73,48 @@ def generate_staging(repo, wt, layer_conf, target_tag, release_pattern, run_dir)
 		raise NeedsHuman('wine-staging has no %s for %s yet' % (ref or 'release', target_tag or 'this target'),
 				 staging_ref=ref)
 	exclude = layer_conf.get('staging-exclude', [])
-	with tempfile.TemporaryDirectory() as tmp:
-		archive = sgit.run('archive', ref, 'patches', 'staging').stdout
-		with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-			tar.extractall(tmp, filter='data')
-		order, disabled = staging_series(tmp, exclude)
-		upstream_commit = (Path(tmp) / 'staging' / 'upstream-commit').read_text().strip() \
-			if (Path(tmp) / 'staging' / 'upstream-commit').exists() else ''
-		applied = []
-		for name in order:
-			for patch in sorted((Path(tmp) / 'patches' / name).glob('0*.patch')):
-				res = wt.run('am', '--keep-cr', '-C1', '--whitespace=nowarn', str(patch), check=False)
-				if res.returncode != 0:
-					wt.run('am', '--abort', check=False)
-					(Path(run_dir) / 'staging-failed.txt').write_text('%s/%s\n%s' % (
-						name, patch.name, res.stderr.decode(errors='replace')))
-					raise NeedsHuman('wine-staging %s: %s/%s does not apply on %s' % (
-						ref, name, patch.name, target_tag or wt.rev('HEAD')[:12]), series=name, patch=patch.name)
-			applied.append(name)
-	return {'generator': 'staging', 'staging_ref': ref, 'staging_sha': sgit.rev(ref), 'series': len(applied),
-		'disabled': sorted(disabled), 'excluded': sorted(exclude), 'upstream_commit': upstream_commit}
+	target = Path(run_dir) / ('staging-%s' % layer_name)
+	target.mkdir(parents=True, exist_ok=True)
+	archive = sgit.run('archive', ref, 'patches', 'staging').stdout
+	with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+		tar.extractall(target, filter='data')
+	order, disabled = staging_series(target, exclude)
+	upstream_file = target / 'staging' / 'upstream-commit'
+	plan = []
+	for name in order:
+		for patch in sorted((target / 'patches' / name).glob('0*.patch')):
+			plan.append({'series': name, 'patch': patch.name, 'path': str(patch)})
+	info = {'generator': 'staging', 'staging_ref': ref, 'staging_sha': sgit.rev(ref), 'series': len(order),
+		'patches': len(plan), 'disabled': sorted(disabled), 'excluded': sorted(exclude),
+		'upstream_commit': upstream_file.read_text().strip() if upstream_file.exists() else ''}
+	return info, plan
 
 
-def generate_command(repo, wt, layer_conf, target_tag, new_base, run_dir, layer_name):
+def patch_subject(path):
+	for line in Path(path).read_text(errors='replace').splitlines():
+		if line.startswith('Subject: '):
+			subject = line[len('Subject: '):]
+			return subject[subject.index(']') + 1:].strip() if subject.startswith('[') else subject
+	return Path(path).name
+
+
+def apply_plan_item(wt, item):
+	"""Apply one patch of a plan with git am; on failure the am session stays for a person."""
+	return wt.run('am', '--keep-cr', '-3', '-C1', '--whitespace=nowarn', item['path'], check=False)
+
+
+def generate_command(repo, wt, layer_conf, env, run_dir, layer_name):
 	log = Path(run_dir) / ('generate-%s.log' % layer_name)
 	with log.open('wb') as f:
-		proc = subprocess.run(['sh', '-c', layer_conf['command']], cwd=wt.cwd, stdout=f, stderr=subprocess.STDOUT,
-				      env={**os.environ, 'GITUM_LAYER': layer_name, 'GITUM_BASE': new_base,
-					   'GITUM_TARGET_TAG': target_tag or '', 'GITUM_RUN_DIR': str(run_dir)})
+		proc = subprocess.run(['sh', '-c', layer_conf['command']], cwd=wt.cwd, stdout=f,
+				      stderr=subprocess.STDOUT, env=env)
 	if proc.returncode != 0:
-		raise NeedsHuman('generator of layer %s failed (see %s)' % (layer_name, log), log=str(log))
+		raise NeedsHuman('generator of layer %s failed (see %s); fix it and run gitum sync again'
+				 % (layer_name, log), log=str(log))
 	return {'generator': 'command', 'log': str(log)}
 
 
-def post_command(repo, wt, layer_conf, run_dir, layer_name):
+def post_command(repo, wt, layer_conf, env, run_dir, layer_name):
 	"""Run the post-command of a generated layer (autoreconf, removing files, ...).
 
 	The command may commit itself; whatever it leaves uncommitted is committed
@@ -115,8 +125,7 @@ def post_command(repo, wt, layer_conf, run_dir, layer_name):
 		return None
 	log = Path(run_dir) / ('post-%s.log' % layer_name)
 	with log.open('wb') as f:
-		proc = subprocess.run(['sh', '-c', cmd], cwd=wt.cwd, stdout=f, stderr=subprocess.STDOUT,
-				      env={**os.environ, 'GITUM_LAYER': layer_name, 'GITUM_RUN_DIR': str(run_dir)})
+		proc = subprocess.run(['sh', '-c', cmd], cwd=wt.cwd, stdout=f, stderr=subprocess.STDOUT, env=env)
 	if proc.returncode != 0:
 		raise NeedsHuman('post-command of layer %s failed (see %s)' % (layer_name, log), log=str(log))
 	if wt.out('status', '--porcelain', '--untracked-files=no'):
@@ -250,11 +259,11 @@ def import_patches(repo, into, source, fmt):
 		new_tip = wt.rev('HEAD')
 	finally:
 		repo.remove_worktree(wt.cwd)
-	if repo.checked_out(branch):
-		raise NeedsHuman('%s is checked out in %s' % (branch, repo.checked_out(branch)))
+	found = repo.check_checkouts([branch])
 	tr = RefTransaction(git)
 	tr.update('refs/heads/' + branch, new_tip, tip)
 	tr.commit()
+	repo.follow_checkouts([(branch, tip, new_tip)], found)
 	from . import state
 	state.save(repo, [into], 'import %d patches from %s' % (len(imported), source.name))
 	return {'layer': into, 'imported': imported, 'tip': new_tip}

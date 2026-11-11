@@ -115,6 +115,7 @@ subject-lint = '^[a-z0-9_./-]+: [A-Z].*\.$'
 [hooks]                          # get JSON events on stdin
 change = "tools/notify-bugs.py"
 run = "tools/notify-chat.sh"
+publish = "tools/set-version-branches.sh"
 ```
 
 Upstream options:
@@ -157,6 +158,53 @@ Nothing asks questions interactively.
 | `export`, `import` | Patch sets for RPM spec files (Patch lines between `# BEGIN gitum patches` / `# END gitum patches`), quilt, wine-staging. |
 | `log [CHANGE\|series:X\|layer:X]`, `diff STATE1 [STATE2]`, `report [RUN] [--html FILE]` | History and reports. |
 | `mirror NAME` | A shared mirror of an upstream in `~/.cache/gitum` instead of throwaway clones. |
+
+## Commands that gitum runs
+
+gitum runs your commands for conflict resolution, checks, generated layers
+and hooks. None of them is interactive. They all get the same `GITUM_*`
+environment:
+
+| Variable | Value |
+|---|---|
+| `GITUM_REPO` | the main work tree of the repository |
+| `GITUM_COMMON_DIR` | the git common directory |
+| `GITUM_WORKTREE` | the private work tree of the operation (sync only) |
+| `GITUM_RUN`, `GITUM_RUN_DIR` | the run id and its log directory |
+| `GITUM_LAYER` | the layer being processed |
+| `GITUM_UPSTREAM`, `GITUM_TARGET`, `GITUM_TARGET_TAG`, `GITUM_VERSION` | the upstream, the target commit, its release tag and the version from the tag (`wine-11.20` → `11.20`) |
+| `GITUM_LOCK_FILE` | the repository lock file |
+| `GITUM_LOCK_HELD` | set to the lock file while gitum holds the lock |
+
+| Command | Working directory | Additional variables | Result |
+|---|---|---|---|
+| `resolve.rules`, `resolve.agent` | the private work tree with the conflict | `GITUM_COMMIT`, `GITUM_SUBJECT`, `GITUM_FILES` (one per line), `GITUM_CONFLICT_DIR`, `GITUM_RESOLVER` | exit 0 with all conflicts resolved and `git add`ed |
+| `publish.check` | the private work tree at the top of each leaf layer | `GITUM_TIP` | exit 0, or the branches stay unchanged |
+| `generator = "command"` | the private work tree at the new base | `GITUM_BASE` | new commits on HEAD |
+| `post-command` of a generated layer | the private work tree | | commits; leftovers are committed by gitum |
+| `hooks.change`, `hooks.run`, `hooks.publish` | the main work tree | `GITUM_EVENT` | JSON event on stdin; failures never fail the run |
+
+Hooks:
+- `hooks.change` gets one event per change that was not simply applied.
+- `hooks.run` gets the whole sync report (`event` is `sync` or `candidate`).
+- `hooks.publish` runs after a successful `gitum publish`. Its event looks like this:
+
+```json
+{"event": "publish", "remote": "origin", "journal": "<sha>",
+ "upstreams": {"winehq": {"ref": "winehq/master", "sha": "<sha>", "tag": "wine-11.20", "version": "11.20"}},
+ "layers": {"etersoft": {"branch": "rebased-etersoft", "old": "<sha before the push>", "new": "<sha>",
+                         "base": "<sha>", "start_tag": "rebased-etersoft-START"}},
+ "integrated": {"etersoft": ["subjects of commits put on top"]}}
+```
+
+**The lock** is a stable interface for your own scripts.
+- It is an exclusive `flock` on `$GIT_COMMON_DIR/gitum/lock`.
+- While it is held, the file contains the owner as JSON: `{"pid", "host", "user", "session", "since"}`. The session comes from `GITUM_SESSION`.
+- Commands run by gitum get `GITUM_LOCK_HELD`, and a `gitum` started from them does not lock again.
+
+**Checked-out branches.** A layer branch checked out in a clean work tree
+moves together with its work tree. If that work tree has local changes,
+gitum stops with exit code 2 and changes nothing.
 
 ## Development
 

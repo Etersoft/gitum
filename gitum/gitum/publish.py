@@ -6,7 +6,8 @@ somebody else pushed onto a layer branch since our last publish are put on
 top of our result instead of being overwritten.
 """
 
-from . import state
+from . import hooks, state
+from .packaging import tag_version
 from .errors import GitumError, NeedsHuman
 from .git import RefTransaction
 from .journal import HISTORY_PREFIX, JOURNAL_BRANCH, JOURNAL_REF, history_ref
@@ -66,9 +67,11 @@ def publish(repo, remote=None):
 				leases[branch] = theirs or ''
 			elif published and git.is_ancestor(published, theirs):
 				new_tip, commits = _integrate(repo, branch, published, theirs, local)
+				found = repo.check_checkouts([branch])
 				tr = RefTransaction(git)
 				tr.update('refs/heads/' + branch, new_tip, local)
 				tr.commit()
+				repo.follow_checkouts([(branch, local, new_tip)], found)
 				integrated[layer.name] = [git.commit_info(c)['subject'] for c in commits]
 				leases[branch] = theirs
 			elif git.is_ancestor(local, theirs):
@@ -95,10 +98,38 @@ def publish(repo, remote=None):
 			tr.update(published_ref(remote, layer.branch), git.rev('refs/heads/' + layer.branch), '')
 		tr.commit()
 		fetch(repo, remote)
-		return {'remote': remote, 'integrated': integrated, 'journal': git.rev(JOURNAL_REF)}
+		event = publish_event(repo, remote, leases, integrated)
+		hooks.run_event(repo, 'publish', event, event_values(event))
+		return {'remote': remote, 'integrated': integrated, 'journal': event['journal'], 'event': event}
 
 
-def pull(repo, remote=None, update_checked_out=False):
+def publish_event(repo, remote, leases, integrated):
+	"""The publish event: upstream versions and old/new tips of every layer on the remote."""
+	git = repo.git
+	journal = repo.journal()
+	cfg = journal.config
+	upstreams = {}
+	for up in cfg.upstreams.values():
+		data = journal.upstream(up.name)
+		upstreams[up.name] = {'ref': up.ref, 'sha': data.get('sha'), 'tag': data.get('tag', ''),
+				      'version': tag_version(up.release_tags, data.get('tag', ''))}
+	layers = {}
+	for layer in cfg.ordered_layers():
+		st = journal.layer(layer.name)
+		layers[layer.name] = {'branch': layer.branch, 'old': leases.get(layer.branch) or None,
+				      'new': git.rev('refs/heads/' + layer.branch), 'base': st.base if st else None,
+				      'start_tag': layer.compat_start_tag or None}
+	return {'event': 'publish', 'remote': remote, 'journal': journal.sha, 'upstreams': upstreams,
+		'layers': layers, 'integrated': integrated}
+
+
+def event_values(event):
+	for name, up in event['upstreams'].items():
+		return {'upstream': name, 'target': up['sha'], 'target_tag': up['tag'], 'version': up['version']}
+	return {}
+
+
+def pull(repo, remote=None):
 	"""Take the published state: journal, history and layer branches."""
 	git = repo.git
 	with repo.lock():
@@ -123,25 +154,18 @@ def pull(repo, remote=None, update_checked_out=False):
 			if local and old and local != old.tip and local != st.tip:
 				raise NeedsHuman('%s has commits that are not saved in the journal: gitum save, then pull'
 						 % layer.branch)
-			where = repo.checked_out(layer.branch)
-			if where and local != st.tip:
-				if not update_checked_out:
-					raise NeedsHuman('%s is checked out in %s: use --update-checked-out' % (layer.branch, where))
-				if not git.at(where).is_clean():
-					raise NeedsHuman('%s is checked out in %s with local changes' % (layer.branch, where))
 			if local != st.tip:
 				tr.update(ref, st.tip, local or None)
-				moved.append((layer.branch, local, st.tip, where))
+				moved.append((layer.branch, local, st.tip))
 			hist = git.rev(remote_ref(remote, HISTORY_PREFIX + layer.name))
 			local_hist = git.rev(history_ref(layer.name))
 			if hist and (not local_hist or git.is_ancestor(local_hist, hist)):
 				tr.update(history_ref(layer.name), hist, '')
 			tr.update(published_ref(remote, layer.branch), git.rev(remote_ref(remote, layer.branch)) or st.tip, '')
 		tr.update(JOURNAL_REF, target, local_journal or None)
+		found = repo.check_checkouts([m[0] for m in moved])
 		tr.commit()
-		for branch, old, new_tip, where in moved:
-			if where and old:
-				git.at(where).run('read-tree', '-m', '-u', old, new_tip)
+		repo.follow_checkouts(moved, found)
 		return {'changed': True, 'remote': remote, 'journal': target, 'merged': target != theirs,
 			'moved': [m[0] for m in moved]}
 

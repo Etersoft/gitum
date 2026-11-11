@@ -1,17 +1,29 @@
 """Hooks: external commands that get JSON events on stdin (bug trackers, chats)."""
 
 import json
-import os
 import subprocess
 
 from .sync_events import change_events
 
 
-def _run(repo, cmd, event, log):
+def report_env(repo, report):
+	"""GITUM_* values of a sync report: run, target tag and version of the (first) upstream."""
+	from .packaging import tag_version
+	cfg = repo.journal().config
+	values = {'run': report.get('run')}
+	for name, t in (report.get('targets') or {}).items():
+		up = cfg.upstreams.get(name)
+		values.update(upstream=name, target=t.get('sha'), target_tag=t.get('tag', ''),
+			      version=tag_version(up.release_tags if up else '', t.get('tag', '')))
+		break
+	return values
+
+
+def _run(repo, cmd, event, log, values=None):
 	try:
 		proc = subprocess.run(['sh', '-c', cmd], cwd=repo.worktree, input=json.dumps(event, ensure_ascii=False).encode(),
 				      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-				      env={**os.environ, 'GITUM_EVENT': event['event']})
+				      env=repo.hook_env(event=event['event'], **(values or {})))
 		log.append({'hook': cmd, 'event': event['event'], 'exit': proc.returncode,
 			    'output': proc.stdout.decode('utf-8', errors='replace')[-2000:]})
 	except OSError as e:
@@ -24,10 +36,20 @@ def run_hooks(repo, report, candidate=False):
 	Hook failures never fail the run; they are returned for the log.
 	"""
 	cfg = repo.journal().config
+	values = report_env(repo, report)
 	log = []
 	if cfg.hooks.get('change'):
 		for event in change_events(report, candidate):
-			_run(repo, cfg.hooks['change'], event, log)
+			_run(repo, cfg.hooks['change'], event, log, {**values, 'layer': event['layer']})
 	if cfg.hooks.get('run'):
-		_run(repo, cfg.hooks['run'], {'event': 'candidate' if candidate else 'sync', 'report': report}, log)
+		_run(repo, cfg.hooks['run'], {'event': 'candidate' if candidate else 'sync', 'report': report}, log, values)
+	return log
+
+
+def run_event(repo, name, event, values=None):
+	"""Run hooks.<name> with the event on stdin (publish and others)."""
+	cmd = repo.journal().config.hooks.get(name)
+	log = []
+	if cmd:
+		_run(repo, cmd, event, log, values)
 	return log

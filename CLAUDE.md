@@ -30,7 +30,8 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
 - **No GitPython.** `git.py` has `Git` (subprocess runner with a non-interactive env: `GIT_EDITOR=true`, no prompts) and `RefTransaction` (`update-ref --stdin` with old-value checks).
   - Branches change **only** through such a transaction at the end of an operation.
   - Work happens in private work trees under `<common dir>/gitum/wt/`; never reset or clean a user's work tree.
-  - A branch checked out in a user work tree moves only with `--update-checked-out`, via `read-tree -m -u old new`.
+  - A branch checked out in a clean user work tree moves together with it (`repo.check_checkouts` before the transaction, `repo.follow_checkouts` after it, via `read-tree -m -u old new`). A dirty work tree means `NeedsHuman`.
+  - Every external command gets its environment from `repo.hook_env()` (sync adds layer, run and target via `Sync._env`). The variables, the lock file format and the publish event are a documented interface in README "Commands that gitum runs": keep them stable.
 - **Configuration.** `config.py` parses `gitum.toml` (stdlib `tomllib`): upstreams, and layers whose base is `upstream:<name>` or `layer:<name>`.
 - **Journal.** `journal.py` manages the `gitum/journal` branch, one commit per state, built with a temporary index (`JournalWriter`).
   - Each state commit's first parent is the previous state. The layer tips are extra parents, so rebased-away commits stay reachable.
