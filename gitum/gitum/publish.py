@@ -58,11 +58,16 @@ def publish(repo, remote=None):
 		fetch(repo, remote)
 		cfg = repo.journal().config
 		leases, integrated = {}, {}
+		their_journal_sha = git.rev(remote_ref(remote, JOURNAL_BRANCH))
+		their_journal = repo.journal(their_journal_sha) if their_journal_sha else None
 		for layer in cfg.ordered_layers():
 			branch = layer.branch
 			local = git.rev('refs/heads/' + branch)
 			theirs = git.rev(remote_ref(remote, branch))
 			published = git.rev(published_ref(remote, branch))
+			if not published and their_journal and their_journal.layer(layer.name):
+				# no local marker (a fresh clone): the tip recorded in the remote journal was published
+				published = their_journal.layer(layer.name).tip
 			if not theirs or theirs == local or git.is_ancestor(theirs, local) or theirs == published:
 				leases[branch] = theirs or ''
 			elif published and git.is_ancestor(published, theirs):
@@ -71,9 +76,11 @@ def publish(repo, remote=None):
 				integrated[layer.name] = [git.commit_info(c)['subject'] for c in commits]
 				leases[branch] = theirs
 			elif git.is_ancestor(local, theirs):
-				raise NeedsHuman('%s/%s is ahead of the local %s: gitum pull first' % (remote, branch, branch))
+				raise NeedsHuman('%s/%s is ahead of the local %s: gitum pull %s first' % (remote, branch, branch, remote))
 			else:
-				raise NeedsHuman('%s/%s and the local %s have diverged' % (remote, branch, branch))
+				raise NeedsHuman('%s/%s and the local %s have diverged and %s/%s is not a state gitum published: '
+						 'gitum pull %s first, or look at what was pushed there with plain git'
+						 % (remote, branch, branch, remote, branch, remote))
 		journal = git.rev(JOURNAL_REF)
 		their_journal = git.rev(remote_ref(remote, JOURNAL_BRANCH))
 		if their_journal and not git.is_ancestor(their_journal, journal):
@@ -91,6 +98,10 @@ def publish(repo, remote=None):
 		for layer in cfg.ordered_layers():
 			tr.update(published_ref(remote, layer.branch), git.rev('refs/heads/' + layer.branch), '')
 		tr.commit()
+		pending = repo.read_json('candidate-on-remote.json')
+		if pending and pending['remote'] == remote:
+			git.run('push', '--quiet', remote, *[':' + r for r in pending['refs']], check=False)
+			(repo.gitum_dir / 'candidate-on-remote.json').unlink(missing_ok=True)
 		fetch(repo, remote)
 		event = publish_event(repo, remote, leases, integrated)
 		hooks.run_event(repo, 'publish', event, event_values(event))

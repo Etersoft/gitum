@@ -404,6 +404,7 @@ class Sync:
 		post = packaging.post_command(self.repo, wt, layer.options, self._env(layer.name), op['run_dir'], layer.name)
 		if post:
 			gen['info']['post_log'] = post
+			wt.run('clean', '-q', '-fdx')		# backup and cache files of autoreconf and the like
 		self._generation_results()
 
 	def _resume_generation(self, wt, action):
@@ -466,6 +467,7 @@ class Sync:
 			op['worktree'] = str(wt.cwd)
 		else:
 			wt = self.git.at(op['worktree'])
+			wt.run('clean', '-q', '-fdx')		# leftovers of the previous layer (generated files)
 			wt.run('checkout', '-q', '--detach', rev)
 		return wt
 
@@ -799,8 +801,9 @@ def accept(repo, publish_=False):
 		with repo.committing(tr, moves, kind='accept', run=op['run'], delete_refs=list(cand['refs'].values()),
 				     hooks_report='runs/%s/report.json' % op['run']):
 			if cand['pushed'] and cfg.publish_remote:
-				git.run('push', '--quiet', cfg.publish_remote, *[':' + r for r in cand['refs'].values()],
-					check=False)
+				# the remote keeps the candidate until the accepted state is published there
+				repo.write_json('candidate-on-remote.json', {'remote': cfg.publish_remote,
+									     'refs': list(cand['refs'].values())})
 			path.unlink()
 			hooks.run_hooks(repo, cand['report'])
 	result = {'changed': True, 'report': cand['report'], 'accepted': cand['run']}

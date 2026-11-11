@@ -240,7 +240,8 @@ def status(repo):
 		result['layers'][layer.name] = entry
 	op = repo.load_op()
 	if op:
-		result['operation'] = {k: op.get(k) for k in ('kind', 'run', 'layer', 'stopped_at', 'worktree', 'message')}
+		result['operation'] = {k: op.get(k) for k in ('kind', 'run', 'stopped_at', 'worktree', 'message')}
+		result['operation']['layer'] = (op.get('current') or {}).get('layer')
 		if not op.get('stopped_at'):
 			result['operation']['message'] = 'running' if result['lock'] else \
 				'interrupted; gitum continue resumes it, gitum abort drops it'

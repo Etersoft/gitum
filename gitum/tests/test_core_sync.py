@@ -138,6 +138,7 @@ def test_conflict_continue(stack, capsys):
 	assert tips(work) == before
 	code, st = gitum_json(work, capsys, 'status')
 	assert st['operation']['kind'] == 'sync' and 'conflict' in st['operation']['message']
+	assert st['operation']['layer'] == 'etersoft'
 	# continue without resolving
 	code, d2 = gitum_json(work, capsys, 'continue')
 	assert code == EXIT_NEEDS_HUMAN and d2['files'] == ['base']
@@ -504,3 +505,28 @@ def test_publish_event(published, tmp_path, capsys):
 	assert eter['branch'] == 'rebased-etersoft' and eter['old'] == old['rebased-etersoft']
 	assert eter['new'] == work.rev('rebased-etersoft') and eter['start_tag'] == 'rebased-etersoft-START'
 	assert (tmp_path / 'publish.json.env').read_text().strip() == 'GITUM_VERSION=1.1'
+
+
+def test_publish_without_local_markers(published, tmp_path, capsys):
+	"""A fresh clone without refs/gitum/published: the tips in the remote journal count as published."""
+	up, work, bare = published
+	other = clone_gitum(bare, tmp_path / 'other', up)
+	for ref in other.git.lines('for-each-ref', '--format=%(refname)', 'refs/gitum/published/'):
+		other.run('update-ref', '-d', ref)
+	release(up, '1.1')
+	other.run('fetch', '-q', 'winehq')
+	code, data = gitum_json(other, capsys, 'sync', '--next-release', '--publish')
+	assert code == 0, data
+	assert bare.rev('rebased-etersoft') == other.rev('rebased-etersoft')
+
+
+def test_accept_keeps_remote_candidate_until_publish(published, tmp_path, capsys):
+	up, work, bare = published
+	release(up, '1.1')
+	assert gitum(work, 'sync', '--next-release', '--candidate', 'always') == EXIT_NEEDS_HUMAN
+	assert bare.rev('candidate/rebased-etersoft')
+	assert gitum(work, 'accept') == 0
+	assert bare.rev('candidate/rebased-etersoft')		# nothing published yet: the candidate stays
+	assert gitum(work, 'publish') == 0
+	assert not bare.rev('candidate/rebased-etersoft')
+	assert bare.rev('rebased-etersoft') == work.rev('rebased-etersoft')

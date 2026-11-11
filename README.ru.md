@@ -224,7 +224,7 @@ annihilate-reverts = true
 chain = ["rerere", "rules", "agent"]
 rules = "tools/conflict-resolve.py"
 agent = "tools/conflict-agent.sh"
-review-unless = ["rerere"]       # всё прочее — через candidate/*
+review-unless = ["rerere"]       # прочие — через candidate/*; человеку (manual) доверие всегда
 
 [publish]
 remote = "origin"
