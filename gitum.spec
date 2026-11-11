@@ -60,25 +60,26 @@ upstream submission queue, wine-staging style series and RPM patch sets.
 %python3_sitelibdir/%name-%version.dist-info/
 
 %changelog
-* Wed Nov 11 2026 Vitaly Lipatov <lav@altlinux.ru> 2.0.0-alt1
-- gitum 2: layers over upstreams, one-pass sync with conflict resolver
-  chain, review candidates, journal of states and linear history branches
-- change identities and fates, series, check-upstream, forges
-- series variants, upstream queue, prepare, backport, branch bookkeeping
-- generated layers (wine-staging, command), spec/quilt/staging patch sets,
-  HTML reports
+* Thu Nov 12 2026 Vitaly Lipatov <lav@altlinux.ru> 2.0.0-alt1
+- gitum 2, rewritten in Python 3 without GitPython:
+  + layers over upstreams; gitum sync moves the whole stack onto a new
+    release in one pass in a private work tree, branches move in one
+    atomic transaction
+  + every change classified (picked, resolved by rerere, rules, agent or
+    a person, dropped as upstream or backport, revert pairs, emptied)
+  + journal of states (gitum/journal) and linear history branches
+    (gitum/history/*) shared without force pushes
+  + review candidates, publish/pull with commits of others put on top,
+    hooks with JSON events and a stable environment
+  + change identities and fates, check-upstream with verified content,
+    forges (GitHub, GitLab, Forgejo)
+  + series with dependencies, variants, upstream queues, prepare for
+    upstream, backports, claims for parallel sessions
+  + generated layers (wine-staging, command), spec/quilt/staging patch
+    sets, HTML reports
+  + recovery from a crash at any point (gitum continue)
 - gitum 1 commands and repositories are no longer supported
-
-* Wed Nov 11 2026 Vitaly Lipatov <lav@altlinux.ru> 0.9.0-alt1
-- port to Python 3 and GitPython 3, build with pyproject
-- move the CLI to gitupstream.cli (gitum entry point, python3 -m gitupstream)
-- exit with status 1 on errors
-- restore --keep-cr for git am (fix lost in a merge)
-- fix gitum status reporting local changes when there are new commits
-- fix --author passed with literal quotes
-- use the repository git dir for state files instead of a hardcoded .git/
-- find the repository from subdirectories again
-- rewrite tests with pytest, add more tests
+- end-to-end and crash tests run in %check
 
 * Fri Jul 13 2018 Vitaly Lipatov <lav@altlinux.ru> 0.8.6-alt2
 - cleanup spec, fix build
