@@ -324,6 +324,7 @@ def test_series_import_json(stack, tmp_path, capsys):
 	on_top = journal(work).read_json('series/on-top/meta.json')
 	assert on_top['updated'] == '2026-10-01T10:00:00+03:00' and on_top['history'][0]['date'].startswith('2026-09-01')
 	(tmp_path / 's.json').write_text(json.dumps([{'name': 'fix', 'state': 'merged'}]))
+	# moving forward is fine without a date
 	code, data = gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 's.json'))
 	assert data['updated'] == ['fix'] and journal(work).read_json('series/fix/meta.json')['state'] == 'merged'
 	(tmp_path / 'bad.json').write_text(json.dumps([{'name': 'x', 'base': 'upstream:winehq', 'colour': 1}]))

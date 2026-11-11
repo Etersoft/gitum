@@ -242,8 +242,12 @@ def cmd_series(repo, args, out):
 		out.result(data or {}, 'Series %s released.' % args.name if data else 'Series %s was not claimed.' % args.name)
 	elif a == 'import-json':
 		text = sys.stdin.read() if args.file in (None, '-') else Path(args.file).read_text()
-		data = series.import_json(repo, json.loads(text))
-		out.result(data, 'Created: %s; updated: %s' % (', '.join(data['created']) or '-', ', '.join(data['updated']) or '-'))
+		data = series.import_json(repo, json.loads(text), args.force)
+		lines = ['Created: %s; updated: %s' % (', '.join(data['created']) or '-', ', '.join(data['updated']) or '-')]
+		for sk in data['skipped']:
+			lines.append('kept %s state %s instead of %s: %s (--force to override)' % (
+				sk['series'], sk['kept'], sk['state'], sk['reason']))
+		out.result(data, '\n'.join(lines))
 	elif a == 'checkout':
 		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends)
 		out.result(data, '%s: %d patches on %s' % (data['branch'], len(data['applied']), short(data['base'])))
@@ -385,6 +389,7 @@ def register(sub):
 	p.add_argument('--force', action='store_true')
 	p = ss.add_parser('import-json', help='create or update series from a JSON list')
 	p.add_argument('file', nargs='?')
+	p.add_argument('--force', action='store_true', help='also roll back states changed after the record')
 	p = ss.add_parser('checkout', help='build a branch from the patches of a series')
 	p.add_argument('name')
 	p.add_argument('--onto', help='base commit (default: the series base)')

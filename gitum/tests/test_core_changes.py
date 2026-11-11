@@ -570,3 +570,53 @@ def test_init_with_series_only(tmp_path, capsys):
 	assert main(['--repo', str(w.path), '--json', 'status', '--series']) == 0
 	rows = json.loads(capsys.readouterr().out)['series_tree']
 	assert rows[0]['name'] == 'x' and rows[0]['base_behind'] == 0
+
+
+def test_explicit_save_recounts_and_shared_definition(stack, tmp_path, capsys):
+	up, work = stack
+	work.run('checkout', '-q', '-b', 'series/italic', 'v1.0')
+	work.commit('win32u: Fake italic.', {'i1': '1\n'})
+	work.run('checkout', '-q', '-b', 'series/gasp')
+	work.commit('win32u: Use gasp.', {'gasp': 'g\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'add', 'italic', '--base', 'upstream:winehq') == 0
+	assert gitum(work, 'series', 'add', 'gasp', '--base', 'upstream:winehq', '--depends', 'italic') == 0
+	# a journal written by older rules: gasp claims the commit of italic too
+	from gitum.git import RefTransaction
+	from gitum.journal import JOURNAL_REF, JournalWriter
+	g = GitumRepo(work.path)
+	j = g.journal()
+	meta = j.read_json('series/gasp/meta.json')
+	meta['changes'] = j.read_json('series/italic/meta.json')['changes'] + meta['changes']
+	w = JournalWriter(g.git, j.sha)
+	w.put_json('series/gasp/meta.json', meta)
+	tr = RefTransaction(g.git)
+	tr.update(JOURNAL_REF, w.write('old rules'), j.sha)
+	tr.commit()
+	assert gitum(work, 'series', 'save') == 0		# nothing moved: not recounted
+	assert len(journal(work).read_json('series/gasp/meta.json')['changes']) == 2
+	assert gitum(work, 'series', 'save', 'gasp') == 0	# named: recounted
+	assert len(journal(work).read_json('series/gasp/meta.json')['changes']) == 1
+	# one definition for a shared directory: fixes of both, depends only outside
+	work.run('checkout', '-q', '-b', 'series/other', 'v1.0')
+	work.commit('other: X.', {'o': 'o\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'add', 'other', '--base', 'upstream:winehq') == 0
+	gitum(work, 'series', 'set', 'italic', 'fixes=[1] Italic', 'depends=other')
+	gitum(work, 'series', 'set', 'gasp', 'fixes=[2] Gasp', 'export_dir=italic')
+	out = tmp_path / 'p'
+	assert gitum(work, 'series', 'export', '--dir', str(out)) == 0
+	assert (out / 'italic' / 'definition').read_text() == 'Fixes: [1] Italic\nFixes: [2] Gasp\nDepends: other\n'
+	assert gitum(work, 'series', 'export', '--dir', str(out), '--check') == 0
+
+
+def test_import_json_does_not_roll_back(with_series, tmp_path, capsys):
+	up, work = with_series
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=merged') == 0
+	(tmp_path / 'q.json').write_text(json.dumps([{'name': 'ntdll-base', 'state': 'sent', 'note': 'from the table'}]))
+	code, data = gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 'q.json'))
+	assert code == 0 and data['skipped'][0]['kept'] == 'merged'
+	meta = journal(work).read_json('series/ntdll-base/meta.json')
+	assert meta['state'] == 'merged' and meta['note'] == 'from the table'
+	code, data = gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 'q.json'), '--force')
+	assert journal(work).read_json('series/ntdll-base/meta.json')['state'] == 'sent'

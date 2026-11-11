@@ -24,6 +24,13 @@ from .journal import JOURNAL_REF, JournalWriter, LayerState, describe_changes
 # reviewer) -> merged | rejected | superseded (upstream solved it another way); disabled: not applied
 STATES = ('draft', 'review', 'queued', 'sent', 'approved', 'merged', 'rejected', 'superseded', 'disabled')
 DONE_STATES = ('merged', 'rejected', 'superseded')
+
+
+def state_rank(state):
+	"""Progress of a state: finished states rank highest, disabled lowest."""
+	if state in DONE_STATES:
+		return len(STATES)
+	return STATES.index(state) if state in STATES and state != 'disabled' else -1
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+-]*$')
 SET_KEYS = {'state', 'pr', 'internal_mr', 'bugs', 'depends', 'disabled', 'title', 'version', 'base', 'branch',
 	    'note', 'upstream_commit', 'fixes', 'upstream', 'export_dir', 'target', 'reviewer', 'position'}
@@ -318,8 +325,8 @@ def save(repo, names=None):
 				if names:
 					raise GitumError('series %s: branch %s does not exist' % (name, meta['branch']))
 				continue
-			if tip == meta.get('tip'):
-				continue
+			if tip == meta.get('tip') and not names:
+				continue		# named series are always recounted (rules or dependencies may have changed)
 			_record(repo, journal, writer, tracker, name, meta, tip, 'series save', all_series)
 			touch(meta, event='saved', tip=tip)
 			writer.put_json(meta_path(name), meta)
@@ -404,6 +411,7 @@ def export(repo, names, directory, check=False):
 			raise GitumError('no series %s' % name)
 		files = {f: journal.read('series/%s/%s' % (name, f)) for f in journal.list('series/' + name)
 			 if f != 'meta.json'}
+		files['definition'] = shared_definition(all_series, all_series[name]).encode()
 		target = directory / export_dir(all_series[name])
 		# files of this series: its current files and every patch name it ever had
 		ours = set(files) | set(all_series[name].get('patch_files', []))
@@ -418,6 +426,28 @@ def export(repo, names, directory, check=False):
 				for f, data in files.items():
 					(target / f).write_bytes(data)
 	return {'series': names, 'stale': stale, 'written': [] if check else stale}
+
+
+def shared_definition(all_series, meta):
+	"""The definition for the export directory of a series, combined for series sharing it.
+
+	Fixes of all of them in dependency order, Depends only on series outside the
+	directory, Disabled only when all of them are disabled.
+	"""
+	here = export_dir(meta)
+	members = sorted(n for n, m in all_series.items() if export_dir(m) == here)
+	group = [n for n in order(all_series, members) if n in members]
+	if len(group) == 1:
+		return definition_text(meta)
+	fixes, depends, reasons = [], [], []
+	for n in group:
+		m = all_series[n]
+		fixes += [f for f in m.get('fixes', []) if f not in fixes]
+		depends += [d for d in m.get('depends', []) if d not in group and d not in depends]
+		if m.get('disabled'):
+			reasons.append('%s: %s' % (n, m['disabled'] if m['disabled'] is not True else 'disabled'))
+	disabled = '\n'.join(reasons) if len(reasons) == len(group) else ''
+	return definition_text({'fixes': fixes, 'depends': depends, 'disabled': disabled})
 
 
 def series_dirs(directory):
@@ -529,14 +559,14 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 IMPORT_KEYS = SET_KEYS | {'name', 'branch', 'base', 'depends', 'state', 'updated', 'history'}
 
 
-def import_json(repo, items):
+def import_json(repo, items, force=False):
 	"""Create or update series from records (for an initial import of existing work).
 
 	A record needs name and, for a new series, base. With an existing branch
 	the series gets its changes from it; without one only the metadata is
 	recorded.
 	"""
-	created, updated = [], []
+	created, updated, skipped = [], [], []
 	journal = repo.journal()
 	known = load_all(journal)
 	names = {i['name'] for i in items}
@@ -581,6 +611,13 @@ def import_json(repo, items):
 			values = dict(rest)
 			if name in updated:
 				values.update({k: item[k] for k in ('state', 'depends', 'base', 'branch') if k in item})
+				current = known[name]
+				newer = current.get('updated', '') > (item.get('updated') or '')
+				if 'state' in values and newer and not force and \
+						state_rank(values['state']) < state_rank(current.get('state')):
+					skipped.append({'series': name, 'state': values.pop('state'), 'kept': current.get('state'),
+							'reason': 'the series changed after this record (%s)' % current.get('updated')})
+				values = {k: v for k, v in values.items() if current.get(k) != v}
 			if values:
 				set_(repo, name, values)
 			if item.get('updated') or item.get('history'):
@@ -589,7 +626,7 @@ def import_json(repo, items):
 			progress = True
 		if not progress:
 			raise GitumError('series dependency cycle among %s' % ', '.join(i['name'] for i in pending))
-	return {'created': created, 'updated': updated}
+	return {'created': created, 'updated': updated, 'skipped': skipped}
 
 
 def _put_dates(repo, name, updated, history):
