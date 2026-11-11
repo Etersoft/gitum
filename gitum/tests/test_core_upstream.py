@@ -141,11 +141,13 @@ def test_queue_targets_and_labels(ser, tmp_path, capsys):
 	# each target has its own one-at-a-time rule; ntdll-use still waits for its dependency
 	assert data['queues']['staging']['rows'][0]['note'] == 'waits for CI'
 	assert data['queues']['upstream']['reason'] == 'all queued series wait for their dependencies'
-	load_config(work, tmp_path, '[queue.markdown]\ntitle = "Очередь в апстрим"\nqueued = "Очередь"\n'
-		    'columns = ["#", "Серия", "Состояние", "Дата", "Патчи", "Внутр. MR", "MR", "Баги", "Зависит", "Заметка"]\n')
+	load_config(work, tmp_path, '[queue.markdown]\ntitle = "Очередь в апстрим"\n'
+		    'fields = ["position", "name", "state", "reviewer"]\n'
+		    '[queue.markdown.titles]\nqueued = "Очередь"\nname = "Серия"\nreviewer = "Ревьюер"\n')
 	code, data = gitum_json(work, capsys, 'queue', '--target', 'upstream', '--format', 'md')
 	text = queue_markdown(data, journal(work).config.queue['markdown'])
-	assert text.startswith('# Очередь в апстрим') and '### Очередь' in text and '| # | Серия |' in text
+	assert text.startswith('# Очередь в апстрим') and '### Очередь' in text
+	assert '| # | Серия | State | Ревьюер |' in text
 
 
 # prepare
@@ -329,3 +331,37 @@ def test_series_import_json(stack, tmp_path, capsys):
 	assert data['updated'] == ['fix'] and journal(work).read_json('series/fix/meta.json')['state'] == 'merged'
 	(tmp_path / 'bad.json').write_text(json.dumps([{'name': 'x', 'base': 'upstream:winehq', 'colour': 1}]))
 	assert gitum(work, 'series', 'import-json', str(tmp_path / 'bad.json')) == 1
+
+
+def test_queue_markdown_sections_links_and_done(ser, tmp_path, capsys):
+	up, work = ser
+	load_config(work, tmp_path, '[forge.internal]\ntype = "gitlab"\nurl = "https://gitlab.example.org"\n'
+		    '[forge.upstream]\ntype = "forgejo"\nurl = "https://code.example.org"\n'
+		    '[series]\ninternal-mr-forge = "internal"\n')
+	work.run('checkout', '-q', '-b', 'series/later', 'v1.0')
+	work.commit('later: Draft.', {'later': '1\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'add', 'later', '--base', 'upstream:winehq') == 0
+	gitum(work, 'series', 'set', 'later', 'position=5', 'internal_mr=wine/wine!7')
+	meta = journal(work).read_json('series/later/meta.json')
+	assert meta['internal_mr'] == 'https://gitlab.example.org/wine/wine/-/merge_requests/7'
+	gitum(work, 'series', 'set', 'later', 'pr=upstream:wine/wine!12501')
+	assert journal(work).read_json('series/later/meta.json')['pr'] == 'https://code.example.org/wine/wine/pulls/12501'
+	assert gitum(work, 'series', 'set', 'later', 'pr=wine/wine!3') == 1		# no default forge for pr
+	gitum(work, 'series', 'set', 'ntdll-base', 'state=merged', 'release=v1.1', 'upstream_commit=' + 'a' * 40,
+	      'merged_at=2026-11-05T10:00:00+00:00')
+	code, data = gitum_json(work, capsys, 'queue', '--format', 'md')
+	text = queue_markdown(data, {})
+	assert '### Waiting to be queued' in text
+	assert '[wine/wine!7](https://gitlab.example.org/wine/wine/-/merge_requests/7)' in text
+	done = text[text.index('### Done'):]
+	assert '| ntdll-base | 2026-11-05 | v1.1 | aaaaaaaaaaaa | 1 |' in done
+	# sections can be switched off
+	assert '### Waiting' not in queue_markdown(data, {'sections': ['sent', 'queued']})
+
+
+def test_global_flags_anywhere(ser, capsys):
+	up, work = ser
+	capsys.readouterr()
+	assert main(['series', 'list', '--json', '--repo', str(work.path)]) == 0
+	assert 'ntdll-base' in json.loads(capsys.readouterr().out)

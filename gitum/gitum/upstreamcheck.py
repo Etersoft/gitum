@@ -186,7 +186,7 @@ def one_to_one(found):
 				e['note'] = 'upstream commit %s matches %s better' % (commit[:12], entries[0].get('id') or '')
 
 
-def _merged_series(tracker, all_series, containers):
+def _merged_series(tracker, all_series, containers, git=None):
 	"""Series whose changes are all accepted upstream become merged (source check-upstream)."""
 	merged = []
 	for spec in sorted(containers):
@@ -201,6 +201,8 @@ def _merged_series(tracker, all_series, containers):
 		previous = meta.get('state')
 		meta.update(state='merged', upstream_commit=last.get('upstream_commit', ''),
 			    release=max((r['meta'].get('release', '') for r in recs), key=_version_key))
+		if git and meta['upstream_commit'] and not meta.get('merged_at'):
+			meta['merged_at'] = git.out('show', '-s', '--format=%cI', meta['upstream_commit'], check=False)
 		series_mod.touch(meta, state='merged', previous=previous, source='check-upstream')
 		merged.append(name)
 	return merged
@@ -310,7 +312,7 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 						rec['meta'].get('candidate') != e['upstream_commit']:
 					# remembered for gitum change confirm
 					tracker.set(e['id'], candidate=e['upstream_commit'])
-			series_merged = _merged_series(tracker, all_series, {e['container'] for e in found})
+			series_merged = _merged_series(tracker, all_series, {e['container'] for e in found}, git)
 			if tracker.dirty or series_merged:
 				writer = JournalWriter(git, journal.sha)
 				tracker.write(writer)

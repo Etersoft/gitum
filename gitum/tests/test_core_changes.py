@@ -620,3 +620,15 @@ def test_import_json_does_not_roll_back(with_series, tmp_path, capsys):
 	assert meta['state'] == 'merged' and meta['note'] == 'from the table'
 	code, data = gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 'q.json'), '--force')
 	assert journal(work).read_json('series/ntdll-base/meta.json')['state'] == 'sent'
+
+
+def test_change_confirm_merges_the_series(with_series, capsys):
+	up, work = with_series
+	up.commit('ntdll: helper, upstream style', {'ntdll': 'helper\n', 'extra': 'x\n'})
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	cid = journal(work).read_json('series/ntdll-base/meta.json')['changes'][0]['gitum_id']
+	code, rec = gitum_json(work, capsys, 'change', 'confirm', cid, 'v1.1~1')
+	assert code == 0 and rec['series_merged'] == ['ntdll-base']
+	meta = journal(work).read_json('series/ntdll-base/meta.json')
+	assert meta['state'] == 'merged' and meta['merged_at'] and meta['release'] == 'v1.1'

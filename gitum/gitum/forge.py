@@ -83,6 +83,7 @@ def request_state(url, forges=None):
 		state = {'opened': 'open', 'merged': 'merged', 'closed': 'closed', 'locked': 'open'}.get(data.get('state'), 'open')
 		commit = (data.get('merge_commit_sha') or data.get('squash_commit_sha') or '') if state == 'merged' else ''
 		head = data.get('sha') or ''
+		merged_at = data.get('merged_at') or ''
 		reviews = base + '/approvals'
 	else:
 		base = '%s/repos/%s/pulls/%d' % (api, path, num)
@@ -90,10 +91,11 @@ def request_state(url, forges=None):
 		state = 'merged' if data.get('merged') else data.get('state', 'open')
 		commit = (data.get('merge_commit_sha') or '') if data.get('merged') else ''
 		head = (data.get('head') or {}).get('sha', '')
+		merged_at = data.get('merged_at') or ''
 		reviews = base + '/reviews'
 	if state == 'open' and _approved(reviews, token, kind):
 		state = 'approved'
-	return {'state': state, 'merge_commit': commit or '', 'head': head, 'url': url}
+	return {'state': state, 'merge_commit': commit or '', 'head': head, 'merged_at': merged_at, 'url': url}
 
 
 CHANGE_FATE = {'open': 'sent', 'approved': 'sent', 'merged': 'merged', 'closed': 'rejected'}
@@ -115,7 +117,7 @@ def _apply(tracker, all_series, item):
 			if state not in series_mod.STATES:
 				raise GitumError('unknown series state %s' % state)
 			meta['state'] = state
-		for key in ('pr', 'internal_mr', 'upstream_commit', 'version', 'reviewer', 'note'):
+		for key in ('pr', 'internal_mr', 'upstream_commit', 'version', 'reviewer', 'note', 'merged_at'):
 			if item.get(key):
 				meta[key] = item[key]
 		if item.get('merge_commit'):

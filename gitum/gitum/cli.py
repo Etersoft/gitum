@@ -239,8 +239,32 @@ def build_parser():
 	return p
 
 
+GLOBAL_FLAGS = ('--json', '--detailed-exitcode')
+
+
+def hoist_global_options(argv):
+	"""Accept --json, --detailed-exitcode and --repo anywhere on the command line."""
+	front, rest, i = [], [], 0
+	while i < len(argv):
+		a = argv[i]
+		if a == '--':
+			rest += argv[i:]
+			break
+		if a in GLOBAL_FLAGS:
+			front.append(a)
+		elif a == '--repo' and i + 1 < len(argv):
+			front += [a, argv[i + 1]]
+			i += 1
+		elif a.startswith('--repo='):
+			front.append(a)
+		else:
+			rest.append(a)
+		i += 1
+	return front + rest
+
+
 def main(argv=None):
-	argv = list(sys.argv[1:] if argv is None else argv)
+	argv = hoist_global_options(list(sys.argv[1:] if argv is None else argv))
 	args = build_parser().parse_args(argv)
 	out = Output(args.json)
 	try:

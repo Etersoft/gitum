@@ -79,6 +79,8 @@ def cmd_change(repo, args, out):
 	# set
 	values = parse_values(args.values)
 	fate = values.pop('fate', None)
+	if values.get('pr'):
+		values['pr'] = series.normalize_link(repo.journal().config, 'pr', values['pr'])
 	with repo.lock():
 		journal = repo.journal()
 		tracker = changes_mod.Tracker(journal)
@@ -117,6 +119,11 @@ def confirm(repo, ref, sha=None):
 				  release=upstreamcheck.first_release(git, upstream, commit))
 		writer = JournalWriter(git, journal.sha)
 		tracker.write(writer)
+		all_series = series.load_all(journal)
+		merged = upstreamcheck._merged_series(tracker, all_series, {layer}, git) if layer.startswith('series:') else []
+		for name in merged:
+			writer.put_json(series.meta_path(name), all_series[name])
+		rec = {**rec, 'series_merged': merged}
 		new = writer.write('gitum: change %s confirmed as %s' % (rec['id'], commit[:12]))
 		tr = RefTransaction(git)
 		tr.update(JOURNAL_REF, new, journal.sha)
@@ -245,8 +252,8 @@ def cmd_series(repo, args, out):
 		data = series.import_json(repo, json.loads(text), args.force)
 		lines = ['Created: %s; updated: %s' % (', '.join(data['created']) or '-', ', '.join(data['updated']) or '-')]
 		for sk in data['skipped']:
-			lines.append('kept %s state %s instead of %s: %s (--force to override)' % (
-				sk['series'], sk['kept'], sk['state'], sk['reason']))
+			lines.append('kept %s state %s instead of %s: %s; if it is right anyway: %s (or import with --force)' % (
+				sk['series'], sk['kept'], sk['state'], sk['reason'], sk['command']))
 		out.result(data, '\n'.join(lines))
 	elif a == 'checkout':
 		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends)

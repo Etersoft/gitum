@@ -33,7 +33,30 @@ def state_rank(state):
 	return STATES.index(state) if state in STATES and state != 'disabled' else -1
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+-]*$')
 SET_KEYS = {'state', 'pr', 'internal_mr', 'bugs', 'depends', 'disabled', 'title', 'version', 'base', 'branch',
-	    'note', 'upstream_commit', 'fixes', 'upstream', 'export_dir', 'target', 'reviewer', 'position'}
+	    'note', 'upstream_commit', 'fixes', 'upstream', 'export_dir', 'target', 'reviewer', 'position',
+	    'merged_at', 'release'}
+LINK_FIELDS = ('pr', 'internal_mr')
+LINK_RE = re.compile(r'^(?:([A-Za-z0-9][\w.-]*):)?([\w.-]+(?:/[\w.-]+)+)!(\d+)$')
+LINK_FORMAT = {'gitlab': '%s/%s/-/merge_requests/%s', 'forgejo': '%s/%s/pulls/%s', 'github': '%s/%s/pull/%s'}
+
+
+def normalize_link(cfg, field, value):
+	"""A merge request link as a URL; [forge:]group/project!N is resolved through [forge.NAME].
+
+	Without a forge name the default of the field is used: [series] pr-forge or
+	internal-mr-forge.
+	"""
+	if not value or not isinstance(value, str) or value.startswith(('http://', 'https://')):
+		return value
+	m = LINK_RE.match(value.strip())
+	if not m:
+		raise GitumError('%s: %r is neither a URL nor [forge:]group/project!N' % (field, value))
+	name = m.group(1) or cfg.series.get(field.replace('_', '-') + '-forge')
+	conf = cfg.forges.get(name) if name else None
+	if not conf or not conf.get('url'):
+		raise GitumError('%s: %r needs a forge: write NAME:%s with [forge.NAME] url in gitum.toml, or set '
+				 '[series] %s-forge' % (field, value, value, field.replace('_', '-')))
+	return LINK_FORMAT[conf.get('type', 'gitlab')] % (conf['url'].rstrip('/'), m.group(2), m.group(3))
 # files of a series directory that gitum writes; everything else there belongs to people
 MANAGED = ('definition',)
 
@@ -360,6 +383,8 @@ def set_(repo, name, values):
 					order({**known, name: {**meta, 'depends': value}}, [name])
 			if key == 'position' and value not in ('', None):
 				value = int(value)
+			if key in LINK_FIELDS:
+				value = normalize_link(journal.config, key, value)
 			if value in ('', None, []):
 				meta.pop(key, None)
 			else:
@@ -614,8 +639,10 @@ def import_json(repo, items, force=False):
 				newer = current.get('updated', '') > (item.get('updated') or '')
 				if 'state' in values and newer and not force and \
 						state_rank(values['state']) < state_rank(current.get('state')):
-					skipped.append({'series': name, 'state': values.pop('state'), 'kept': current.get('state'),
-							'reason': 'the series changed after this record (%s)' % current.get('updated')})
+					state = values.pop('state')
+					skipped.append({'series': name, 'state': state, 'kept': current.get('state'),
+							'reason': 'the series changed after this record (%s)' % current.get('updated'),
+							'command': 'gitum series set %s state=%s' % (name, state)})
 				values = {k: v for k, v in values.items() if current.get(k) != v}
 			if values:
 				set_(repo, name, values)
