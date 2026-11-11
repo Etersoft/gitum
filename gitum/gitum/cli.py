@@ -87,7 +87,7 @@ def format_status(data):
 		where = up.get('tag') or short(up.get('sha'))
 		behind = up.get('behind')
 		lines.append('upstream %s (%s) at %s%s' % (name, up['ref'], where,
-			', %d new commits' % behind if behind else ''))
+			', %d new commits' % behind if behind else ', moved (rewritten)' if up.get('moved') else ''))
 	for name, l in data['layers'].items():
 		notes = []
 		if not l['exists']:
@@ -100,6 +100,8 @@ def format_status(data):
 			notes.append('parent layer moved')
 		if l.get('upstream_behind'):
 			notes.append('%d upstream commits behind' % l['upstream_behind'])
+		if l.get('upstream_moved'):
+			notes.append('upstream moved')
 		if l.get('checked_out'):
 			notes.append('checked out in %s' % l['checked_out'])
 		lines.append('  %-12s %-24s on %-20s %4s changes  %s' % (
@@ -118,8 +120,33 @@ def format_status(data):
 
 
 def cmd_status(repo, args, out):
+	from . import changes as changes_mod
+	from . import series as series_mod
+	from .commands_changes import change_rows, format_change_table, format_series
 	data = state.status(repo)
-	out.result(data, format_status(data))
+	journal = repo.journal()
+	fates = {}
+	for rec in changes_mod.load_all(journal).values():
+		if not rec.get('gone'):
+			fates[rec.get('fate', 'local')] = fates.get(rec.get('fate', 'local'), 0) + 1
+	data['fates'] = fates
+	all_series = series_mod.load_all(journal)
+	states = {}
+	for meta in all_series.values():
+		states[meta.get('state', '')] = states.get(meta.get('state', ''), 0) + 1
+	data['series'] = states
+	text = format_status(data)
+	if fates:
+		text += '\nchanges: ' + ', '.join('%s %d' % kv for kv in sorted(fates.items()))
+	if states:
+		text += '\nseries: ' + ', '.join('%s %d' % kv for kv in sorted(states.items()))
+	if args.changes:
+		rows = [r for r in change_rows(journal) if args.all or r['action']]
+		data['changes'] = rows
+		text += '\n\n' + (format_change_table(rows) or 'No changes need attention.')
+	if args.series and all_series:
+		text += '\n\n' + format_series(all_series, journal)
+	out.result(data, text)
 
 
 def cmd_config(repo, args, out):
@@ -141,6 +168,18 @@ def cmd_config(repo, args, out):
 
 
 def cmd_log(repo, args, out):
+	if args.target:
+		from .commands_changes import object_history
+		from . import changes as changes_mod
+		entries = object_history(repo, args.target)
+		if entries is None:
+			rec = changes_mod.Tracker(repo.journal()).get(args.target)
+			entries = rec.get('events', [])
+			out.result(entries, '\n'.join('%s %-16s %s' % (e['date'], e['event'], ' '.join(
+				'%s=%s' % (k, v) for k, v in e.items() if k not in ('date', 'event'))) for e in entries))
+			return
+		out.result(entries, '\n'.join('%s %s %s' % (short(e['sha']), e['date'], e['subject']) for e in entries))
+		return
 	journal = repo.journal()
 	entries = []
 	for sha in journal.history(args.max_count):
@@ -169,6 +208,9 @@ def build_parser():
 	s.set_defaults(func=cmd_init)
 
 	s = sub.add_parser('status', help='where every layer stands')
+	s.add_argument('--changes', action='store_true', help='table: change -> fate -> action needed')
+	s.add_argument('--series', action='store_true', help='list series')
+	s.add_argument('--all', action='store_true', help='with --changes: also changes without an action')
 	s.set_defaults(func=cmd_status)
 
 	s = sub.add_parser('save', help='record the current layer branches in the journal')
@@ -181,7 +223,8 @@ def build_parser():
 	s.add_argument('file', nargs='?')
 	s.set_defaults(func=cmd_config)
 
-	s = sub.add_parser('log', help='journal history')
+	s = sub.add_parser('log', help='journal history, or the history of a change, series:NAME or layer:NAME')
+	s.add_argument('target', nargs='?')
 	s.add_argument('-n', '--max-count', type=int)
 	s.set_defaults(func=cmd_log)
 

@@ -108,10 +108,11 @@ def pull(repo, remote=None, update_checked_out=False):
 		theirs = git.rev(remote_ref(remote, JOURNAL_BRANCH))
 		if not theirs or theirs == local_journal or (local_journal and git.is_ancestor(theirs, local_journal)):
 			return {'changed': False, 'remote': remote}
+		target = theirs
 		if local_journal and not git.is_ancestor(local_journal, theirs):
-			raise NeedsHuman('the local journal and %s/%s have diverged' % (remote, JOURNAL_BRANCH))
+			target = merge_journals(repo, local_journal, theirs, remote)
 		old_states = repo.journal().layers() if local_journal else {}
-		new = repo.journal(theirs)
+		new = repo.journal(target)
 		tr = RefTransaction(git)
 		moved = []
 		for layer in new.config.ordered_layers():
@@ -132,12 +133,26 @@ def pull(repo, remote=None, update_checked_out=False):
 				tr.update(ref, st.tip, local or None)
 				moved.append((layer.branch, local, st.tip, where))
 			hist = git.rev(remote_ref(remote, HISTORY_PREFIX + layer.name))
-			if hist:
+			local_hist = git.rev(history_ref(layer.name))
+			if hist and (not local_hist or git.is_ancestor(local_hist, hist)):
 				tr.update(history_ref(layer.name), hist, '')
 			tr.update(published_ref(remote, layer.branch), git.rev(remote_ref(remote, layer.branch)) or st.tip, '')
-		tr.update(JOURNAL_REF, theirs, local_journal or None)
+		tr.update(JOURNAL_REF, target, local_journal or None)
 		tr.commit()
 		for branch, old, new_tip, where in moved:
 			if where and old:
 				git.at(where).run('read-tree', '-m', '-u', old, new_tip)
-		return {'changed': True, 'remote': remote, 'journal': theirs, 'moved': [m[0] for m in moved]}
+		return {'changed': True, 'remote': remote, 'journal': target, 'merged': target != theirs,
+			'moved': [m[0] for m in moved]}
+
+
+def merge_journals(repo, ours, theirs, remote):
+	"""Three-way merge of two journal states that changed different files (series, changes)."""
+	git = repo.git
+	res = git.run('merge-tree', '--write-tree', '--name-only', '--no-messages', ours, theirs, check=False)
+	lines = res.stdout.decode().splitlines()
+	if res.returncode != 0:
+		conflicts = [l for l in lines[1:] if l]
+		raise NeedsHuman('the local journal and %s/%s changed the same files: %s'
+				 % (remote, JOURNAL_BRANCH, ', '.join(conflicts)), conflicts=conflicts)
+	return git.commit_tree(lines[0], [ours, theirs], 'gitum: merge journal from %s' % remote)

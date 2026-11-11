@@ -1,0 +1,371 @@
+import http.server
+import json
+import threading
+
+import pytest
+
+from gitum import changes as changes_mod
+from gitum import forge
+from gitum.cli import main
+from gitum.errors import EXIT_NEEDS_HUMAN, GitumError
+from gitum.repo import Repo as GitumRepo
+
+from core_helpers import INIT_ARGS, Repo, make_stack
+
+
+def gitum(work, *args):
+	return main(['--repo', str(work.path), *args])
+
+
+def gitum_json(work, capsys, *args):
+	capsys.readouterr()
+	code = main(['--repo', str(work.path), '--json', *args])
+	out = capsys.readouterr().out
+	return code, json.loads(out) if out.strip() else None
+
+
+@pytest.fixture
+def stack(tmp_path, capsys):
+	up, work = make_stack(tmp_path)
+	assert gitum(work, *INIT_ARGS) == 0
+	capsys.readouterr()
+	return up, work
+
+
+def release(up, version, files=None, message=None, author=None):
+	up.commit(message or 'upstream change for %s' % version, files or {'up-%s' % version: version + '\n'},
+		  author=author)
+	up.commit('Release %s' % version, {'VERSION': version + '\n'})
+	up.run('tag', 'v' + version)
+
+
+def journal(work):
+	return GitumRepo(work.path).journal()
+
+
+def by_subject(work):
+	return {c['subject']: c for c in changes_mod.load_all(journal(work)).values()}
+
+
+# identity
+
+def test_init_assigns_ids(stack):
+	up, work = stack
+	recs = by_subject(work)
+	assert set(recs) == {'staging: patch one', 'staging: patch two', 'basealt: tweak', 'etersoft: feature',
+			     'etersoft: change base line'}
+	feature = recs['etersoft: feature']
+	assert feature['layer'] == 'etersoft' and feature['fate'] == 'local'
+	assert feature['events'][0]['event'] == 'added'
+	layer = journal(work).layer('etersoft')
+	assert layer.changes[0].gitum_id == feature['id']
+
+
+def test_ids_survive_sync_and_dropped_change_gets_fate(stack, capsys):
+	up, work = stack
+	ids = {s: c['id'] for s, c in by_subject(work).items()}
+	up.commit('etersoft: feature', {'eter': 'eter\n'})
+	release(up, '1.1')
+	assert gitum(work, 'sync', '--next-release') == 0
+	recs = by_subject(work)
+	assert {s: c['id'] for s, c in recs.items()} == ids
+	assert recs['etersoft: change base line']['sha'] == work.rev('rebased-etersoft')
+	feature = recs['etersoft: feature']
+	assert feature['gone'] and feature['fate'] == 'merged'
+	assert feature['events'][-1]['event'] == 'dropped-upstream'
+	# not in the default list any more, but in --all
+	code, rows = gitum_json(work, capsys, 'change', 'list')
+	assert 'etersoft: feature' not in [r['subject'] for r in rows]
+	code, rows = gitum_json(work, capsys, 'change', 'list', '--all')
+	assert 'etersoft: feature' in [r['subject'] for r in rows]
+
+
+def test_ids_survive_amend_and_trailer(stack):
+	up, work = stack
+	ids = {s: c['id'] for s, c in by_subject(work).items()}
+	work.run('checkout', '-q', 'rebased-etersoft')
+	work.run('commit', '-q', '--amend', '-m', 'etersoft: change base line, reworded')
+	work.commit('etersoft: with trailer\n\nGitum-Id: fixedid1', {'t': 't\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'save') == 0
+	recs = by_subject(work)
+	assert recs['etersoft: change base line, reworded']['id'] == ids['etersoft: change base line']
+	assert recs['etersoft: with trailer']['id'] == 'fixedid1'
+
+
+def test_bugs_from_subject(stack):
+	up, work = stack
+	work.run('checkout', '-q', 'rebased-etersoft')
+	work.commit('kerberos: fix (eterbug #16552)', {'k': 'k\n'})
+	work.run('checkout', '-q', '--detach')
+	gitum(work, 'save')
+	assert by_subject(work)['kerberos: fix (eterbug #16552)']['meta']['bugs'] == ['16552']
+
+
+# fates
+
+def test_change_set_status_table_and_log(stack, capsys):
+	up, work = stack
+	cid = by_subject(work)['basealt: tweak']['id']
+	assert gitum(work, 'change', 'set', cid, 'fate=distro-only', 'reason=ALT specific') == 0
+	code, data = gitum_json(work, capsys, 'status', '--changes')
+	rows = {r['subject']: r for r in data['changes']}
+	assert 'basealt: tweak' not in rows		# no action needed
+	assert rows['etersoft: feature']['action'].startswith('decide')
+	assert data['fates'] == {'local': 4, 'distro-only': 1}
+	code, data = gitum_json(work, capsys, 'change', 'show', cid[:5])
+	assert data['meta']['reason'] == 'ALT specific'
+	code, events = gitum_json(work, capsys, 'log', cid)
+	assert [e['event'] for e in events] == ['added', 'fate']
+	assert gitum(work, 'change', 'set', cid, 'fate=nonsense') == 1
+	assert gitum(work, 'change', 'set', cid, 'colour=red') == 1
+
+
+def test_marked_changes_are_dropped_by_sync(stack, capsys):
+	up, work = stack
+	recs = by_subject(work)
+	# accepted upstream as a rewritten commit, recorded by hand
+	accepted = up.commit('feature, the upstream way', {'eter': 'eter upstream\n'})
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	assert gitum(work, 'change', 'set', recs['etersoft: feature']['id'], 'fate=merged',
+		     'upstream_commit=' + accepted) == 0
+	assert gitum(work, 'change', 'set', recs['basealt: tweak']['id'], 'fate=fixed-differently',
+		     'link=https://example.org/x') == 0
+	code, data = gitum_json(work, capsys, 'sync', '--next-release')
+	assert code == 0
+	res = {r['subject']: r for l in data['report']['layers'].values() for r in l['results']}
+	assert res['etersoft: feature']['result'] == 'dropped-marked'
+	assert res['basealt: tweak']['result'] == 'dropped-marked'
+	assert work.subjects('rebased..rebased-etersoft') == ['etersoft: change base line']
+	recs = by_subject(work)
+	assert recs['etersoft: feature']['fate'] == 'merged' and recs['etersoft: feature']['gone']
+
+
+# check-upstream
+
+def test_check_upstream_exact_and_modified(stack, capsys):
+	up, work = stack
+	# exact copy of one patch, an edited version of another (other subject, extra line)
+	up.commit('etersoft: feature', {'eter': 'eter\n'})
+	up.commit('base: change line 2 like Etersoft does.', {'base': 'line1\nETER\nline3\nline4\nline5\nmore\n'})
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft', '-v')
+	res = {e['subject']: e for e in data['results']}
+	assert res['etersoft: feature']['status'] == 'merged'
+	assert res['etersoft: feature']['release'] == 'v1.1'
+	assert res['etersoft: change base line']['status'] in ('merged-modified', 'suspect')
+	assert res['etersoft: change base line']['upstream_subject'] == 'base: change line 2 like Etersoft does.'
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:basealt', '-v')
+	assert data['results'][0]['status'] == 'not-found'
+	# record the findings: the next sync drops both
+	gitum_json(work, capsys, 'change', 'set', res['etersoft: change base line']['id'], 'fate=merged-modified',
+		   'upstream_commit=' + res['etersoft: change base line']['upstream_commit'])
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft', '--apply')
+	assert data['applied'] == [res['etersoft: feature']['id']]
+	assert by_subject(work)['etersoft: feature']['meta']['release'] == 'v1.1'
+	assert gitum(work, 'sync', '--next-release') == 0
+	assert work.subjects('rebased-basealt..rebased-etersoft') == []
+
+
+def test_check_upstream_unknown_target(stack):
+	up, work = stack
+	assert gitum(work, 'check-upstream', 'layer:nope') == 1
+
+
+# series
+
+@pytest.fixture
+def with_series(stack):
+	up, work = stack
+	work.run('checkout', '-q', '-b', 'series/ntdll-base', 'v1.0')
+	work.commit('ntdll: Add a helper.', {'ntdll': 'helper\n'})
+	work.run('checkout', '-q', '-b', 'series/ntdll-use')
+	work.commit('ntdll: Use the helper (bug 123).', {'ntdll': 'helper\nuse\n'})
+	work.commit('ntdll/tests: Test the helper.', {'ntdll-tests': 't\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'add', 'ntdll-base', '--base', 'upstream:winehq') == 0
+	assert gitum(work, 'series', 'add', 'ntdll-use', '--base', 'series:ntdll-base', '--depends', 'ntdll-base') == 0
+	return up, work
+
+
+def test_series_add_list_set(with_series, capsys):
+	up, work = with_series
+	code, data = gitum_json(work, capsys, 'series', 'list')
+	assert set(data) == {'ntdll-base', 'ntdll-use'}
+	use = data['ntdll-use']
+	assert [c['subject'] for c in use['changes']] == ['ntdll: Use the helper (bug 123).', 'ntdll/tests: Test the helper.']
+	assert use['depends'] == ['ntdll-base'] and use['state'] == 'draft'
+	j = journal(work)
+	assert sorted(j.list('series/ntdll-use')) == ['0001-ntdll-Use-the-helper-bug-123.patch',
+						      '0002-ntdll-tests-Test-the-helper.patch', 'definition', 'meta.json']
+	assert j.read_text('series/ntdll-use/definition') == 'Depends: ntdll-base\n'
+	# changes of a series have ids and know their series
+	recs = by_subject(work)
+	assert recs['ntdll: Use the helper (bug 123).']['meta'] == {'bugs': ['123'], 'series': 'ntdll-use'}
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'state=sent', 'pr=https://gitlab.example/wine/-/merge_requests/7',
+		     'fixes=[123] Something') == 0
+	meta = journal(work).read_json('series/ntdll-use/meta.json')
+	assert meta['state'] == 'sent' and meta['pr'].endswith('/7')
+	assert journal(work).read_text('series/ntdll-use/definition') == 'Fixes: [123] Something\nDepends: ntdll-base\n'
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'state=flying') == 1
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'depends=ntdll-use') == 1	# cycle
+	assert gitum(work, 'series', 'remove', 'ntdll-base') == 1			# has dependents
+
+
+def test_series_save_and_log(with_series, capsys):
+	up, work = with_series
+	work.run('checkout', '-q', 'series/ntdll-use')
+	work.commit('ntdll: Fix the helper use.', {'ntdll': 'helper\nuse fixed\n'})
+	work.run('checkout', '-q', '--detach')
+	code, data = gitum_json(work, capsys, 'series', 'save')
+	assert data['saved'] == ['ntdll-use']
+	assert len(journal(work).read_json('series/ntdll-use/meta.json')['changes']) == 3
+	code, entries = gitum_json(work, capsys, 'log', 'series:ntdll-use')
+	assert [e['subject'] for e in entries] == ['gitum: series save ntdll-use', 'gitum: series add ntdll-use']
+	code, data = gitum_json(work, capsys, 'diff', 'gitum/journal~1')
+	assert 'series:ntdll-use' in data
+
+
+def test_series_export_import_checkout(with_series, tmp_path, capsys):
+	up, work = with_series
+	out = tmp_path / 'patches'
+	code, data = gitum_json(work, capsys, 'series', 'export', '--dir', str(out))
+	assert set(data['written']) == {'ntdll-base', 'ntdll-use'}
+	assert (out / 'ntdll-use' / 'definition').read_text() == 'Depends: ntdll-base\n'
+	assert gitum(work, 'series', 'export', '--dir', str(out), '--check') == 0
+	(out / 'ntdll-use' / 'definition').write_text('stale\n')
+	assert gitum(work, 'series', 'export', '--dir', str(out), '--check') == EXIT_NEEDS_HUMAN
+	# a wine-staging style directory with a disabled series
+	staging = tmp_path / 'staging'
+	(staging / 'foo-Bar').mkdir(parents=True)
+	(staging / 'foo-Bar' / 'definition').write_text(
+		'Fixes: [999] Make foo work\nDepends: ntdll-use\n# broken since 1.1\nDisabled: true\n')
+	(staging / 'foo-Bar' / '0001-foo.patch').write_bytes(
+		journal(work).read('series/ntdll-base/0001-ntdll-Add-a-helper.patch'))
+	assert gitum(work, 'series', 'import-staging', str(staging), '--base', 'upstream:winehq') == 0
+	meta = journal(work).read_json('series/foo-Bar/meta.json')
+	assert meta['fixes'] == ['[999] Make foo work'] and meta['depends'] == ['ntdll-use']
+	assert meta['disabled'] == 'broken since 1.1' and meta['state'] == 'disabled'
+	# build branches from the journal patches, dependencies first
+	work.run('branch', '-D', 'series/ntdll-use')
+	code, data = gitum_json(work, capsys, 'series', 'checkout', 'ntdll-use', '--onto', 'v1.0', '--branch', 'try-use')
+	assert code == 0 and len(data['applied']) == 3
+	assert work.subjects('v1.0..try-use') == ['ntdll: Add a helper.', 'ntdll: Use the helper (bug 123).',
+						  'ntdll/tests: Test the helper.']
+
+
+# forges
+
+def test_parse_request_urls():
+	assert forge.parse_url('https://github.com/vitlav/ton/pull/12')[:4] == \
+		('github', 'https://api.github.com', 'vitlav/ton', 12)
+	assert forge.parse_url('https://gitlab.winehq.org/wine/wine/-/merge_requests/8123')[:4] == \
+		('gitlab', 'https://gitlab.winehq.org/api/v4', 'wine/wine', 8123)
+	assert forge.parse_url('https://codeberg.org/a/b/pulls/5')[:4] == \
+		('forgejo', 'https://codeberg.org/api/v1', 'a/b', 5)
+	with pytest.raises(GitumError):
+		forge.parse_url('https://example.org/nothing')
+
+
+class FakeGitLab(http.server.BaseHTTPRequestHandler):
+	states = {}
+
+	def do_GET(self):
+		iid = int(self.path.rsplit('/', 1)[1])
+		data = self.states.get(iid)
+		self.send_response(200 if data else 404)
+		self.send_header('Content-Type', 'application/json')
+		self.end_headers()
+		self.wfile.write(json.dumps(data or {}).encode())
+
+	def log_message(self, *args):
+		pass
+
+
+def test_forge_refresh_with_gitlab_api(with_series, tmp_path, capsys):
+	up, work = with_series
+	server = http.server.HTTPServer(('127.0.0.1', 0), FakeGitLab)
+	threading.Thread(target=server.serve_forever, daemon=True).start()
+	base = 'http://127.0.0.1:%d' % server.server_port
+	try:
+		text = journal(work).config_text + '\n[forge.test]\ntype = "gitlab"\nurl = "%s"\n' % base
+		(tmp_path / 'c.toml').write_text(text)
+		assert gitum(work, 'config', 'load', str(tmp_path / 'c.toml')) == 0
+		recs = by_subject(work)
+		fid = recs['etersoft: feature']['id']
+		gitum(work, 'change', 'set', fid, 'fate=sent', 'pr=%s/wine/wine/-/merge_requests/1' % base)
+		gitum(work, 'series', 'set', 'ntdll-use', 'state=sent', 'pr=%s/wine/wine/-/merge_requests/2' % base)
+		FakeGitLab.states = {1: {'state': 'merged', 'merge_commit_sha': 'a' * 40}, 2: {'state': 'opened'}}
+		code, data = gitum_json(work, capsys, 'forge', 'refresh')
+		assert code == 0 and data['checked'] == 2 and data['updated'] == ['change ' + fid]
+		rec = changes_mod.Tracker(journal(work)).get(fid)
+		assert rec['fate'] == 'merged' and rec['meta']['upstream_commit'] == 'a' * 40
+		FakeGitLab.states[2] = {'state': 'closed'}
+		code, data = gitum_json(work, capsys, 'forge', 'refresh')
+		assert data['updated'] == ['series ntdll-use']
+		assert journal(work).read_json('series/ntdll-use/meta.json')['state'] == 'rejected'
+	finally:
+		server.shutdown()
+
+
+def test_forge_json_import_export(with_series, tmp_path, capsys):
+	up, work = with_series
+	fid = by_subject(work)['basealt: tweak']['id']
+	data = {'changes': [{'id': fid, 'fate': 'distro-only', 'reason': 'ALT only'}],
+		'series': [{'series': 'ntdll-base', 'state': 'merged', 'upstream_commit': 'b' * 40}]}
+	(tmp_path / 'in.json').write_text(json.dumps(data))
+	code, res = gitum_json(work, capsys, 'forge', 'import-json', str(tmp_path / 'in.json'))
+	assert sorted(res['updated']) == ['change ' + fid, 'series ntdll-base']
+	code, exported = gitum_json(work, capsys, 'forge', 'export-json')
+	assert {c['id']: c['fate'] for c in exported['changes']}[fid] == 'distro-only'
+	assert {s['name']: s['state'] for s in exported['series']}['ntdll-base'] == 'merged'
+	(tmp_path / 'bad.json').write_text(json.dumps([{'id': 'nope', 'fate': 'merged'}]))
+	assert gitum(work, 'forge', 'import-json', str(tmp_path / 'bad.json')) == 1
+
+
+# parallel sessions
+
+def test_journal_merge_between_clones(with_series, tmp_path, capsys):
+	up, work = with_series
+	bare = Repo(tmp_path / 'origin.git', bare=True)
+	work.run('remote', 'add', 'origin', str(bare.path))
+	text = journal(work).config_text + '\n[publish]\nremote = "origin"\n'
+	(tmp_path / 'c.toml').write_text(text)
+	assert gitum(work, 'config', 'load', str(tmp_path / 'c.toml')) == 0
+	assert gitum(work, 'publish') == 0
+	other = Repo(tmp_path / 'other', init=False)
+	other.git.at(tmp_path).run('clone', '-q', '--no-checkout', str(bare.path), str(other.path))
+	other.git = other.git.at(other.path)
+	assert main(['--repo', str(other.path), 'pull']) in (0, 10)
+	# both sessions change different series
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=review') == 0
+	assert main(['--repo', str(other.path), 'series', 'set', 'ntdll-use', 'state=queued']) == 0
+	assert main(['--repo', str(other.path), 'publish']) == 0
+	assert gitum(work, 'publish') == EXIT_NEEDS_HUMAN
+	code, data = gitum_json(work, capsys, 'pull')
+	assert code == 0 and data['merged']
+	assert gitum(work, 'publish') == 0
+	j = journal(work)
+	assert j.read_json('series/ntdll-base/meta.json')['state'] == 'review'
+	assert j.read_json('series/ntdll-use/meta.json')['state'] == 'queued'
+	# the same series changed on both sides cannot merge
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'state=sent') == 0
+	assert main(['--repo', str(other.path), 'pull']) in (0, 10)
+	assert main(['--repo', str(other.path), 'series', 'set', 'ntdll-use', 'state=review']) == 0
+	assert gitum(work, 'publish') == 0
+	assert main(['--repo', str(other.path), 'pull']) == EXIT_NEEDS_HUMAN
+
+
+def test_check_upstream_since(stack, capsys):
+	up, work = stack
+	up.commit('etersoft: feature', {'eter': 'eter\n'})
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	assert gitum(work, 'sync', '--next-release') == 0
+	# after the sync the default range (sync point..ref) is empty; --since searches the past
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft')
+	assert [e['status'] for e in data['results']] == ['not-found']
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft', '--since', 'v1.0', '--ref', 'v1.1')
+	assert code == 0

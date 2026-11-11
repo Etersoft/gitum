@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 gitum (Git Upstream Manager) keeps your changes developed in parallel with an external upstream and syncs them with it.
-- The code is the package `gitum/gitum/`. Its design and the decisions taken are in `docs/design-v2.md` (Russian); read it before changing the gitum 2 code. Stages 0 (foundation) and 1 (sync) are done; stages 2–4 follow the plan in section 9 of the design.
+- The code is the package `gitum/gitum/`. Its design and the decisions taken are in `docs/design-v2.md` (Russian); read it before changing the gitum 2 code. Stages 0 (foundation), 1 (sync) and 2 (changes, series, upstream check, forges) are done; stages 3–4 follow the plan in section 9 of the design.
 
 User docs: `README.md` (English) and `README.ru.md` (Russian), still describing gitum 1. `NOTES` (untracked) is an old list of known problems, in Russian.
 
@@ -42,9 +42,16 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
   - Each change is classified as annihilated revert pair, `dropped-backport` (its `Origin:` / `cherry picked from` commit is in the new base; checked before patch-id), `dropped-upstream` (`git cherry`), `picked`, `resolved` (with the resolver recorded), `emptied` or `skipped`.
   - Resolvers run in the order rerere → `resolve.rules` → `resolve.agent` (shell commands, env `GITUM_*`).
   - A result needs review when it used a resolver outside `review-unless` + rerere/manual; it then goes to `candidate/*` and waits for `gitum accept`.
+- **Change identity.** `changes.py` stores `changes/<id>.json` in the journal; commits are not rewritten.
+  - The `Tracker` matches new commits to ids in this order: `Gitum-Id` trailer, sync sha mapping, same sha, patch-id, subject.
+  - It records events and fates. Changes with a fate in `DROP_FATES` are dropped by sync (`dropped-marked`) once the condition holds.
+- **Series.** `series.py` keeps `series/<name>/{definition, *.patch, meta.json}`, compatible with the wine-staging layout.
+  - Import/export of that layout; `checkout` builds a branch with dependencies first.
+- **Upstream check.** `upstreamcheck.py` matches by patch-id, then scores candidates touching the same files by subject + diff similarity (`merged-modified` ≥ 0.75, `suspect` ≥ 0.5).
+- **Forges.** `forge.py` reads GitHub/GitLab/Forgejo REST APIs (tokens from env) and supports JSON import/export.
 - **Shared rerere.** `rrcache.py` keeps the rerere cache in the journal under `rr-cache/`.
 - **Hooks.** `hooks.py` passes JSON events on stdin; hook failures never fail a run.
-- **Publishing.** `publish.py` pushes layers with a lease and the journal/history without force. Commits others pushed since our last publish (`refs/gitum/published/...`) are cherry-picked on top. `pull` fast-forwards the journal and moves the branches.
+- **Publishing.** `publish.py` pushes layers with a lease and the journal/history without force. Commits others pushed since our last publish (`refs/gitum/published/...`) are cherry-picked on top. `pull` fast-forwards the journal, or merges diverged journals with `git merge-tree` when they touched different files, and moves the branches.
 - **Exit codes** (`errors.py`): 0 ok, 1 error, 2 `NeedsHuman` (conflict, review, diverged), 10 updated (with `--detailed-exitcode`), 75 busy. Every command takes `--json`.
 
 Tests:

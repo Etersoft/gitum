@@ -1,0 +1,282 @@
+"""Commands for changes, series, upstream checks and forges."""
+
+import json
+import sys
+from pathlib import Path
+
+from . import changes as changes_mod
+from . import forge, series, upstreamcheck
+from .errors import EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
+from .git import RefTransaction
+from .journal import JOURNAL_REF, JournalWriter
+
+
+def short(sha):
+	return sha[:12] if sha else '-'
+
+
+def parse_values(pairs):
+	values = {}
+	for pair in pairs:
+		key, sep, value = pair.partition('=')
+		if not sep:
+			raise GitumError('expected KEY=VALUE, got %r' % pair)
+		values[key.replace('-', '_')] = value
+	return values
+
+
+def change_rows(journal, layer=None, fate=None, include_gone=False):
+	rows = []
+	for rec in sorted(changes_mod.load_all(journal).values(), key=lambda c: (c.get('layer', ''), c.get('subject', ''))):
+		if rec.get('gone') and not include_gone:
+			continue
+		if layer and rec.get('layer') != layer:
+			continue
+		if fate and rec.get('fate') != fate:
+			continue
+		rows.append({**rec, 'action': changes_mod.action(rec)})
+	return rows
+
+
+def format_change_table(rows):
+	lines = []
+	for r in rows:
+		meta = r.get('meta', {})
+		link = meta.get('pr') or meta.get('upstream_commit', '')[:12] or meta.get('reason', '')
+		lines.append('%-8s %-16s %-17s %-50.50s %s%s' % (r['id'], r.get('layer', ''), r.get('fate', ''),
+							     r.get('subject', ''), r['action'],
+							     ('  [%s]' % link) if link else ''))
+	return '\n'.join(lines)
+
+
+# change
+
+def cmd_change(repo, args, out):
+	journal = repo.journal()
+	if args.action == 'list':
+		rows = change_rows(journal, args.layer, args.fate, args.all)
+		out.result(rows, format_change_table(rows) or 'No changes.')
+		return
+	if args.action == 'show':
+		rec = changes_mod.Tracker(journal).get(args.ref)
+		rec = {**rec, 'action': changes_mod.action(rec)}
+		lines = ['%s  %s' % (rec['id'], rec.get('subject', '')),
+			 'layer %s, sha %s, fate %s' % (rec.get('layer'), short(rec.get('sha')), rec.get('fate'))]
+		for k, v in sorted(rec.get('meta', {}).items()):
+			lines.append('  %s: %s' % (k, ', '.join(v) if isinstance(v, list) else v))
+		if rec['action']:
+			lines.append('action: ' + rec['action'])
+		for e in rec.get('events', []):
+			extra = ' '.join('%s=%s' % (k, v) for k, v in e.items() if k not in ('date', 'event'))
+			lines.append('  %s %-16s %s' % (e['date'], e['event'], extra))
+		out.result(rec, '\n'.join(lines))
+		return
+	# set
+	values = parse_values(args.values)
+	fate = values.pop('fate', None)
+	with repo.lock():
+		journal = repo.journal()
+		tracker = changes_mod.Tracker(journal)
+		recs = [tracker.set(ref, fate, **values) for ref in args.ref.split(',')]
+		writer = JournalWriter(repo.git, journal.sha)
+		tracker.write(writer)
+		new = writer.write('gitum: change %s: %s' % (args.ref, ' '.join(args.values)))
+		tr = RefTransaction(repo.git)
+		tr.update(JOURNAL_REF, new, journal.sha)
+		tr.commit()
+	out.result(recs, '\n'.join('%s: %s' % (r['id'], r['fate']) for r in recs))
+
+
+# series
+
+def format_series(all_series, journal):
+	lines = []
+	for name, meta in sorted(all_series.items()):
+		count = len(meta.get('changes') or []) or len([f for f in journal.list('series/' + name) if f.endswith('.patch')])
+		deps = (' deps: ' + ','.join(meta['depends'])) if meta.get('depends') else ''
+		link = meta.get('pr') or meta.get('internal_mr') or ''
+		lines.append('%-32s %-9s %3d patches  base %-22s %s%s%s' % (
+			name, meta.get('state', ''), count, meta.get('base', ''), meta.get('branch') or '-', deps,
+			('  ' + link) if link else ''))
+	return '\n'.join(lines)
+
+
+def cmd_series(repo, args, out):
+	a = args.action
+	if a == 'list':
+		journal = repo.journal()
+		data = series.load_all(journal)
+		out.result(data, format_series(data, journal) or 'No series.')
+	elif a == 'show':
+		journal = repo.journal()
+		meta = series.load(journal, args.name)
+		lines = [format_series({args.name: meta}, journal)]
+		for c in meta.get('changes') or []:
+			lines.append('  %s %s %s' % (c.get('gitum_id', '-'), short(c['sha']), c['subject']))
+		out.result(meta, '\n'.join(lines))
+	elif a == 'add':
+		meta = series.add(repo, args.name, args.branch or 'series/' + args.name, args.base,
+				  [d for d in (args.depends or '').split(',') if d], args.state)
+		out.result(meta, 'Series %s: %d patches on %s' % (args.name, len(meta['changes']), short(meta['base_sha'])))
+	elif a == 'save':
+		data = series.save(repo, args.names or None)
+		out.result(data, ('Saved: ' + ', '.join(data['saved'])) if data['saved'] else 'Nothing to save.')
+	elif a == 'set':
+		meta = series.set_(repo, args.name, parse_values(args.values))
+		out.result(meta, 'Series %s updated.' % args.name)
+	elif a == 'remove':
+		series.remove(repo, args.name)
+		out.result({'removed': args.name}, 'Series %s removed.' % args.name)
+	elif a == 'export':
+		data = series.export(repo, args.names, args.dir, args.check)
+		if args.check:
+			out.result(data, ('Stale: ' + ', '.join(data['stale'])) if data['stale'] else 'Up to date.')
+			return EXIT_NEEDS_HUMAN if data['stale'] else EXIT_OK
+		out.result(data, 'Written: %s' % (', '.join(data['written']) or 'nothing (up to date)'))
+	elif a == 'import-staging':
+		data = series.import_staging(repo, args.dir, args.base, args.names or None)
+		out.result(data, 'Imported %d series.' % len(data['imported']))
+	elif a == 'checkout':
+		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends)
+		out.result(data, '%s: %d patches on %s' % (data['branch'], len(data['applied']), short(data['base'])))
+
+
+# upstream check
+
+def cmd_check_upstream(repo, args, out):
+	data = upstreamcheck.check(repo, args.what, args.ref, args.apply, args.since)
+	lines = []
+	for e in data['results']:
+		if e['status'] == 'not-found' and not args.verbose:
+			continue
+		where = ''
+		if e.get('upstream_commit'):
+			where = ' as %s (%.0f%%)%s' % (short(e['upstream_commit']), e['similarity'] * 100,
+						     ' in ' + e['release'] if e.get('release') else '')
+		lines.append('%-15s %-8s %s%s' % (e['status'], e.get('id') or '-', e['subject'], where))
+	if data['applied']:
+		lines.append('Recorded as merged: %s' % ', '.join(data['applied']))
+	out.result(data, '\n'.join(lines) or 'Nothing found upstream.')
+	return EXIT_NEEDS_HUMAN if data['suspect'] else EXIT_OK
+
+
+# forge
+
+def cmd_forge(repo, args, out):
+	if args.action == 'export-json':
+		data = forge.export_json(repo)
+		out.result(data, json.dumps(data, indent=1, ensure_ascii=False))
+		return
+	if args.action == 'import-json':
+		text = sys.stdin.read() if args.file in (None, '-') else Path(args.file).read_text()
+		data = forge.import_json(repo, json.loads(text))
+	else:
+		data = forge.refresh(repo)
+	text = 'Updated: %s' % (', '.join(data['updated']) or 'nothing')
+	for err in data.get('errors', []):
+		text += '\nerror: ' + err
+	out.result(data, text)
+
+
+# journal diff and object history
+
+def cmd_diff(repo, args, out):
+	git = repo.git
+	a = repo.journal(args.state1)
+	b = repo.journal(args.state2 or JOURNAL_REF)
+	result = {}
+	text = []
+	for name in sorted(set(a.layers()) | set(b.layers())):
+		la, lb = a.layer(name), b.layer(name)
+		if not la or not lb or (la.base, la.tip) == (lb.base, lb.tip):
+			continue
+		rd = git.out('range-diff', '--no-color', '%s..%s' % (la.base, la.tip), '%s..%s' % (lb.base, lb.tip), check=False)
+		result[name] = rd
+		text.append('== layer %s\n%s' % (name, rd))
+	for name in sorted(set(series.load_all(a)) | set(series.load_all(b))):
+		ma, mb = a.read_json(series.meta_path(name)), b.read_json(series.meta_path(name))
+		if not ma or not mb or ma.get('tip') == mb.get('tip') or not ma.get('tip') or not mb.get('tip'):
+			continue
+		rd = git.out('range-diff', '--no-color', '%s..%s' % (ma['base_sha'], ma['tip']),
+			     '%s..%s' % (mb['base_sha'], mb['tip']), check=False)
+		result['series:' + name] = rd
+		text.append('== series %s\n%s' % (name, rd))
+	out.result(result, '\n'.join(text) or 'No differences.')
+
+
+def object_history(repo, target):
+	"""Journal states that touched a series or a layer."""
+	kind, _, name = target.partition(':')
+	path = {'series': 'series/%s' % name, 'layer': 'layers/%s.json' % name}.get(kind)
+	if not path:
+		return None
+	entries = []
+	for line in repo.git.lines('log', '--first-parent', '--format=%H%x00%cI%x00%s', JOURNAL_REF, '--', path):
+		sha, date, subject = line.split('\x00')
+		entries.append({'sha': sha, 'date': date, 'subject': subject})
+	return entries
+
+
+def register(sub):
+	s = sub.add_parser('change', help='changes and their fate')
+	s.add_argument('action', choices=['list', 'show', 'set'])
+	s.add_argument('ref', nargs='?', help='change id (or prefix, or commit sha); several with commas for set')
+	s.add_argument('values', nargs='*', metavar='KEY=VALUE',
+		       help='fate=..., pr=URL, bugs=1,2, upstream_commit=SHA, release=, reason=, link=, drop_on=REF')
+	s.add_argument('--layer')
+	s.add_argument('--fate')
+	s.add_argument('--all', action='store_true', help='also changes that left their layer')
+	s.set_defaults(func=cmd_change)
+
+	s = sub.add_parser('series', help='series of changes')
+	ss = s.add_subparsers(dest='action', required=True)
+	p = ss.add_parser('list')
+	p = ss.add_parser('show')
+	p.add_argument('name')
+	p = ss.add_parser('add', help='register a branch as a series')
+	p.add_argument('name')
+	p.add_argument('--branch', help='default: series/NAME')
+	p.add_argument('--base', required=True, help='upstream:NAME, layer:NAME, series:NAME or a ref')
+	p.add_argument('--depends', help='comma separated series names')
+	p.add_argument('--state', default='draft', choices=series.STATES)
+	p = ss.add_parser('save', help='record series branches in the journal')
+	p.add_argument('names', nargs='*')
+	p = ss.add_parser('set')
+	p.add_argument('name')
+	p.add_argument('values', nargs='+', metavar='KEY=VALUE',
+		       help='state=, pr=URL, internal_mr=URL, bugs=, depends=, disabled=REASON, fixes=, title=')
+	p = ss.add_parser('remove')
+	p.add_argument('name')
+	p = ss.add_parser('export', help='write series in the wine-staging layout')
+	p.add_argument('names', nargs='*')
+	p.add_argument('--dir', required=True)
+	p.add_argument('--check', action='store_true', help='only report stale copies (exit 2 if any)')
+	p = ss.add_parser('import-staging', help='import <dir>/<series>/{definition,*.patch}')
+	p.add_argument('dir')
+	p.add_argument('--base', required=True, help='base of the imported series, e.g. upstream:winehq')
+	p.add_argument('names', nargs='*')
+	p = ss.add_parser('checkout', help='build a branch from the patches of a series')
+	p.add_argument('name')
+	p.add_argument('--onto', help='base commit (default: the series base)')
+	p.add_argument('--branch')
+	p.add_argument('--no-depends', action='store_true')
+	s.set_defaults(func=cmd_series)
+
+	s = sub.add_parser('check-upstream', help='find our changes in upstream, also edited ones')
+	s.add_argument('what', nargs='*', metavar='layer:NAME|series:NAME')
+	s.add_argument('--ref', help='upstream ref to search (default: the upstream of each layer or series)')
+	s.add_argument('--since', metavar='REF', help='search upstream commits after REF '
+		       '(default: the upstream sync point, or the base of a series)')
+	s.add_argument('--apply', action='store_true', help='record found changes as merged')
+	s.add_argument('-v', '--verbose', action='store_true', help='also list changes not found')
+	s.set_defaults(func=cmd_check_upstream)
+
+	s = sub.add_parser('forge', help='states of pull/merge requests')
+	s.add_argument('action', choices=['refresh', 'import-json', 'export-json'])
+	s.add_argument('file', nargs='?')
+	s.set_defaults(func=cmd_forge)
+
+	s = sub.add_parser('diff', help='range-diff of layers and series between two journal states')
+	s.add_argument('state1')
+	s.add_argument('state2', nargs='?')
+	s.set_defaults(func=cmd_diff)

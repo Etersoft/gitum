@@ -2,6 +2,7 @@
 
 import json
 
+from . import changes as changes_mod
 from . import config as config_mod
 from .errors import ConfigError, GitumError, NeedsHuman
 from .git import RefTransaction
@@ -58,8 +59,11 @@ def write_initial_journal(repo, cfg_text, layer_states, upstream_states, message
 	writer.put(config_mod.CONFIG_FILE, cfg_text)
 	for name, data in upstream_states.items():
 		writer.put_json('upstreams/%s.json' % name, data)
+	tracker = changes_mod.Tracker()
 	for state in layer_states.values():
+		tracker.track_layer(state.name, None, state.changes, context=message)
 		writer.put_layer(state)
+	tracker.write(writer)
 	tips = [s.tip for s in layer_states.values()]
 	journal = writer.write('gitum: %s' % message, tips)
 	tr = RefTransaction(git)
@@ -171,7 +175,9 @@ def save(repo, layer_names=None, message=''):
 		writer = JournalWriter(git, journal.sha)
 		tr = RefTransaction(git)
 		summary = {}
+		tracker = changes_mod.Tracker(journal)
 		for name, state in changed.items():
+			tracker.track_layer(name, old_states.get(name), state.changes, context=message or 'save')
 			writer.put_layer(state)
 			old = old_states.get(name)
 			before = {c.patch_id or c.sha for c in old.changes} if old else set()
@@ -183,6 +189,7 @@ def save(repo, layer_names=None, message=''):
 			msg = '%s: %s\n\n%s\ntip %s\n' % (name, message or 'save', body, state.tip)
 			tr.update(history_ref(name), history_commit(git, name, state.tip, hist_old, msg), hist_old or None)
 			summary[name] = {'added': added, 'removed': removed, 'tip': state.tip, 'changes': len(state.changes)}
+		tracker.write(writer)
 		new_journal = writer.write('gitum: save %s\n\n%s' % (', '.join(changed), message),
 					   [s.tip for s in changed.values()])
 		tr.update(JOURNAL_REF, new_journal, journal.sha)
@@ -201,8 +208,10 @@ def status(repo):
 		data = journal.upstream(up.name)
 		ref_sha = git.rev(up.ref)
 		entry = {'ref': up.ref, 'sha': data.get('sha'), 'tag': data.get('tag', ''), 'ref_sha': ref_sha}
-		if ref_sha and data.get('sha'):
+		if ref_sha and data.get('sha') and not up.rewritten and git.is_ancestor(data['sha'], ref_sha):
 			entry['behind'] = git.count('%s..%s' % (data['sha'], ref_sha))
+		elif ref_sha and data.get('sha') and ref_sha != data['sha']:
+			entry['moved'] = True
 		result['upstreams'][up.name] = entry
 	for layer in cfg.ordered_layers():
 		st = states.get(layer.name)
@@ -221,8 +230,10 @@ def status(repo):
 					entry['parent_moved'] = True
 			elif layer.base_kind == 'upstream':
 				up = result['upstreams'][layer.base_name]
-				if up.get('ref_sha') and st.base != up['ref_sha']:
+				if up.get('behind') and st.base != up['ref_sha']:
 					entry['upstream_behind'] = git.count('%s..%s' % (st.base, up['ref_sha']))
+				elif up.get('moved'):
+					entry['upstream_moved'] = True
 		where = repo.checked_out(layer.branch)
 		if where:
 			entry['checked_out'] = where

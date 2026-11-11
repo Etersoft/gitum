@@ -14,6 +14,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import changes as changes_mod
 from . import hooks, rrcache, state
 from .errors import GitumError, NeedsHuman
 from .git import RefTransaction
@@ -39,6 +40,7 @@ DROPPED_BACKPORT = 'dropped-backport'	# its Origin commit is in the new base
 ANNIHILATED = 'annihilated'		# a patch + revert pair
 EMPTIED = 'emptied'			# nothing left after applying: probably accepted with changes
 SKIPPED = 'skipped'			# dropped by a person (gitum skip)
+DROPPED_MARKED = 'dropped-marked'	# its fate says so (merged, fixed differently, disabled)
 TRUSTED_RESOLVERS = {'rerere', 'manual'}
 
 
@@ -270,6 +272,8 @@ class Sync:
 		commits = git.rev_list('--reverse', '%s..%s' % (old.base, old.tip))
 		results, todo = [], []
 		pairs = revert_pairs(git, commits) if layer.annihilate_reverts else {}
+		known = changes_mod.load_all(journal)
+		fate_of = {c.sha: known.get(c.gitum_id) for c in old.changes if c.gitum_id in known}
 		cherry = {}
 		for line in git.lines('cherry', new_base, old.tip, old.base):
 			sign, sha = line.split()
@@ -281,8 +285,11 @@ class Sync:
 			if gid:
 				res['gitum_id'] = gid[-1]
 			origin = origin_commit(git, info['message'], new_base)
+			marked = changes_mod.should_drop(git, fate_of[sha], new_base) if fate_of.get(sha) else None
 			if sha in pairs:
 				res.update(result=ANNIHILATED, pair=pairs[sha])
+			elif marked:
+				res.update(result=DROPPED_MARKED, reason=marked)
 			elif origin:
 				res.update(result=DROPPED_BACKPORT, origin=origin)
 			elif cherry.get(sha) == '-':
@@ -533,8 +540,12 @@ def commit_states(repo, op, report, tips=None):
 	if current_journal != op['journal']:
 		raise NeedsHuman('the journal changed during the run (%s); gitum abort and sync again' % current_journal[:12])
 	writer = JournalWriter(git, journal.sha)
-	for st in states.values():
+	tracker = changes_mod.Tracker(journal)
+	for name, st in states.items():
+		results = {r['sha']: r for r in op['layers'][name]['results']}
+		tracker.track_layer(name, journal.layer(name), st.changes, results, context=op['target_desc'])
 		writer.put_layer(st)
+	tracker.write(writer)
 	for name, data in ups.items():
 		writer.put_json('upstreams/%s.json' % name, data)
 	run_path = 'runs/%s' % op['run']
