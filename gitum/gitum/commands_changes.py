@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import bugs as bugs_mod
 from . import changes as changes_mod
 from . import forge, series, upstreamcheck
 from .errors import EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
@@ -143,7 +144,7 @@ def format_series(all_series, journal):
 	return '\n'.join(lines)
 
 
-def series_tree(repo, journal, with_variants=False):
+def series_tree(repo, journal, with_variants=False, bug=None):
 	"""Series as a tree by their dependencies with state, base lag, claims and variants."""
 	from . import upstreamwork
 	git = repo.git
@@ -151,6 +152,8 @@ def series_tree(repo, journal, with_variants=False):
 	all_series = series.load_all(journal)
 	rows = {}
 	for name, meta in all_series.items():
+		if bug and not bugs_mod.matches(cfg, meta, bug):
+			continue
 		up_name = meta.get('upstream') or (meta['base'].split(':', 1)[1] if meta['base'].startswith('upstream:') else '')
 		up = cfg.upstreams.get(up_name)
 		lag = None
@@ -162,7 +165,8 @@ def series_tree(repo, journal, with_variants=False):
 		       'claimed_by': (series.claim_owner(repo, name) or {}).get('session'), 'updated': meta.get('updated', ''),
 		       'variants': sorted(meta.get('variants') or {}), 'pr': meta.get('pr', ''),
 		       'upstream_suspects': len(meta.get('upstream_suspects') or []),
-		       'warning': series.suspect_warning(meta)}
+		       'warning': series.suspect_warning(meta),
+		       'bugs': [i['label'] for i in bugs_mod.of_series(cfg, meta)]}
 		if with_variants and meta.get('variants'):
 			row['diverged'] = sorted(spec for spec, v in upstreamwork.variants(repo, name).items() if v['diverged'])
 		rows[name] = row
@@ -200,6 +204,8 @@ def format_tree(rows):
 			notes.append('diverged: ' + ', '.join(r['diverged']))
 		elif r['variants']:
 			notes.append('variants: ' + ', '.join(r['variants']))
+		if r.get('bugs'):
+			notes.append('bugs ' + ', '.join(r['bugs']))
 		if len(r['depends']) > 1:
 			notes.append('also depends on ' + ', '.join(r['depends'][1:]))
 		if r['claimed_by']:
@@ -222,6 +228,8 @@ def cmd_series(repo, args, out):
 	if a == 'list':
 		journal = repo.journal()
 		data = series.load_all(journal)
+		if args.bug:
+			data = {n: m for n, m in data.items() if bugs_mod.matches(journal.config, m, args.bug)}
 		out.result(data, format_series(data, journal) or 'No series.')
 	elif a == 'show':
 		journal = repo.journal()
@@ -360,7 +368,27 @@ def object_history(repo, target):
 	return entries
 
 
+def cmd_bugs(repo, args, out):
+	journal = repo.journal()
+	md = journal.config.queue.get('markdown', {})
+	rows = bugs_mod.index(journal.config, series.load_all(journal), args.bug)
+	if args.format == 'md':
+		text = bugs_mod.markdown(rows, md.get('titles', {}).get('bugs', 'Bugs'), md.get('bug-titles'))
+	else:
+		text = bugs_mod.text(rows)
+	if args.output:
+		Path(args.output).write_text(text if text.endswith('\n') else text + '\n')
+		text = 'Written %s' % args.output
+	out.result(rows, text)
+
+
 def register(sub):
+	s = sub.add_parser('bugs', help='bugs of the series: bug -> series, state, merge requests, release')
+	s.add_argument('bug', nargs='?', metavar='[TRACKER:]N', help='only this bug')
+	s.add_argument('--format', choices=['text', 'md'], default='text')
+	s.add_argument('-o', '--output', metavar='FILE')
+	s.set_defaults(func=cmd_bugs)
+
 	s = sub.add_parser('change', help='changes and their fate')
 	s.add_argument('action', choices=['list', 'show', 'set', 'confirm'])
 	s.add_argument('ref', nargs='?', help='change id (or prefix, or commit sha); several with commas for set')
@@ -374,6 +402,7 @@ def register(sub):
 	s = sub.add_parser('series', help='series of changes')
 	ss = s.add_subparsers(dest='action', required=True)
 	p = ss.add_parser('list')
+	p.add_argument('--bug', metavar='[TRACKER:]N', help='only the series of this bug')
 	p = ss.add_parser('show')
 	p.add_argument('name')
 	p = ss.add_parser('add', help='register a branch as a series')

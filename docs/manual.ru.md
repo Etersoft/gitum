@@ -316,11 +316,21 @@ check = "./build.sh"             # должна пройти до того, ка
 
 [series]
 subject-lint = '^[a-z0-9_./-]+: [A-Z].*\.$'
+bug-tracker = "etersoft"         # голый номер бага относится к нему
+fixes-tracker = "winehq"         # его баги — строки Fixes: в definition
+
+[tracker.etersoft]
+url = "https://bugs.etersoft.ru/show_bug.cgi?id={n}"
+
+[tracker.winehq]
+url = "https://bugs.winehq.org/show_bug.cgi?id={n}"
+label = "winehq {n}"             # по умолчанию "#{n}" для bug-tracker, "{tracker} {n}" для остальных
 
 [hooks]                          # получают JSON-события на stdin
 change = "tools/notify-bugs.py"
 run = "tools/notify-chat.sh"
 publish = "tools/set-version-branches.sh"
+series = "tools/comment-in-bugs.py"  # серия сменила состояние
 ```
 
 Параметры апстрима:
@@ -355,6 +365,7 @@ publish = "tools/set-version-branches.sh"
 | `check-upstream [layer:X\|series:Y] [--since REF] [--apply]` | Найти наши изменения в апстриме: patch-id, затем сходство заголовка и диффа. Совпадение считается «принято с правками», только если содержимое подтверждено (наше изменение поверх апстрима ничего не меняет); иначе — `suspect`, решает человек. |
 | `series add\|save\|list\|show\|set\|remove\|export\|import-staging\|import-json\|checkout\|claim\|release` | Серии изменений. Состояния: draft → review (внутреннее ревью) → queued → sent (версия vN) → approved → merged, rejected или superseded. Серия может лежать на любой глубине каталога экспорта (`export_dir`); экспорт трогает только `definition` и те `*.patch`, которые писала сама серия, поэтому несколько серий могут делить один каталог: номера патчей продолжаются после зависимостей, а общий `definition` объединяет их Fixes. `series save ИМЯ` всегда пересчитывает названную серию. Если коммиты серии на `upstream:X` закоммичены тем, кто коммитит в этот апстрим (и не вами), ветка, скорее всего, стоит на более свежем апстриме, чем локальный ref: `series add`, `save` и `import-json` предупреждают и выходят с кодом 2, а `status` показывает предупреждение, пока апстрим не скачан и серия не сохранена заново. `import-json` не откатывает серию к более раннему состоянию, если она менялась позже записи (с `--force` откатывает). Первый экспорт патчей, сделанных вручную, перепишет их в нормализованном виде gitum (`From 0000…`, без подписи). `claim` отмечает, что серией занимается сессия (`GITUM_SESSION`); другие сессии получат по ней код 75. `pr` и `internal_mr` принимают URL или `[forge:]группа/проект!N`, который разворачивается через `[forge.ИМЯ]` (по умолчанию `[series] pr-forge`, `internal-mr-forge`); для forge с другими путями задаётся `mr-url = "{url}/{project}/merge_requests/{n}"`. |
 | `mr set\|import\|render\|record СЕРИЯ` | Текст merge request серии с картинками; внутренние части; картинки загружаются один раз на проект forge (см. «Серия на пути в апстрим»). |
+| `bugs [[ТРЕКЕР:]N] [--format md] [-o ФАЙЛ]` | Индекс багов: баг (ссылкой) → его серии → состояние и версия → merge request → релиз, когда принято; по трекеру и номеру. Серия перечисляет свои баги как `bugs=etersoft:19979,winehq:60741` (`series set`, `import-json`); голый номер относится к `[series] bug-tracker`. С `[series] fixes-tracker` баги этого трекера пишутся строками `Fixes: [N]` в definition (если строка Fixes их ещё не называет), а строки `Fixes: [N]`, прочитанные `import-staging` или заданные как `fixes=`, становятся багами. `series list --bug Б` и `status --series --bug Б` показывают серии одного бага; markdown очереди выводит баги ссылками, а `sections = [..., "bugs"]` добавляет в него индекс. |
 | `port`, `variants` | Серия на другой базе и чем её варианты отличаются. |
 | `queue [next\|add\|pause\|resume] [--target T]`, `queue --format md` | Очереди отправки в апстрим, по одной на цель (поле серии `target`). По одной серии, пока её не одобрят или не примут; сначала зависимости. `pause --reason` останавливает очередь. Генерирует `UPSTREAM-QUEUE.md`: `[queue.markdown]` задаёт разделы (`sent`, `queued`, `review`, `draft`, `done`), поля-колонки (`fields`, `done-fields`: любые поля серии, например `reviewer`, `release`, `merged_at`) и все заголовки (`titles`). |
 | `prepare СЕРИЯ [--push ФОРК] [--force]` | Серия в виде для апстрима: свежая база, новые даты с шагом в секунду, без trailer'ов Co-Authored-By/Gitum-Id, проверка заголовков, перераскладка путей для vendored-деревьев, range-diff с сохранённой серией. Зависимости должны быть уже приняты (`--force` включает их коммиты). Merge request вы открываете сами; `forge refresh` предупредит, если его голова отличается от подготовленной ветки. |
@@ -388,12 +399,13 @@ gitum запускает ваши команды для разрешения к�
 | `publish.check` | приватное дерево на вершине каждого листового слоя | `GITUM_TIP` | код 0, иначе ветки не меняются |
 | `generator = "command"` | приватное дерево на новой базе | `GITUM_BASE` | новые коммиты на HEAD |
 | `post-command` генерируемого слоя | приватное дерево | | коммиты; остаток коммитит gitum |
-| `hooks.change`, `hooks.run`, `hooks.publish` | основное рабочее дерево | `GITUM_EVENT` | JSON-событие на stdin; ошибка хука не роняет прогон |
+| `hooks.change`, `hooks.run`, `hooks.publish`, `hooks.series` | основное рабочее дерево | `GITUM_EVENT`; для `hooks.series` ещё `GITUM_SERIES`, `GITUM_STATE`, `GITUM_PREVIOUS_STATE` | JSON-событие на stdin; ошибка хука не роняет прогон |
 
 Хуки:
 - `hooks.change` получает по событию на каждое изменение, которое не
   применилось просто так.
 - `hooks.run` получает весь отчёт sync (`event` — `sync` или `candidate`).
+- `hooks.series` запускается, когда серия меняет состояние (`series set`, `queue add`, `forge refresh`, `forge import-json`): `{"event": "series-state", "series", "state", "previous", "version", "pr", "internal_mr", "upstream_commit", "release", "source", "bugs": [{"bug": "winehq:60741", "tracker", "id", "url", "label"}]}`. Сам gitum в трекеры не пишет.
 - `hooks.publish` запускается после успешного `gitum publish`. Его событие
   выглядит так:
 

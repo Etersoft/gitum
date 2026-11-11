@@ -1,0 +1,144 @@
+"""Bugs of series in named trackers, and the index bug -> series.
+
+A bug is written TRACKER:N, e.g. etersoft:19979 or winehq:60741; a bare N
+belongs to [series] bug-tracker. Trackers are [tracker.NAME] with
+url = "https://bugs.example.org/show_bug.cgi?id={n}" and an optional label
+("{tracker} {n}" by default, "#{n}" for the default tracker).
+
+With [series] fixes-tracker the bugs of that tracker are the Fixes: lines of a
+wine-staging definition file ("Fixes: [60741] ..."), and Fixes: [N] lines
+read from such a file become bugs of that tracker.
+"""
+
+import re
+
+from .errors import GitumError
+
+BUG_RE = re.compile(r'^(?:([A-Za-z][\w.-]*):)?#?(\w[\w.-]*)$')
+FIXES_RE = re.compile(r'^\[(\d+)\]')
+
+
+def default_tracker(cfg):
+	return cfg.series.get('bug-tracker', '')
+
+
+def normalize(cfg, value):
+	"""A bug as TRACKER:N (a bare N stays bare without a default tracker)."""
+	value = str(value).strip()
+	m = BUG_RE.match(value)
+	if not m:
+		raise GitumError('bad bug %r: write TRACKER:N or N' % value)
+	tracker, n = m.group(1) or default_tracker(cfg), m.group(2)
+	if not tracker:
+		return n
+	if cfg.trackers and tracker not in cfg.trackers:
+		raise GitumError('unknown bug tracker %s in %r (known: %s)' % (tracker, value, ', '.join(sorted(cfg.trackers))))
+	return '%s:%s' % (tracker, n)
+
+
+def normalize_list(cfg, values):
+	result = []
+	for v in values:
+		b = normalize(cfg, v)
+		if b not in result:
+			result.append(b)
+	return result
+
+
+def info(cfg, bug):
+	"""{bug, tracker, id, url, label} of a bug as stored (old bare numbers included)."""
+	try:
+		bug = normalize(cfg, bug)
+	except GitumError:
+		pass
+	tracker, _, n = bug.rpartition(':')
+	conf = cfg.trackers.get(tracker, {})
+	default = '#{n}' if tracker == default_tracker(cfg) or not tracker else '{tracker} {n}'
+	label = (conf.get('label') or default).format(tracker=tracker, n=n)
+	url = conf['url'].format(n=n, tracker=tracker) if conf.get('url') else ''
+	return {'bug': bug, 'tracker': tracker, 'id': n, 'url': url, 'label': label}
+
+
+def of_series(cfg, meta):
+	"""Infos of the bugs of a series."""
+	return [info(cfg, b) for b in meta.get('bugs') or []]
+
+
+def matches(cfg, meta, query):
+	want = normalize(cfg, query)
+	return any(i['bug'] == want for i in of_series(cfg, meta))
+
+
+def from_fixes(cfg, fixes):
+	"""Bugs named by Fixes: [N] lines, in the fixes tracker."""
+	tracker = cfg.series.get('fixes-tracker')
+	if not tracker:
+		return []
+	return ['%s:%s' % (tracker, m.group(1)) for m in (FIXES_RE.match(f) for f in fixes or []) if m]
+
+
+def fixes_lines(cfg, meta):
+	"""Fixes: lines of a definition: the series' fixes, then its fixes-tracker bugs not mentioned there."""
+	fixes = list(meta.get('fixes') or [])
+	tracker = cfg.series.get('fixes-tracker') if cfg else None
+	if tracker:
+		named = {m.group(1) for m in (FIXES_RE.match(f) for f in fixes) if m}
+		for i in of_series(cfg, meta):
+			if i['tracker'] == tracker and i['id'] not in named:
+				fixes.append('[%s]' % i['id'])
+				named.add(i['id'])
+	return fixes
+
+
+def bug_sort_key(i):
+	return (i['tracker'], int(i['id']) if i['id'].isdigit() else 0, i['id'])
+
+
+def index(cfg, all_series, query=None):
+	"""Rows bug -> its series with state, version, merge request and release, by tracker and number."""
+	bugs = {}
+	for name, meta in sorted(all_series.items()):
+		for i in of_series(cfg, meta):
+			row = bugs.setdefault(i['bug'], {**i, 'series': []})
+			row['series'].append({'name': name, 'state': meta.get('state', ''), 'version': meta.get('version', ''),
+					      'pr': meta.get('pr', ''), 'internal_mr': meta.get('internal_mr', ''),
+					      'release': meta.get('release', ''), 'merged_at': meta.get('merged_at', '')})
+	rows = sorted(bugs.values(), key=bug_sort_key)
+	if query:
+		want = normalize(cfg, query)
+		rows = [r for r in rows if r['bug'] == want]
+	return rows
+
+
+def md_bug(i):
+	return '[%s](%s)' % (i['label'], i['url']) if i.get('url') else i['label']
+
+
+def markdown_table(rows, titles=None):
+	"""Markdown table: one line per bug and series; the bug is named on its first line."""
+	from .upstreamwork import md_link
+	t = {'bug': 'Bug', 'name': 'Series', 'state': 'State', 'pr': 'Upstream MR', 'internal_mr': 'Internal MR',
+	     'release': 'Release', **(titles or {})}
+	fields = ['bug', 'name', 'state', 'internal_mr', 'pr', 'release']
+	lines = ['| ' + ' | '.join(t[f] for f in fields) + ' |', '|' + '---|' * len(fields)]
+	for r in rows:
+		for k, s in enumerate(r['series']):
+			state = s['state'] + ((' ' + s['version']) if s['version'] else '')
+			release = s['release'] or ((s['merged_at'] or '')[:10] if s['state'] == 'merged' else '')
+			cells = [md_bug(r) if k == 0 else '', s['name'], state, md_link(s['internal_mr']), md_link(s['pr']), release]
+			lines.append('| ' + ' | '.join(c.replace('|', '\\|') for c in cells) + ' |')
+	return lines
+
+
+def markdown(rows, title='Bugs', titles=None):
+	return '\n'.join(['# ' + title, '', 'Generated by gitum; do not edit by hand.', ''] +
+			 (markdown_table(rows, titles) if rows else ['No bugs.'])) + '\n'
+
+
+def text(rows):
+	lines = []
+	for r in rows:
+		series = ', '.join('%s (%s%s)' % (s['name'], s['state'], (' ' + s['version']) if s['version'] else '')
+				   for s in r['series'])
+		lines.append('%-18s %s%s' % (r['label'], series, ('  ' + r['url']) if r['url'] else ''))
+	return '\n'.join(lines) or 'No bugs.'

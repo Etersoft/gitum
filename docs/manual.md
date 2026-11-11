@@ -317,11 +317,21 @@ check = "./build.sh"             # must pass before the branches move
 
 [series]
 subject-lint = '^[a-z0-9_./-]+: [A-Z].*\.$'
+bug-tracker = "etersoft"         # a bare bug number belongs to it
+fixes-tracker = "winehq"         # its bugs are the Fixes: lines of a definition
+
+[tracker.etersoft]
+url = "https://bugs.etersoft.ru/show_bug.cgi?id={n}"
+
+[tracker.winehq]
+url = "https://bugs.winehq.org/show_bug.cgi?id={n}"
+label = "winehq {n}"             # default: "#{n}" for bug-tracker, "{tracker} {n}" for others
 
 [hooks]                          # get JSON events on stdin
 change = "tools/notify-bugs.py"
 run = "tools/notify-chat.sh"
 publish = "tools/set-version-branches.sh"
+series = "tools/comment-in-bugs.py"  # a series changed its state
 ```
 
 Upstream options:
@@ -356,6 +366,7 @@ Nothing asks questions interactively.
 | `check-upstream [layer:X\|series:Y] [--since REF] [--apply]` | Find our changes upstream: patch-id, then subject and diff similarity. A match counts as accepted with edits only when the content is verified (our change applied onto upstream changes nothing); anything else is `suspect` and waits for a person. |
 | `series add\|save\|list\|show\|set\|remove\|export\|import-staging\|import-json\|checkout\|claim\|release` | Series of changes. States: draft → review (internal) → queued → sent (version vN) → approved → merged, rejected or superseded. A series may sit at any depth of an export directory (`export_dir`); export touches only `definition` and the `*.patch` files the series wrote itself, so several series can share a directory: patch numbers continue after their dependencies, and the shared `definition` combines their Fixes. `series save NAME` always recounts a named series. When commits of a series on `upstream:X` were committed by someone who commits to that upstream (and not by you), the branch most likely stands on a newer upstream than the local ref: `series add`, `save` and `import-json` warn and exit with 2, and `status` shows the warning until the upstream is fetched and the series saved again. `import-json` never moves a series back to an earlier state when the series changed after the record (`--force` does). The first export of hand-made patches rewrites them in gitum's normalized form (`From 0000…`, no signature). `claim` marks a series as worked on by a session (`GITUM_SESSION`); other sessions get exit code 75 for it. `pr` and `internal_mr` take a URL or `[forge:]group/project!N`, resolved through `[forge.NAME]` (defaults: `[series] pr-forge`, `internal-mr-forge`); a forge with other paths sets `mr-url = "{url}/{project}/merge_requests/{n}"`. |
 | `mr set\|import\|render\|record SERIES` | The merge request text of a series with its images; internal parts; images uploaded once per forge project (see "A series on its way upstream"). |
+| `bugs [[TRACKER:]N] [--format md] [-o FILE]` | The bug index: bug (a link) → its series → state and version → merge requests → release once merged, sorted by tracker and number. A series lists its bugs as `bugs=etersoft:19979,winehq:60741` (`series set`, `import-json`); a bare number belongs to `[series] bug-tracker`. With `[series] fixes-tracker`, the bugs of that tracker are written as `Fixes: [N]` lines of the definition (unless a Fixes line already names them), and `Fixes: [N]` lines read by `import-staging` or set as `fixes=` become bugs. `series list --bug B` and `status --series --bug B` show the series of one bug; the queue markdown shows bugs as links, and `sections = [..., "bugs"]` adds the index to it. |
 | `port`, `variants` | A series on another base, and how its variants differ. |
 | `queue [next\|add\|pause\|resume] [--target T]`, `queue --format md` | Upstream submission queues, one per target (series field `target`). One series at a time until it is approved or merged, dependencies first. `pause --reason` stops a queue. Generates `UPSTREAM-QUEUE.md`: `[queue.markdown]` sets its sections (`sent`, `queued`, `review`, `draft`, `done`), the fields shown as columns (`fields`, `done-fields`: any series field such as `reviewer`, `release`, `merged_at`) and all titles (`titles`). |
 | `prepare SERIES [--push FORK] [--force]` | Upstream form of a series: fresh base, new dates one second apart, no Co-Authored-By/Gitum-Id trailers, subject check, path remapping for vendored trees, a range-diff against the saved series. Dependencies must be merged first (`--force` includes them). You open the merge request yourself; `forge refresh` warns if its head differs from the prepared branch. |
@@ -389,11 +400,12 @@ environment:
 | `publish.check` | the private work tree at the top of each leaf layer | `GITUM_TIP` | exit 0, or the branches stay unchanged |
 | `generator = "command"` | the private work tree at the new base | `GITUM_BASE` | new commits on HEAD |
 | `post-command` of a generated layer | the private work tree | | commits; leftovers are committed by gitum |
-| `hooks.change`, `hooks.run`, `hooks.publish` | the main work tree | `GITUM_EVENT` | JSON event on stdin; failures never fail the run |
+| `hooks.change`, `hooks.run`, `hooks.publish`, `hooks.series` | the main work tree | `GITUM_EVENT`; for `hooks.series` also `GITUM_SERIES`, `GITUM_STATE`, `GITUM_PREVIOUS_STATE` | JSON event on stdin; failures never fail the run |
 
 Hooks:
 - `hooks.change` gets one event per change that was not simply applied.
 - `hooks.run` gets the whole sync report (`event` is `sync` or `candidate`).
+- `hooks.series` runs when a series changes its state (`series set`, `queue add`, `forge refresh`, `forge import-json`): `{"event": "series-state", "series", "state", "previous", "version", "pr", "internal_mr", "upstream_commit", "release", "source", "bugs": [{"bug": "winehq:60741", "tracker", "id", "url", "label"}]}`. gitum itself never writes to bug trackers.
 - `hooks.publish` runs after a successful `gitum publish`. Its event looks like this:
 
 ```json

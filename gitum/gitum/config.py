@@ -54,6 +54,7 @@ class Config:
 	series: dict = field(default_factory=dict)
 	queue: dict = field(default_factory=dict)
 	forges: dict = field(default_factory=dict)
+	trackers: dict = field(default_factory=dict)
 	raw: dict = field(default_factory=dict)
 	warnings: list = field(default_factory=list)
 
@@ -100,18 +101,21 @@ def _get(table, key, typ, default, where):
 
 # every key gitum reads; anything else is a typo or an outdated setting that would be ignored
 KNOWN = {
-	'': {'version', 'upstream', 'layer', 'resolve', 'publish', 'hooks', 'series', 'queue', 'forge', 'identity'},
+	'': {'version', 'upstream', 'layer', 'resolve', 'publish', 'hooks', 'series', 'queue', 'forge', 'tracker',
+	     'identity'},
 	'upstream.*': {'ref', 'remote', 'url', 'release-tags', 'prefix', 'rewritten'},
 	'layer.*': {'base', 'branch', 'compat-start-tag', 'annihilate-reverts', 'generator', 'staging-repo', 'staging-ref',
 		    'staging-exclude', 'command', 'post-command', 'post-message'},
 	'resolve': {'chain', 'rules', 'agent', 'review-unless'},
 	'publish': {'remote', 'candidate-prefix', 'check'},
-	'hooks': {'change', 'run', 'publish'},
+	'hooks': {'change', 'run', 'publish', 'series'},
 	'series': {'subject-lint', 'strip-trailers', 'pr-forge', 'internal-mr-forge', 'mr-internal-separator',
-		   'mr-assets-dir'},
+		   'mr-assets-dir', 'bug-tracker', 'fixes-tracker'},
 	'queue': {'one-at-a-time', 'done-limit', 'markdown'},
-	'queue.markdown': {'title', 'generated', 'next', 'nothing', 'paused', 'sections', 'fields', 'done-fields', 'titles'},
+	'queue.markdown': {'title', 'generated', 'next', 'nothing', 'paused', 'sections', 'fields', 'done-fields', 'titles',
+			   'bug-titles'},
 	'forge.*': {'type', 'url', 'api', 'token-env', 'mr-url', 'project'},
+	'tracker.*': {'url', 'label'},
 	'identity': {'aliases'},
 }
 
@@ -203,6 +207,7 @@ def parse(text, strict=False):
 	cfg.series = _get(raw, 'series', dict, {}, 'series')
 	cfg.queue = _get(raw, 'queue', dict, {}, 'queue')
 	cfg.forges = _get(raw, 'forge', dict, {}, 'forge')
+	cfg.trackers = _get(raw, 'tracker', dict, {}, 'tracker')
 	cfg.ordered_layers()
 	unknown = unknown_keys(raw)
 	if unknown and strict:

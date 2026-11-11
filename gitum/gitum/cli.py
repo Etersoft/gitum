@@ -157,7 +157,7 @@ def cmd_status(repo, args, out):
 		text += '\n\n' + (format_change_table(rows) or 'No changes need attention.')
 	if args.series and all_series:
 		from .commands_changes import format_tree, series_tree
-		rows = series_tree(repo, journal, args.variants)
+		rows = series_tree(repo, journal, args.variants, args.bug)
 		data['series_tree'] = rows
 		text += '\n\n' + format_tree(rows)
 	out.result(data, text)
@@ -227,6 +227,7 @@ def build_parser():
 	s.add_argument('--changes', action='store_true', help='table: change -> fate -> action needed')
 	s.add_argument('--series', action='store_true', help='series as a tree by dependencies')
 	s.add_argument('--variants', action='store_true', help='with --series: check whether variants diverged')
+	s.add_argument('--bug', metavar='[TRACKER:]N', help='with --series: only the series of this bug')
 	s.add_argument('--all', action='store_true', help='with --changes: also changes without an action')
 	s.set_defaults(func=cmd_status)
 

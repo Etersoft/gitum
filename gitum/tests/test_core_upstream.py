@@ -406,3 +406,68 @@ def test_series_on_newer_upstream_than_the_ref(stack, capsys):
 	assert code == 0 and not data['warnings']
 	meta = journal(work).read_json('series/fresh/meta.json')
 	assert len(meta['changes']) == 1 and 'upstream_suspects' not in meta
+
+
+BUG_CFG = ('[series]\nbug-tracker = "etersoft"\nfixes-tracker = "winehq"\n'
+	   '[tracker.etersoft]\nurl = "https://bugs.etersoft.ru/show_bug.cgi?id={n}"\n'
+	   '[tracker.winehq]\nurl = "https://bugs.winehq.org/show_bug.cgi?id={n}"\n'
+	   '[hooks]\nseries = "cat >> \\"$GITUM_COMMON_DIR/series-events\\""\n')
+
+
+def test_bugs_with_trackers(ser, tmp_path, capsys):
+	up, work = ser
+	load_config(work, tmp_path, BUG_CFG)
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'bugs=19979,winehq:60741', 'fixes=[60741] Tahoma is wrong') == 0
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'bugs=etersoft:19979') == 0
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'bugs=nosuch:1') == 1
+	j = journal(work)
+	meta = j.read_json('series/ntdll-base/meta.json')
+	assert meta['bugs'] == ['etersoft:19979', 'winehq:60741']
+	# the winehq bug is the Fixes line already written, not a second one
+	assert j.read_text('series/ntdll-base/definition') == 'Fixes: [60741] Tahoma is wrong\n'
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'bugs=etersoft:19979,winehq:5') == 0
+	assert 'Fixes: [5]\n' in journal(work).read_text('series/ntdll-use/definition')
+
+	code, data = gitum_json(work, capsys, 'series', 'list', '--bug', '19979')
+	assert sorted(data) == ['ntdll-base', 'ntdll-use']
+	code, data = gitum_json(work, capsys, 'series', 'list', '--bug', 'winehq:60741')
+	assert list(data) == ['ntdll-base']
+	code, data = gitum_json(work, capsys, 'status', '--series', '--bug', 'winehq:5')
+	assert [r['name'] for r in data['series_tree']] == ['ntdll-use']
+
+	code, rows = gitum_json(work, capsys, 'bugs')
+	assert [r['bug'] for r in rows] == ['etersoft:19979', 'winehq:5', 'winehq:60741']
+	assert [s['name'] for s in rows[0]['series']] == ['ntdll-base', 'ntdll-use']
+	out = tmp_path / 'BUGS.md'
+	assert gitum(work, 'bugs', '--format', 'md', '-o', str(out)) == 0
+	text = out.read_text()
+	assert '[#19979](https://bugs.etersoft.ru/show_bug.cgi?id=19979)' in text
+	assert '[winehq 60741](https://bugs.winehq.org/show_bug.cgi?id=60741)' in text
+
+	# the queue markdown shows bugs as links and can carry the index as a section
+	load_config(work, tmp_path, '[queue.markdown]\nsections = ["queued", "draft", "bugs"]\n')
+	capsys.readouterr()
+	assert gitum(work, 'queue', '--format', 'md') == 0
+	md = capsys.readouterr().out
+	assert '[#19979](https://bugs.etersoft.ru/show_bug.cgi?id=19979), [winehq 60741]' in md and '## Bugs' in md
+
+	# a state change runs [hooks] series with the bugs and their trackers
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=sent', 'version=v1') == 0
+	event = json.loads((work.path / '.git' / 'series-events').read_text())
+	assert event['event'] == 'series-state' and event['previous'] == 'draft' and event['state'] == 'sent'
+	assert [b['bug'] for b in event['bugs']] == ['etersoft:19979', 'winehq:60741']
+	assert event['bugs'][0]['url'] == 'https://bugs.etersoft.ru/show_bug.cgi?id=19979'
+
+
+def test_bugs_import(stack, tmp_path, capsys):
+	up, work = stack
+	load_config(work, tmp_path, BUG_CFG)
+	d = tmp_path / 'staging' / 'gdi32-tahoma'
+	d.mkdir(parents=True)
+	(d / 'definition').write_text('Fixes: [60741] Tahoma is wrong\nFixes: something without a number\n')
+	assert gitum(work, 'series', 'import-staging', str(tmp_path / 'staging'), '--base', 'upstream:winehq') == 0
+	assert journal(work).read_json('series/gdi32-tahoma/meta.json')['bugs'] == ['winehq:60741']
+	items = [{'name': 'old-one', 'base': 'upstream:winehq', 'bugs': ['19819', 'winehq:60629']}]
+	(tmp_path / 'items.json').write_text(json.dumps(items))
+	assert gitum(work, 'series', 'import-json', str(tmp_path / 'items.json')) == 0
+	assert journal(work).read_json('series/old-one/meta.json')['bugs'] == ['etersoft:19819', 'winehq:60629']

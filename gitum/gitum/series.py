@@ -15,6 +15,7 @@ import socket
 import tempfile
 from pathlib import Path
 
+from . import bugs as bugs_mod
 from . import changes as changes_mod
 from .errors import Busy, GitumError, NeedsHuman
 from .git import RefTransaction
@@ -171,10 +172,10 @@ def base_ref(cfg, spec):
 	return spec
 
 
-def definition_text(meta):
-	"""A wine-staging definition file."""
+def definition_text(meta, cfg=None):
+	"""A wine-staging definition file; with [series] fixes-tracker its bugs are Fixes: lines."""
 	lines = []
-	for fix in meta.get('fixes', []):
+	for fix in bugs_mod.fixes_lines(cfg, meta) if cfg else meta.get('fixes', []):
 		lines.append('Fixes: %s' % fix)
 	for dep in meta.get('depends', []):
 		lines.append('Depends: %s' % dep)
@@ -339,7 +340,7 @@ def _record(repo, journal, writer, tracker, name, meta, branch_tip, context, all
 		meta.pop('upstream_suspects', None)
 	drop_patches(journal, writer, name)
 	writer.put_json(meta_path(name), meta)
-	writer.put('series/%s/definition' % name, definition_text(meta))
+	writer.put('series/%s/definition' % name, definition_text(meta, cfg))
 	patches = _format_patches(git, [c.sha for c in new_changes], offset + 1)
 	# every patch file name the series ever had: export removes only those of them that are stale
 	meta['patch_files'] = sorted(set(meta.get('patch_files', [])) | set(patches))
@@ -429,6 +430,8 @@ def set_(repo, name, values):
 						if dep not in known:
 							raise GitumError('unknown dependency %s' % dep)
 					order({**known, name: {**meta, 'depends': value}}, [name])
+			if key == 'bugs':
+				value = bugs_mod.normalize_list(journal.config, value)
 			if key == 'position' and value not in ('', None):
 				value = int(value)
 			if key in LINK_FIELDS:
@@ -437,6 +440,10 @@ def set_(repo, name, values):
 				meta.pop(key, None)
 			else:
 				meta[key] = value
+		if 'fixes' in values:
+			found = bugs_mod.from_fixes(journal.config, meta.get('fixes'))
+			if found:
+				meta['bugs'] = bugs_mod.normalize_list(journal.config, list(meta.get('bugs') or []) + found)
 		if meta.get('state') != old_state:
 			touch(meta, state=meta.get('state'), previous=old_state)
 		else:
@@ -450,9 +457,24 @@ def set_(repo, name, values):
 			tracker.write(writer)
 		else:
 			writer.put_json(meta_path(name), meta)
-		writer.put('series/%s/definition' % name, definition_text(meta))
+		writer.put('series/%s/definition' % name, definition_text(meta, journal.config))
 		_commit(repo, journal, writer, 'gitum: series %s: %s' % (name, ', '.join('%s=%s' % kv for kv in values.items())))
+		if meta.get('state') != old_state:
+			state_hook(repo, journal.config, meta, old_state)
 		return meta
+
+
+def state_hook(repo, cfg, meta, previous, source=''):
+	"""[hooks] series gets an event when the state of a series changes (to comment in its bugs and so on)."""
+	if not cfg.hooks.get('series'):
+		return []
+	from . import hooks
+	event = {'event': 'series-state', 'series': meta['name'], 'state': meta.get('state'), 'previous': previous,
+		 'version': meta.get('version', ''), 'pr': meta.get('pr', ''), 'internal_mr': meta.get('internal_mr', ''),
+		 'upstream_commit': meta.get('upstream_commit', ''), 'release': meta.get('release', ''),
+		 'bugs': bugs_mod.of_series(cfg, meta), 'source': source}
+	return hooks.run_event(repo, 'series', event, {'series': meta['name'], 'state': meta.get('state'),
+							'previous_state': previous})
 
 
 def remove(repo, name):
@@ -484,7 +506,7 @@ def export(repo, names, directory, check=False):
 			raise GitumError('no series %s' % name)
 		files = {f: journal.read('series/%s/%s' % (name, f)) for f in journal.list('series/' + name)
 			 if f.endswith('.patch')}
-		files['definition'] = shared_definition(all_series, all_series[name]).encode()
+		files['definition'] = shared_definition(all_series, all_series[name], journal.config).encode()
 		target = directory / export_dir(all_series[name])
 		# files of this series: its current files and every patch name it ever had
 		ours = set(files) | set(all_series[name].get('patch_files', []))
@@ -501,7 +523,7 @@ def export(repo, names, directory, check=False):
 	return {'series': names, 'stale': stale, 'written': [] if check else stale}
 
 
-def shared_definition(all_series, meta):
+def shared_definition(all_series, meta, cfg=None):
 	"""The definition for the export directory of a series, combined for series sharing it.
 
 	Fixes of all of them in dependency order, Depends only on series outside the
@@ -511,11 +533,11 @@ def shared_definition(all_series, meta):
 	members = sorted(n for n, m in all_series.items() if export_dir(m) == here)
 	group = [n for n in order(all_series, members) if n in members]
 	if len(group) == 1:
-		return definition_text(meta)
+		return definition_text(meta, cfg)
 	fixes, depends, reasons = [], [], []
 	for n in group:
 		m = all_series[n]
-		fixes += [f for f in m.get('fixes', []) if f not in fixes]
+		fixes += [f for f in (bugs_mod.fixes_lines(cfg, m) if cfg else m.get('fixes', [])) if f not in fixes]
 		depends += [d for d in m.get('depends', []) if d not in group and d not in depends]
 		if m.get('disabled'):
 			reasons.append('%s: %s' % (n, m['disabled'] if m['disabled'] is not True else 'disabled'))
@@ -562,6 +584,9 @@ def import_staging(repo, directory, base, names=None):
 				    disabled=definition.get('disabled', ''))
 			if definition.get('helps'):
 				meta['helps'] = definition['helps']
+			found = bugs_mod.from_fixes(journal.config, meta['fixes'])
+			if found or meta.get('bugs'):
+				meta['bugs'] = bugs_mod.normalize_list(journal.config, list(meta.get('bugs') or []) + found)
 			if meta['disabled']:
 				meta['state'] = 'disabled'
 			elif meta.get('state') == 'disabled':
@@ -570,7 +595,7 @@ def import_staging(repo, directory, base, names=None):
 				meta['export_dir'] = str(rel)
 			drop_patches(journal, writer, name)
 			writer.put_json(meta_path(name), meta)
-			writer.put('series/%s/definition' % name, definition_text(meta))
+			writer.put('series/%s/definition' % name, definition_text(meta, journal.config))
 			names_here = []
 			for p in sorted(d.iterdir()):
 				if p.is_file() and p.name.endswith('.patch'):
@@ -675,7 +700,7 @@ def import_json(repo, items, force=False):
 						touch(meta, state=meta['state'])
 						writer = JournalWriter(repo.git, j.sha)
 						writer.put_json(meta_path(name), meta)
-						writer.put('series/%s/definition' % name, definition_text(meta))
+						writer.put('series/%s/definition' % name, definition_text(meta, j.config))
 						_commit(repo, j, writer, 'gitum: series import %s' % name)
 				created.append(name)
 			else:

@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 
+from . import bugs as bugs_mod
 from . import series as series_mod
 from . import state
 from .errors import GitumError, NeedsHuman
@@ -146,7 +147,7 @@ def targets(journal):
 	return sorted(names or {DEFAULT_TARGET})
 
 
-def series_row(name, meta, all_series):
+def series_row(name, meta, all_series, cfg=None):
 	"""All fields of a series a queue can show."""
 	return {'name': name, 'state': meta.get('state', ''), 'position': meta.get('position'),
 		'depends': meta.get('depends', []),
@@ -156,7 +157,8 @@ def series_row(name, meta, all_series):
 		'version': meta.get('version', ''), 'updated': meta.get('updated', ''), 'note': meta.get('note', ''),
 		'reviewer': meta.get('reviewer', ''), 'release': meta.get('release', ''),
 		'upstream_commit': meta.get('upstream_commit', ''), 'merged_at': meta.get('merged_at', ''),
-		'target': meta.get('target') or DEFAULT_TARGET}
+		'target': meta.get('target') or DEFAULT_TARGET,
+		'bug_links': bugs_mod.of_series(cfg, meta) if cfg else []}
 
 
 def queue_one(journal, all_series, target):
@@ -172,17 +174,17 @@ def queue_one(journal, all_series, target):
 	waiting_review = [n for n in active if mine[n]['state'] == 'sent']
 	rows, next_ = [], None
 	for n in active:
-		row = series_row(n, mine[n], all_series)
+		row = series_row(n, mine[n], all_series, cfg)
 		rows.append(row)
 		if next_ is None and row['state'] == 'queued' and not row['blocked_by'] and \
 				not (one_at_a_time and waiting_review) and not state.get('paused'):
 			next_ = n
-	drafts = [series_row(n, mine[n], all_series)
+	drafts = [series_row(n, mine[n], all_series, cfg)
 		  for n in sorted((n for n, m in mine.items() if m.get('state') == 'draft'), key=by_position)]
 	done = sorted((n for n, m in mine.items() if m.get('state') in series_mod.DONE_STATES),
 		      key=lambda n: mine[n].get('merged_at') or mine[n].get('updated', ''),
 		      reverse=True)[:cfg.queue.get('done-limit', 20)]
-	done_rows = [series_row(n, mine[n], all_series) for n in done]
+	done_rows = [series_row(n, mine[n], all_series, cfg) for n in done]
 	reason = ''
 	if next_ is None:
 		if state.get('paused'):
@@ -201,7 +203,8 @@ def queue(repo, target=None):
 	journal = repo.journal()
 	all_series = series_mod.load_all(journal)
 	names = [target] if target else targets(journal)
-	return {'queues': {t: queue_one(journal, all_series, t) for t in names}}
+	return {'queues': {t: queue_one(journal, all_series, t) for t in names},
+		'bugs': bugs_mod.index(journal.config, all_series)}
 
 
 def queue_add(repo, name, position=None):
@@ -241,6 +244,8 @@ def md_cell(row, field, index):
 		return md_link(value)
 	if field == 'upstream_commit':
 		return (value or '')[:12]
+	if field == 'bugs' and row.get('bug_links'):
+		return ', '.join(bugs_mod.md_bug(i) for i in row['bug_links'])
 	if field == 'depends':
 		return ', '.join(('~~%s~~' % d) if d not in row.get('blocked_by', []) else d for d in value or [])
 	if isinstance(value, list):
@@ -272,6 +277,8 @@ def queue_markdown(data, labels=None):
 			lines.append('%s: %s.' % (conf['nothing'], q['reason']))
 		lines.append('')
 		for section in conf['sections']:
+			if section == 'bugs':
+				continue
 			if section == 'done':
 				rows, fields = q['done'], conf['done-fields']
 			elif section == 'draft':
@@ -280,6 +287,8 @@ def queue_markdown(data, labels=None):
 				rows, fields = [r for r in q['rows'] if r['state'] in SECTION_STATES.get(section, ())], conf['fields']
 			if rows:
 				lines += ['### ' + titles.get(section, section), ''] + _md_table(fields, titles, rows) + ['']
+	if 'bugs' in conf['sections'] and data.get('bugs'):
+		lines += ['## ' + titles.get('bugs', 'Bugs'), ''] + bugs_mod.markdown_table(data['bugs'], conf.get('bug-titles')) + ['']
 	return '\n'.join(lines).rstrip('\n') + '\n'
 
 

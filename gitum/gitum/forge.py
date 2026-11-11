@@ -160,10 +160,14 @@ def import_json(repo, items):
 		journal = repo.journal()
 		tracker = changes_mod.Tracker(journal)
 		all_series = series_mod.load_all(journal)
+		states_before = {n: m.get('state') for n, m in all_series.items()}
 		updated = [u for u in (_apply(tracker, all_series, i) for i in items) if u]
 		touched = [u.split(' ', 1)[1] for u in updated if u.startswith('series ')]
 		if updated:
 			_write(repo, journal, tracker, all_series, touched, 'gitum: forge import (%d updates)' % len(updated))
+		for name in touched:
+			if all_series[name].get('state') != states_before.get(name):
+				series_mod.state_hook(repo, journal.config, all_series[name], states_before.get(name), 'forge')
 		return {'updated': updated}
 
 
