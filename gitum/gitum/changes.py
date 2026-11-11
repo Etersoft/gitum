@@ -30,7 +30,7 @@ FATES = {
 }
 # fates after which a change is not applied any more once the condition holds
 DROP_FATES = {'merged', 'merged-modified', 'fixed-differently', 'disabled'}
-META_KEYS = {'pr', 'internal_mr', 'bugs', 'upstream_commit', 'release', 'link', 'reason', 'origin',
+META_KEYS = {'pr', 'internal_mr', 'bugs', 'upstream_commit', 'release', 'link', 'reason', 'origin', 'candidate',
 	     'drop_on', 'similarity', 'series', 'note'}
 LIST_KEYS = {'bugs'}
 

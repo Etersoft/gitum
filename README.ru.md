@@ -140,16 +140,16 @@ publish = "tools/set-version-branches.sh"
 
 | Команда | Что делает |
 |---|---|
-| `init` | Создать журнал из существующих веток. |
+| `init` | Создать журнал из существующих веток. Слои необязательны: для работы только с сериями достаточно апстримов. |
 | `status [--changes] [--series [--variants]]` | Апстримы, слои, незавершённые операции, блокировки, таблица «изменение → судьба → действие», серии деревом по зависимостям (состояние, отставание базы, захваты, разошедшиеся варианты). |
 | `sync [--to REF \| --next-release] [--step] [--candidate auto\|always\|never] [--publish] [--find-culprit] [--allow-rewrite]` | Перенести стек на новый апстрим. |
 | `continue`, `skip`, `abort` | Продолжить, выбросить конфликтующее изменение или отменить остановленный sync. |
 | `accept`, `drop-candidate` | Опубликовать или выбросить результат, ждущий ревью в `candidate/*`. |
 | `save` | Записать работу, сделанную в ветках слоёв обычным git. |
 | `publish`, `pull` | Обмен состоянием. Коммиты, запушенные другими за это время, встают сверху; журналы параллельных сессий сливаются. |
-| `change list\|show\|set` | Изменения и их судьбы: `gitum change set ID fate=merged upstream_commit=SHA`. |
+| `change list\|show\|set\|confirm` | Изменения и их судьбы: `gitum change set ID fate=merged upstream_commit=SHA`; `gitum change confirm ID [SHA]` подтверждает `suspect`, найденный `check-upstream`. |
 | `check-upstream [layer:X\|series:Y] [--since REF] [--apply]` | Найти наши изменения в апстриме: patch-id, затем сходство заголовка и диффа. Совпадение считается «принято с правками», только если содержимое подтверждено (наше изменение поверх апстрима ничего не меняет); иначе — `suspect`, решает человек. |
-| `series add\|save\|list\|show\|set\|remove\|export\|import-staging\|import-json\|checkout\|claim\|release` | Серии изменений. Состояния: draft → review (внутреннее ревью) → queued → sent (версия vN) → approved → merged, rejected или superseded. Серия может лежать на любой глубине каталога экспорта (`export_dir`); экспорт трогает только `definition` и `*.patch`. `claim` отмечает, что серией занимается сессия (`GITUM_SESSION`); другие сессии получат по ней код 75. |
+| `series add\|save\|list\|show\|set\|remove\|export\|import-staging\|import-json\|checkout\|claim\|release` | Серии изменений. Состояния: draft → review (внутреннее ревью) → queued → sent (версия vN) → approved → merged, rejected или superseded. Серия может лежать на любой глубине каталога экспорта (`export_dir`); экспорт трогает только `definition` и те `*.patch`, которые писала сама серия, поэтому несколько серий могут делить один каталог (номера патчей продолжаются после зависимостей). Первый экспорт патчей, сделанных вручную, перепишет их в нормализованном виде gitum (`From 0000…`, без подписи). `claim` отмечает, что серией занимается сессия (`GITUM_SESSION`); другие сессии получат по ней код 75. |
 | `port`, `variants` | Серия на другой базе и чем её варианты отличаются. |
 | `queue [next\|add\|pause\|resume] [--target T]`, `queue --format md` | Очереди отправки в апстрим, по одной на цель (поле серии `target`). По одной серии, пока её не одобрят или не примут; сначала зависимости. `pause --reason` останавливает очередь. Генерирует `UPSTREAM-QUEUE.md`; заголовки берутся из `[queue.markdown]`. |
 | `prepare СЕРИЯ [--push ФОРК] [--force]` | Серия в виде для апстрима: свежая база, новые даты с шагом в секунду, без trailer'ов Co-Authored-By/Gitum-Id, проверка заголовков, перераскладка путей для vendored-деревьев, range-diff с сохранённой серией. Зависимости должны быть уже приняты (`--force` включает их коммиты). Merge request вы открываете сами; `forge refresh` предупредит, если его голова отличается от подготовленной ветки. |

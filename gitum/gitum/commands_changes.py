@@ -57,6 +57,11 @@ def cmd_change(repo, args, out):
 		rows = change_rows(journal, args.layer, args.fate, args.all)
 		out.result(rows, format_change_table(rows) or 'No changes.')
 		return
+	if args.action == 'confirm':
+		data = confirm(repo, args.ref, args.values[0] if args.values else None)
+		out.result(data, '%s: %s as %s%s' % (data['id'], data['fate'], short(data['meta']['upstream_commit']),
+						    ' in ' + data['meta']['release'] if data['meta'].get('release') else ''))
+		return
 	if args.action == 'show':
 		rec = changes_mod.Tracker(journal).get(args.ref)
 		rec = {**rec, 'action': changes_mod.action(rec)}
@@ -88,6 +93,36 @@ def cmd_change(repo, args, out):
 
 
 # series
+
+def confirm(repo, ref, sha=None):
+	"""A person confirms that a change was accepted upstream (as the remembered candidate or sha)."""
+	git = repo.git
+	with repo.lock():
+		journal = repo.journal()
+		tracker = changes_mod.Tracker(journal)
+		rec = tracker.get(ref)
+		commit = git.rev(sha) if sha else git.rev(rec['meta'].get('candidate', '') or 'none-given')
+		if not commit:
+			raise GitumError('change %s: give the upstream commit (no candidate remembered)' % rec['id'])
+		cfg = journal.config
+		upstream = None
+		layer = rec.get('layer', '')
+		if layer in cfg.layers:
+			upstream = cfg.root_upstream(cfg.layers[layer])
+		elif layer.startswith('series:'):
+			meta = series.load_all(journal).get(layer.split(':', 1)[1], {})
+			up_name = meta.get('upstream') or meta.get('base', '').partition(':')[2]
+			upstream = cfg.upstreams.get(up_name)
+		rec = tracker.set(rec['id'], 'merged-modified', upstream_commit=commit, candidate='',
+				  release=upstreamcheck.first_release(git, upstream, commit))
+		writer = JournalWriter(git, journal.sha)
+		tracker.write(writer)
+		new = writer.write('gitum: change %s confirmed as %s' % (rec['id'], commit[:12]))
+		tr = RefTransaction(git)
+		tr.update(JOURNAL_REF, new, journal.sha)
+		tr.commit()
+		return rec
+
 
 def format_series(all_series, journal):
 	lines = []
@@ -148,6 +183,8 @@ def format_tree(rows):
 		notes = []
 		if r['base_behind']:
 			notes.append('base %d behind' % r['base_behind'])
+		elif r['base_behind'] == 0:
+			notes.append('base up to date')
 		if r.get('diverged'):
 			notes.append('diverged: ' + ', '.join(r['diverged']))
 		elif r['variants']:
@@ -224,11 +261,18 @@ def cmd_check_upstream(repo, args, out):
 		if e.get('upstream_commit'):
 			where = ' as %s (%.0f%%)%s' % (short(e['upstream_commit']), e['similarity'] * 100,
 						     ' in ' + e['release'] if e.get('release') else '')
+		same = [w for w, flag in (('same subject', e.get('same_subject')), ('same author', e.get('same_author'))) if flag]
+		if same:
+			where += ' [%s]' % ', '.join(same)
 		lines.append('%-15s %-8s %s%s' % (e['status'], e.get('id') or '-', e['subject'], where))
 		if e.get('note'):
 			lines.append('%24s%s' % ('', e['note']))
 	if data['applied']:
 		lines.append('Recorded as merged: %s' % ', '.join(data['applied']))
+	if data.get('series_merged'):
+		lines.append('Series merged: %s' % ', '.join(data['series_merged']))
+	if data['suspect'] and args.apply:
+		lines.append('Confirm a suspect with: gitum change confirm ID [UPSTREAM_SHA]')
 	out.result(data, '\n'.join(lines) or 'Nothing found upstream.')
 	return EXIT_NEEDS_HUMAN if data['suspect'] else EXIT_OK
 
@@ -295,7 +339,7 @@ def object_history(repo, target):
 
 def register(sub):
 	s = sub.add_parser('change', help='changes and their fate')
-	s.add_argument('action', choices=['list', 'show', 'set'])
+	s.add_argument('action', choices=['list', 'show', 'set', 'confirm'])
 	s.add_argument('ref', nargs='?', help='change id (or prefix, or commit sha); several with commas for set')
 	s.add_argument('values', nargs='*', metavar='KEY=VALUE',
 		       help='fate=..., pr=URL, bugs=1,2, upstream_commit=SHA, release=, reason=, link=, drop_on=REF')

@@ -88,8 +88,8 @@ def init(repo, upstreams=(), layers=(), config_text=None):
 	if config_text is None:
 		up_names = {u['name'] for u in upstreams}
 		layer_names = {l['name'] for l in layers}
-		if not upstreams or not layers:
-			raise ConfigError('init needs at least one upstream and one layer (or --config)')
+		if not upstreams:
+			raise ConfigError('init needs at least one upstream (or --config); layers are optional')
 		layer_dicts = []
 		for l in layers:
 			base = l.get('base') or (next(iter(up_names)) if len(up_names) == 1 else '')

@@ -198,12 +198,30 @@ def order(all_series, names):
 	return result
 
 
-def _format_patches(git, base, tip):
-	"""format-patch files of base..tip as {filename: bytes}."""
+def _format_patches(git, shas, start=1):
+	"""format-patch files of commits (oldest first) as {filename: bytes}, numbered from start."""
 	with tempfile.TemporaryDirectory() as tmp:
-		if git.rev_list('%s..%s' % (base, tip)):
-			git.run('format-patch', '--quiet', '--no-signature', '--zero-commit', '-o', tmp, '%s..%s' % (base, tip))
+		for i, sha in enumerate(shas):
+			git.run('format-patch', '--quiet', '--no-signature', '--zero-commit', '--start-number', str(start + i),
+				'-o', tmp, '-1', sha)
 		return {p.name: p.read_bytes() for p in sorted(Path(tmp).iterdir())}
+
+
+def dependencies_of(git, journal, all_series, meta):
+	"""What the dependencies of a series contribute: their tips, their patch-ids and,
+	for those exported into the same directory, the number of their patches."""
+	tips, pids, offset = [], set(), 0
+	if not meta.get('depends'):
+		return tips, pids, offset
+	own_dir = export_dir(meta)
+	for n in order({**all_series, meta['name']: meta}, [meta['name']])[:-1]:
+		d = all_series[n]
+		branch_tip = git.rev('refs/heads/' + d['branch']) if d.get('branch') else None
+		tips += [t for t in (branch_tip, d.get('tip')) if t]
+		pids |= {c['patch_id'] for c in (d.get('changes') or []) if c.get('patch_id')}
+		if export_dir(d) == own_dir:
+			offset += len([f for f in journal.list('series/' + n) if f.endswith('.patch')])
+	return tips, pids, offset
 
 
 def _commit(repo, journal, writer, message, extra_parents=()):
@@ -214,8 +232,13 @@ def _commit(repo, journal, writer, message, extra_parents=()):
 	return new
 
 
-def _record(repo, journal, writer, tracker, name, meta, branch_tip, context):
-	"""Recompute changes and patches of a series from its branch."""
+def _record(repo, journal, writer, tracker, name, meta, branch_tip, context, all_series=None):
+	"""Recompute changes and patches of a series from its branch.
+
+	A series branch may contain the commits of the series it depends on: the
+	base then is the tip of the dependency, and changes with the patch-id of a
+	dependency change are not part of the series.
+	"""
 	git = repo.git
 	cfg = journal.config
 	ref = base_ref(cfg, meta['base'])
@@ -224,9 +247,14 @@ def _record(repo, journal, writer, tracker, name, meta, branch_tip, context):
 	base = git.merge_base(ref, branch_tip)
 	if not base:
 		raise GitumError('series %s: %s has no common history with %s' % (name, meta['branch'], ref))
+	dep_tips, dep_pids, offset = dependencies_of(git, journal, all_series if all_series is not None
+						     else load_all(journal), meta)
+	for t in dep_tips:
+		if t != branch_tip and git.is_ancestor(t, branch_tip) and git.is_ancestor(base, t):
+			base = t
 	old = LayerState('series:' + name, {'base': meta.get('base_sha', base), 'tip': meta.get('tip', branch_tip),
 					    'changes': meta.get('changes', [])}) if meta.get('changes') is not None else None
-	new_changes = describe_changes(git, base, branch_tip)
+	new_changes = [c for c in describe_changes(git, base, branch_tip) if c.patch_id not in dep_pids]
 	tracker.track_layer('series:' + name, old, new_changes, context=context)
 	for c in new_changes:
 		rec = tracker.changes[c.gitum_id]
@@ -236,7 +264,11 @@ def _record(repo, journal, writer, tracker, name, meta, branch_tip, context):
 	writer.remove_dir('series/%s' % name)
 	writer.put_json(meta_path(name), meta)
 	writer.put('series/%s/definition' % name, definition_text(meta))
-	for fname, data in _format_patches(git, base, branch_tip).items():
+	patches = _format_patches(git, [c.sha for c in new_changes], offset + 1)
+	# every patch file name the series ever had: export removes only those of them that are stale
+	meta['patch_files'] = sorted(set(meta.get('patch_files', [])) | set(patches))
+	writer.put_json(meta_path(name), meta)
+	for fname, data in patches.items():
 		writer.put('series/%s/%s' % (name, fname), data)
 
 
@@ -259,7 +291,7 @@ def add(repo, name, branch, base, depends=(), state='draft', **meta):
 		touch(data, state=state)
 		writer = JournalWriter(git, journal.sha)
 		tracker = changes_mod.Tracker(journal)
-		_record(repo, journal, writer, tracker, name, data, tip, 'series add')
+		_record(repo, journal, writer, tracker, name, data, tip, 'series add', known)
 		tracker.write(writer)
 		_commit(repo, journal, writer, 'gitum: series add %s' % name, [tip])
 		return data
@@ -288,7 +320,7 @@ def save(repo, names=None):
 				continue
 			if tip == meta.get('tip'):
 				continue
-			_record(repo, journal, writer, tracker, name, meta, tip, 'series save')
+			_record(repo, journal, writer, tracker, name, meta, tip, 'series save', all_series)
 			touch(meta, event='saved', tip=tip)
 			writer.put_json(meta_path(name), meta)
 			saved.append(name)
@@ -330,7 +362,14 @@ def set_(repo, name, values):
 		else:
 			touch(meta)
 		writer = JournalWriter(repo.git, journal.sha)
-		writer.put_json(meta_path(name), meta)
+		tip = repo.git.rev('refs/heads/' + meta['branch']) if meta.get('branch') else None
+		if tip and meta.get('changes') is not None and {'export_dir', 'depends', 'base'} & set(values):
+			# the series boundary or the numbering of its patches may change
+			tracker = changes_mod.Tracker(journal)
+			_record(repo, journal, writer, tracker, name, meta, tip, 'series set')
+			tracker.write(writer)
+		else:
+			writer.put_json(meta_path(name), meta)
 		writer.put('series/%s/definition' % name, definition_text(meta))
 		_commit(repo, journal, writer, 'gitum: series %s: %s' % (name, ', '.join('%s=%s' % kv for kv in values.items())))
 		return meta
@@ -366,7 +405,10 @@ def export(repo, names, directory, check=False):
 		files = {f: journal.read('series/%s/%s' % (name, f)) for f in journal.list('series/' + name)
 			 if f != 'meta.json'}
 		target = directory / export_dir(all_series[name])
-		current = {p.name: p.read_bytes() for p in target.iterdir() if is_managed(p)} if target.is_dir() else {}
+		# files of this series: its current files and every patch name it ever had
+		ours = set(files) | set(all_series[name].get('patch_files', []))
+		current = {p.name: p.read_bytes() for p in target.iterdir() if is_managed(p) and p.name in ours} \
+			if target.is_dir() else {}
 		if current != files:
 			stale.append(name)
 			if not check:
@@ -426,9 +468,13 @@ def import_staging(repo, directory, base, names=None):
 			writer.remove_dir('series/%s' % name)
 			writer.put_json(meta_path(name), meta)
 			writer.put('series/%s/definition' % name, definition_text(meta))
+			names_here = []
 			for p in sorted(d.iterdir()):
 				if p.is_file() and p.name.endswith('.patch'):
 					writer.put('series/%s/%s' % (name, p.name), p.read_bytes())
+					names_here.append(p.name)
+			meta['patch_files'] = sorted(set(meta.get('patch_files', [])) | set(names_here))
+			writer.put_json(meta_path(name), meta)
 			imported.append(name)
 		if not imported:
 			raise GitumError('no series found in %s' % directory)
@@ -480,7 +526,7 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 		return {'branch': branch, 'tip': tip, 'applied': applied, 'base': start}
 
 
-IMPORT_KEYS = SET_KEYS | {'name', 'branch', 'base', 'depends', 'state'}
+IMPORT_KEYS = SET_KEYS | {'name', 'branch', 'base', 'depends', 'state', 'updated', 'history'}
 
 
 def import_json(repo, items):
@@ -509,7 +555,8 @@ def import_json(repo, items):
 			if any(dep not in known for dep in item.get('depends', [])):
 				continue
 			name = item['name']
-			rest = {k: v for k, v in item.items() if k not in ('name', 'branch', 'base', 'depends', 'state')}
+			rest = {k: v for k, v in item.items()
+				if k not in ('name', 'branch', 'base', 'depends', 'state', 'updated', 'history')}
 			if name not in known:
 				if not item.get('base'):
 					raise GitumError('series %s: base is required' % name)
@@ -536,9 +583,23 @@ def import_json(repo, items):
 				values.update({k: item[k] for k in ('state', 'depends', 'base', 'branch') if k in item})
 			if values:
 				set_(repo, name, values)
+			if item.get('updated') or item.get('history'):
+				_put_dates(repo, name, item.get('updated'), item.get('history'))
 			pending.remove(item)
 			progress = True
 		if not progress:
 			raise GitumError('series dependency cycle among %s' % ', '.join(i['name'] for i in pending))
 	return {'created': created, 'updated': updated}
 
+
+def _put_dates(repo, name, updated, history):
+	"""Keep the real dates of imported work instead of the date of the import."""
+	with repo.lock():
+		journal = repo.journal()
+		meta = load(journal, name)
+		if history:
+			meta['history'] = list(history)
+		meta['updated'] = updated or (meta.get('history') or [{}])[-1].get('date') or meta.get('updated')
+		writer = JournalWriter(repo.git, journal.sha)
+		writer.put_json(meta_path(name), meta)
+		_commit(repo, journal, writer, 'gitum: series %s: dates' % name)

@@ -402,9 +402,10 @@ def test_series_export_keeps_foreign_files(with_series, tmp_path, capsys):
 	(work_dir / 'run-tests.sh').write_text('#!/bin/sh\n')
 	(work_dir / '0009-stale.patch').write_text('old\n')
 	assert gitum(work, 'series', 'export', 'ntdll-use', '--dir', str(out)) == 0
+	# a patch the series never wrote is not ours: it stays
 	assert sorted(p.name for p in work_dir.iterdir()) == [
-		'0001-ntdll-Use-the-helper-bug-123.patch', '0002-ntdll-tests-Test-the-helper.patch', 'README.md',
-		'definition', 'run-tests.sh', 'src']
+		'0001-ntdll-Use-the-helper-bug-123.patch', '0002-ntdll-tests-Test-the-helper.patch', '0009-stale.patch',
+		'README.md', 'definition', 'run-tests.sh', 'src']
 	assert (work_dir / 'src' / 'probe.c').read_text() == 'int main;\n'
 	# foreign files do not make the copy stale
 	(work_dir / 'notes.tsv').write_text('a\tb\n')
@@ -488,3 +489,84 @@ def load_config(work, tmp_path, extra):
 	path = tmp_path / 'cfg-extra.toml'
 	path.write_text(journal(work).config_text + '\n' + extra)
 	assert gitum(work, 'config', 'load', str(path)) == 0
+
+
+def test_dependent_series_and_shared_export_dir(stack, tmp_path, capsys):
+	"""A series branch grown on top of its dependency: own changes only, numbering continues in a shared dir."""
+	up, work = stack
+	work.run('checkout', '-q', '-b', 'series/italic', 'v1.0')
+	work.commit('win32u: Fake italic 1.', {'i1': '1\n'})
+	work.commit('win32u: Fake italic 2.', {'i2': '2\n'})
+	work.run('checkout', '-q', '-b', 'series/gasp')
+	work.commit('win32u: Use gasp.', {'gasp': 'g\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'add', 'italic', '--base', 'upstream:winehq') == 0
+	# base given as upstream: the dependency tip becomes the base anyway
+	assert gitum(work, 'series', 'add', 'gasp', '--base', 'upstream:winehq', '--depends', 'italic') == 0
+	gitum(work, 'series', 'set', 'gasp', 'export_dir=italic')
+	gasp = journal(work).read_json('series/gasp/meta.json')
+	assert [c['subject'] for c in gasp['changes']] == ['win32u: Use gasp.']
+	assert gasp['base_sha'] == work.rev('series/italic')
+	out = tmp_path / 'patches'
+	assert gitum(work, 'series', 'export', '--dir', str(out)) == 0
+	assert sorted(p.name for p in (out / 'italic').iterdir() if p.name.endswith('.patch')) == [
+		'0001-win32u-Fake-italic-1.patch', '0002-win32u-Fake-italic-2.patch', '0003-win32u-Use-gasp.patch']
+	# the dependency changes: its own old patch goes, the gasp patch stays
+	work.run('checkout', '-q', 'series/italic')
+	work.run('commit', '-q', '--amend', '-m', 'win32u: Fake italic 2, reworded.')
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'save', 'italic') == 0
+	assert gitum(work, 'series', 'export', 'italic', '--dir', str(out)) == 0
+	names = sorted(p.name for p in (out / 'italic').iterdir() if p.name.endswith('.patch'))
+	assert names == ['0001-win32u-Fake-italic-1.patch', '0002-win32u-Fake-italic-2-reworded.patch',
+			 '0003-win32u-Use-gasp.patch']
+	code, data = gitum_json(work, capsys, 'queue')
+	code, st = gitum_json(work, capsys, 'status', '--series')
+	assert {r['name']: r['patches'] for r in st['series_tree']} == {'italic': 2, 'gasp': 1}
+
+
+def test_series_merged_when_all_changes_are_upstream(with_series, capsys):
+	up, work = with_series
+	gitum(work, 'series', 'set', 'ntdll-base', 'state=sent')
+	up.commit('ntdll: Add a helper.', {'ntdll': 'helper\n'})
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	code, data = gitum_json(work, capsys, 'check-upstream', 'series:ntdll-base', '--apply')
+	assert code == 0 and data['series_merged'] == ['ntdll-base']
+	meta = journal(work).read_json('series/ntdll-base/meta.json')
+	assert meta['state'] == 'merged' and meta['release'] == 'v1.1' and meta['upstream_commit']
+	assert meta['history'][-1]['source'] == 'check-upstream'
+
+
+def test_change_confirm_suspect(stack, capsys):
+	up, work = stack
+	accepted = up.commit('etersoft: change base line', {'base': 'line1\nUPSTREAM WAY\nline3\nline4\nline5\n'})
+	release(up, '1.1')
+	work.run('fetch', '-q', 'winehq')
+	code, data = gitum_json(work, capsys, 'check-upstream', 'layer:etersoft', '--apply')
+	suspect = {e['subject']: e for e in data['results']}['etersoft: change base line']
+	assert suspect['status'] == 'suspect' and suspect['same_subject'] and suspect['same_author']
+	cid = suspect['id']
+	assert changes_mod.Tracker(journal(work)).get(cid)['meta']['candidate'] == accepted
+	code, rec = gitum_json(work, capsys, 'change', 'confirm', cid)
+	assert code == 0 and rec['fate'] == 'merged-modified'
+	assert rec['meta']['upstream_commit'] == accepted and rec['meta']['release'] == 'v1.1'
+	assert 'candidate' not in rec['meta']
+	# the next sync drops it
+	assert gitum(work, 'sync', '--next-release') == 0
+	assert work.subjects('rebased-basealt..rebased-etersoft') == ['etersoft: feature']
+
+
+def test_init_with_series_only(tmp_path, capsys):
+	up = __import__('core_helpers').make_upstream(tmp_path / 'up')
+	w = Repo(tmp_path / 'w', init=False)
+	up.git.at(tmp_path).run('clone', '-q', '-o', 'winehq', str(up.path), str(w.path))
+	w.git = w.git.at(w.path)
+	assert main(['--repo', str(w.path), 'init', '--upstream', 'winehq=winehq/master']) == 0
+	w.run('checkout', '-q', '-b', 'series/x', 'v1.0')
+	w.commit('x: Change.', {'x': '1\n'})
+	assert main(['--repo', str(w.path), 'series', 'add', 'x', '--base', 'upstream:winehq']) == 0
+	capsys.readouterr()
+	assert main(['--repo', str(w.path), '--json', 'status', '--series']) == 0
+	rows = json.loads(capsys.readouterr().out)['series_tree']
+	assert rows[0]['name'] == 'x' and rows[0]['base_behind'] == 0

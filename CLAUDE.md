@@ -49,7 +49,8 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
   - It records events and fates. Changes with a fate in `DROP_FATES` are dropped by sync (`dropped-marked`) once the condition holds.
 - **Series.** `series.py` keeps `series/<name>/{definition, *.patch, meta.json}`, compatible with the wine-staging layout.
   - Import/export of that layout. Series may sit at any depth (`export_dir`).
-  - Export touches only managed files (`definition`, `*.patch`); everything else in a series directory belongs to people.
+  - Export touches only `definition` and the patch files in the series manifest (`patch_files`: every name it ever wrote); everything else in a series directory belongs to people or to other series sharing it.
+  - A dependent series starts at its dependency's tip, and changes with a dependency's patch-id are excluded. Patch numbers continue after the dependencies exported into the same directory.
   - `checkout` builds a branch with dependencies first.
   - States are listed in `series.STATES`. Every metadata change sets `updated`; state changes go to `history`.
   - Claims live in `<common dir>/gitum/claims/`; `check_claims` guards series operations.

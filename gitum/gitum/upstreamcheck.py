@@ -122,9 +122,10 @@ class UpstreamIndex:
 			overlap = len(files & c['files']) / max(len(files | c['files']), 1)
 			s_ratio = difflib.SequenceMatcher(None, subj, norm_subject(c['subject'])).ratio()
 			same_author = c['email'] in author or c['name'] in author
-			scored.append((overlap + s_ratio + (0.2 if same_author else 0), c, s_ratio))
+			same_subject = norm_subject(c['subject']) == subj
+			scored.append((overlap + s_ratio + (0.2 if same_author else 0), c, s_ratio, same_author, same_subject))
 		scored.sort(key=lambda t: -t[0])
-		return [(c, s_ratio) for _, c, s_ratio in scored[:MAX_CANDIDATES]]
+		return [t[1:] for t in scored[:MAX_CANDIDATES]]
 
 	def find(self, sha, patch_id, ours, files, candidates, relative=''):
 		if patch_id and patch_id in self.by_pid:
@@ -132,11 +133,12 @@ class UpstreamIndex:
 		if not candidates:
 			return {'status': 'not-found'}		# upstream did not touch our files
 		best = None
-		for c, s_ratio in candidates:
+		for c, s_ratio, same_author, same_subject in candidates:
 			d_ratio = difflib.SequenceMatcher(None, ours, self.lines(c['sha']), autojunk=False).ratio() if ours else 0
 			score = round(0.35 * s_ratio + 0.65 * d_ratio, 3)
 			if not best or score > best['similarity']:
-				best = {'upstream_commit': c['sha'], 'upstream_subject': c['subject'], 'similarity': score}
+				best = {'upstream_commit': c['sha'], 'upstream_subject': c['subject'], 'similarity': score,
+					'same_author': same_author, 'same_subject': same_subject}
 		present = content_in(self.git, sha, self.ref, relative, self.ref_tree)
 		if not best or best['similarity'] < SUSPECT_SCORE:
 			if present:
@@ -182,6 +184,30 @@ def one_to_one(found):
 			else:
 				e['status'] = 'suspect'
 				e['note'] = 'upstream commit %s matches %s better' % (commit[:12], entries[0].get('id') or '')
+
+
+def _merged_series(tracker, all_series, containers):
+	"""Series whose changes are all accepted upstream become merged (source check-upstream)."""
+	merged = []
+	for spec in sorted(containers):
+		kind, _, name = spec.partition(':')
+		meta = all_series.get(name) if kind == 'series' else None
+		if not meta or not meta.get('changes') or meta.get('state') in series_mod.DONE_STATES:
+			continue
+		recs = [tracker.changes.get(c.get('gitum_id')) for c in meta['changes']]
+		if not all(r and r.get('fate') in ('merged', 'merged-modified') for r in recs):
+			continue
+		last = recs[-1]['meta']
+		previous = meta.get('state')
+		meta.update(state='merged', upstream_commit=last.get('upstream_commit', ''),
+			    release=max((r['meta'].get('release', '') for r in recs), key=_version_key))
+		series_mod.touch(meta, state='merged', previous=previous, source='check-upstream')
+		merged.append(name)
+	return merged
+
+
+def _version_key(tag):
+	return [int(p) if p.isdigit() else p for p in re.split(r'(\d+)', tag or '')]
 
 
 def first_release(git, upstream, sha):
@@ -252,7 +278,7 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 		cands = {c.sha: index.candidates(ours.get(c.sha, ([], set()))[1], c.subject,
 						 identities(journal.config, infos[c.sha]['author'], infos[c.sha]['email']))
 			 for c in chs}
-		index.prefetch(u['sha'] for lst in cands.values() for u, _ in lst)
+		index.prefetch(t[0]['sha'] for lst in cands.values() for t in lst)
 		for c in chs:
 			lines, files = ours.get(c.sha, ([], set()))
 			if prefix and not files:
@@ -263,26 +289,37 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 				entry['release'] = first_release(git, upstream, res['upstream_commit'])
 			found.append(entry)
 	one_to_one(found)
-	applied = []
+	applied, series_merged = [], []
 	if apply:
 		with repo.lock():
 			journal = repo.journal()
 			tracker = changes_mod.Tracker(journal)
+			all_series = series_mod.load_all(journal)
 			for e in found:
-				if e['status'] in ('merged', 'merged-modified') and e.get('id') in tracker.changes:
-					rec = tracker.changes[e['id']]
+				rec = tracker.changes.get(e.get('id'))
+				if not rec:
+					continue
+				if e['status'] in ('merged', 'merged-modified'):
 					if rec.get('fate') in ('merged', 'merged-modified') and \
 							rec['meta'].get('upstream_commit') == e['upstream_commit']:
 						continue
 					tracker.set(e['id'], e['status'], upstream_commit=e['upstream_commit'],
-						    similarity=str(e['similarity']), release=e.get('release', ''))
+						    similarity=str(e['similarity']), release=e.get('release', ''), candidate='')
 					applied.append(e['id'])
-			if applied:
+				elif e['status'] == 'suspect' and e.get('upstream_commit') and \
+						rec['meta'].get('candidate') != e['upstream_commit']:
+					# remembered for gitum change confirm
+					tracker.set(e['id'], candidate=e['upstream_commit'])
+			series_merged = _merged_series(tracker, all_series, {e['container'] for e in found})
+			if tracker.dirty or series_merged:
 				writer = JournalWriter(git, journal.sha)
 				tracker.write(writer)
-				new = writer.write('gitum: check-upstream: %d changes found upstream' % len(applied))
+				for name in series_merged:
+					writer.put_json(series_mod.meta_path(name), all_series[name])
+				new = writer.write('gitum: check-upstream: %d changes found upstream%s' % (
+					len(applied), '; merged: ' + ', '.join(series_merged) if series_merged else ''))
 				tr = RefTransaction(git)
 				tr.update(JOURNAL_REF, new, journal.sha)
 				tr.commit()
-	return {'results': found, 'applied': applied,
+	return {'results': found, 'applied': applied, 'series_merged': series_merged,
 		'suspect': [e for e in found if e['status'] == 'suspect']}

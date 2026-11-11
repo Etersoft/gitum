@@ -318,6 +318,11 @@ def test_series_import_json(stack, tmp_path, capsys):
 	assert fix['history'][0]['state'] == 'sent'
 	on_top = journal(work).read_json('series/on-top/meta.json')
 	assert on_top['changes'] is None and on_top['position'] == 2
+	(tmp_path / 's.json').write_text(json.dumps([{'name': 'on-top', 'updated': '2026-10-01T10:00:00+03:00',
+						       'history': [{'date': '2026-09-01T10:00:00+03:00', 'state': 'queued'}]}]))
+	gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 's.json'))
+	on_top = journal(work).read_json('series/on-top/meta.json')
+	assert on_top['updated'] == '2026-10-01T10:00:00+03:00' and on_top['history'][0]['date'].startswith('2026-09-01')
 	(tmp_path / 's.json').write_text(json.dumps([{'name': 'fix', 'state': 'merged'}]))
 	code, data = gitum_json(work, capsys, 'series', 'import-json', str(tmp_path / 's.json'))
 	assert data['updated'] == ['fix'] and journal(work).read_json('series/fix/meta.json')['state'] == 'merged'

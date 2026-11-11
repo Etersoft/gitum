@@ -304,7 +304,7 @@ def prepare(repo, name, onto=None, branch=None, push=None, directory=None, strip
 	if not commits:
 		raise GitumError('series %s: nothing left to send, everything is in %s' % (name, onto))
 	problems = []
-	first = datetime.datetime.fromisoformat(now) if now else datetime.datetime.now(datetime.timezone.utc)
+	first = datetime.datetime.fromisoformat(now) if now else datetime.datetime.now().astimezone()
 	wt = repo.add_worktree(start, 'prepare-' + name)
 	try:
 		for sha in commits:
