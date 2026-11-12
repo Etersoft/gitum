@@ -1,7 +1,7 @@
 %def_with check
 
 Name: gitum
-Version: 2.0.0
+Version: 2.1.0
 Release: alt1
 
 Summary: Git Upstream Manager
@@ -60,6 +60,21 @@ upstream submission queue, wine-staging style series and RPM patch sets.
 %python3_sitelibdir/%name-%version.dist-info/
 
 %changelog
+* Thu Nov 12 2026 Vitaly Lipatov <lav@altlinux.ru> 2.1.0-alt1
+- series: merge request texts with images (gitum mr), bugs in named
+  trackers with an index (gitum bugs) and a [hooks] series event
+- gitum restore brings the stack back to an earlier journal state
+- export --dep3 writes change fates as DEP-3 fields, import reads them;
+  export --verify checks that the patches rebuild the layer
+- a series standing on a newer upstream than the local ref is warned about
+- gitum reads only public merge requests and uses no tokens
+- command line: subcommands for every command group, export/import
+  --format quilt|spec|staging, port --onto, report --format html,
+  reject; usage mistakes exit with 1; meaningless options are refused
+- fixes from an audit: START tags no longer revert on publish, non-ASCII
+  file names in conflicts, recovery of post-command and accept, claims
+  and locks, patch numbering of dependent series, fewer git processes
+
 * Thu Nov 12 2026 Vitaly Lipatov <lav@altlinux.ru> 2.0.0-alt1
 - gitum 2, rewritten in Python 3 without GitPython:
   + layers over upstreams; gitum sync moves the whole stack onto a new
