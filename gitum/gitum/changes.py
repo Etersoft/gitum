@@ -6,12 +6,12 @@ Gitum-Id trailer if present, the sha mapping of a sync, the patch-id and,
 last, the subject. Each change has a fate: what is known about it upstream.
 """
 
-import datetime
 import json
 import re
 import secrets
 
 from .errors import GitumError
+from .util import now
 
 FATES = {
 	'local': 'only ours, no decision yet',
@@ -45,10 +45,6 @@ RESULT_FATES = {
 	'dropped-by-generator': 'dropped',
 }
 BUG_RE = re.compile(r'(?:eterbug|bug)\s*#?\s*(\d+)', re.I)
-
-
-def now():
-	return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
 
 
 def new_id(existing):

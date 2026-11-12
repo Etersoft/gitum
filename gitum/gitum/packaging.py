@@ -6,26 +6,18 @@ import io
 import re
 import subprocess
 import tarfile
-from fnmatch import fnmatch
 from pathlib import Path
 
 from . import series as series_mod
 from .errors import GitumError, NeedsHuman
 from .journal import report_layers
+from .util import tag_version
 
 SPEC_BEGIN = '# BEGIN gitum patches'
 SPEC_END = '# END gitum patches'
 
 
 # generated layers
-
-def tag_version(pattern, tag):
-	"""The version part of a release tag: wine-* and wine-11.20 give 11.20."""
-	if not pattern or not tag or not fnmatch(tag, pattern):
-		return ''
-	prefix, _, suffix = pattern.partition('*')
-	return tag[len(prefix):len(tag) - len(suffix) if suffix else None]
-
 
 def staging_series(directory, exclude=()):
 	"""Enabled series of a wine-staging tree in patchinstall order (dependencies first)."""

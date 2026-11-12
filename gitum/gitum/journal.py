@@ -183,6 +183,15 @@ class JournalWriter:
 		self.put_json('layers/%s.json' % state.name, state.to_json())
 		self.put('layers/%s.series' % state.name, series_text(state.changes))
 
+	def commit(self, message, extra_parents=()):
+		"""Write the journal commit and move the journal branch to it (only from the parent state)."""
+		from .git import RefTransaction
+		new = self.write(message, extra_parents)
+		tr = RefTransaction(self.git)
+		tr.update(JOURNAL_REF, new, self.parent)
+		tr.commit()
+		return new
+
 	def write(self, message, extra_parents=()):
 		with tempfile.TemporaryDirectory() as tmp:
 			git = self.git.with_env(GIT_INDEX_FILE=os.path.join(tmp, 'index'))
@@ -213,6 +222,6 @@ def make_root(git):
 	return git.commit_tree(empty_tree, [], ROOT_MESSAGE)
 
 
-def history_commit(git, layer, tip, parent, message):
+def history_commit(git, tip, parent, message):
 	"""A commit of the linear history branch of a layer: the tree of the layer tip."""
 	return git.commit_tree(git.tree(tip), [parent] if parent else [], message)

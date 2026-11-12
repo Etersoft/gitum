@@ -12,18 +12,11 @@ from . import series as series_mod
 from . import state
 from .errors import GitumError, NeedsHuman
 from .git import RefTransaction
-from .journal import JOURNAL_REF, JournalWriter
+from .journal import JournalWriter
+from .util import local_date, md_link, now
 
 DEFAULT_STRIP = ['Co-Authored-By', 'Co-authored-by', 'Gitum-Id']
 COMMIT_URL_RE = re.compile(r'/(?:-/)?commits?/([0-9a-f]{7,40})\b')
-
-
-def _commit_journal(repo, journal, writer, message, extra=()):
-	new = writer.write(message, extra)
-	tr = RefTransaction(repo.git)
-	tr.update(JOURNAL_REF, new, journal.sha)
-	tr.commit()
-	return new
 
 
 def _pick_all(repo, wt, commits, what):
@@ -83,7 +76,7 @@ def port(repo, name, to, branch=None):
 		meta.setdefault('variants', {})[to] = {'branch': branch, 'base_sha': start, 'tip': tip}
 		writer = JournalWriter(git, journal.sha)
 		writer.put_json(series_mod.meta_path(name), meta)
-		_commit_journal(repo, journal, writer, 'gitum: series %s: variant on %s' % (name, to), [tip])
+		writer.commit('gitum: series %s: variant on %s' % (name, to), [tip])
 		return {'branch': branch, 'tip': tip, 'already_in_base': sorted(in_base), 'ported': len(commits) - len(in_base)}
 
 
@@ -219,43 +212,12 @@ def queue_add(repo, name, position=None):
 def queue_pause(repo, target, paused, reason=''):
 	with repo.lock():
 		journal = repo.journal()
-		data = {'paused': paused, 'reason': reason if paused else '', 'since': series_mod.now()}
+		data = {'paused': paused, 'reason': reason if paused else '', 'since': now()}
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.put_json(queue_path(target), data)
-		_commit_journal(repo, journal, writer, 'gitum: queue %s %s%s' % (
+		writer.commit('gitum: queue %s %s%s' % (
 			target, 'paused' if paused else 'resumed', (': ' + reason) if reason else ''))
 	return data
-
-
-def md_link(url):
-	"""A merge request URL as a short markdown link."""
-	m = re.match(r'^https?://[^/]+/(.+?)(?:/-/merge_requests/|/merge_requests/|/pulls?/)(\d+)', url or '')
-	return '[%s!%s](%s)' % (m.group(1), m.group(2), url) if m else (url or '')
-
-
-def local_date(value, tz=None):
-	"""The date of an ISO timestamp in the local time zone, or in tz ("Europe/Moscow", "+03:00")."""
-	if not value:
-		return ''
-	try:
-		t = datetime.datetime.fromisoformat(value)
-	except ValueError:
-		return value[:10]
-	if t.tzinfo is None:
-		return t.date().isoformat()
-	if tz:
-		m = re.match(r'^([+-])(\d\d):?(\d\d)$', tz)
-		if m:
-			delta = datetime.timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
-			zone = datetime.timezone(delta if m.group(1) == '+' else -delta)
-		else:
-			import zoneinfo
-			try:
-				zone = zoneinfo.ZoneInfo(tz)
-			except (zoneinfo.ZoneInfoNotFoundError, ValueError) as e:
-				raise GitumError('unknown time zone %r: %s' % (tz, e)) from e
-		return t.astimezone(zone).date().isoformat()
-	return t.astimezone().date().isoformat()
 
 
 def md_cell(row, field, index, tz=None):
@@ -334,17 +296,17 @@ def clean_message(message, strip):
 
 
 def prepare(repo, name, onto=None, branch=None, push=None, directory=None, strip=None, lint=True,
-	    with_depends=True, now=None, force=False):
+	    with_depends=True, first_date=None, force=False):
 	"""Build the upstream form of a series: fresh base, clean messages, new dates; optionally push it.
 
 	Dependencies must be merged upstream already; with force their commits
 	are included instead.
 	"""
 	with repo.lock():
-		return _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depends, now, force)
+		return _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depends, first_date, force)
 
 
-def _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depends, now, force):
+def _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depends, first_date, force):
 	git = repo.git
 	series_mod.check_claims(repo, [name])
 	journal = repo.journal()
@@ -387,7 +349,7 @@ def _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depend
 	if not commits:
 		raise GitumError('series %s: nothing left to send, everything is in %s' % (name, onto))
 	problems = []
-	first = datetime.datetime.fromisoformat(now) if now else datetime.datetime.now().astimezone()
+	first = datetime.datetime.fromisoformat(first_date) if first_date else datetime.datetime.now().astimezone()
 	wt = repo.add_worktree(start, 'prepare-' + name)
 	infos = git.commit_infos(commits)
 	try:
@@ -431,12 +393,12 @@ def _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depend
 		journal = repo.journal()
 		meta = series_mod.load(journal, name)
 		meta['prepared'] = {'onto': start, 'tip': tip, 'branch': ref_branch, 'pushed': result.get('pushed', ''),
-				    'date': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}
+				    'date': now()}
 		if push:
 			meta['upstream_branch'] = branch
 		writer = JournalWriter(git, journal.sha)
 		writer.put_json(series_mod.meta_path(name), meta)
-		_commit_journal(repo, journal, writer, 'gitum: prepare %s on %s' % (name, start[:12]), [tip])
+		writer.commit('gitum: prepare %s on %s' % (name, start[:12]), [tip])
 	return result
 
 

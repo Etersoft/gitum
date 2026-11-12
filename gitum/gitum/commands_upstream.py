@@ -5,10 +5,7 @@ from pathlib import Path
 from . import mrtext
 from . import upstreamwork as uw
 from .errors import EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
-
-
-def short(sha):
-	return sha[:12] if sha else '-'
+from .util import short
 
 
 def cmd_port(repo, args, out):

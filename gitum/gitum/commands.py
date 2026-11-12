@@ -3,10 +3,7 @@
 from . import publish, sync
 from .journal import report_layers
 from .errors import EXIT_OK, EXIT_UPDATED
-
-
-def short(sha):
-	return sha[:12] if sha else '-'
+from .util import short
 
 
 def format_report(report):

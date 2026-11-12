@@ -13,6 +13,7 @@ read from such a file become bugs of that tracker.
 import re
 
 from .errors import GitumError
+from .util import local_date, md_link
 
 BUG_RE = re.compile(r'^(?:([A-Za-z][\w.-]*):)?#?(\w[\w.-]*)$')
 FIXES_RE = re.compile(r'^\[(\d+)\]')
@@ -126,7 +127,6 @@ def md_bug(i):
 
 def markdown_table(rows, titles=None, tz=None):
 	"""Markdown table: one line per bug and series; the bug is named on its first line."""
-	from .upstreamwork import local_date, md_link
 	t = {'bug': 'Bug', 'name': 'Series', 'state': 'State', 'pr': 'Upstream MR', 'internal_mr': 'Internal MR',
 	     'release': 'Release', **(titles or {})}
 	fields = ['bug', 'name', 'state', 'internal_mr', 'pr', 'release']

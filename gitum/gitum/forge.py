@@ -15,8 +15,7 @@ from . import bugs as bugs_mod
 from . import changes as changes_mod
 from . import series as series_mod
 from .errors import GitumError
-from .git import RefTransaction
-from .journal import JOURNAL_REF, JournalWriter
+from .journal import JournalWriter
 
 GITHUB_RE = re.compile(r'^https?://(?P<host>github\.com)/(?P<path>[^/]+/[^/]+)/pull/(?P<num>\d+)')
 GITLAB_RE = re.compile(r'^(?P<scheme>https?)://(?P<host>[^/]+)/(?P<path>.+?)/(?:-/)?merge_requests/(?P<num>\d+)')
@@ -171,10 +170,7 @@ def _write(repo, journal, tracker, all_series, touched_series, message):
 	tracker.write(writer)
 	for name in touched_series:
 		writer.put_json(series_mod.meta_path(name), all_series[name])
-	new = writer.write(message)
-	tr = RefTransaction(repo.git)
-	tr.update(JOURNAL_REF, new, journal.sha)
-	tr.commit()
+	writer.commit(message)
 
 
 def import_json(repo, items):

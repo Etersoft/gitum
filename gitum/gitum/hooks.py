@@ -4,17 +4,16 @@ import json
 import subprocess
 
 from .sync_events import change_events
+from .util import upstream_values
 
 
 def report_env(repo, report):
 	"""GITUM_* values of a sync report: run, target tag and version of the (first) upstream."""
-	from .packaging import tag_version
 	cfg = repo.journal().config
 	values = {'run': report.get('run')}
 	for name, t in (report.get('targets') or {}).items():
 		up = cfg.upstreams.get(name)
-		values.update(upstream=name, target=t.get('sha'), target_tag=t.get('tag', ''),
-			      version=tag_version(up.release_tags if up else '', t.get('tag', '')))
+		values.update(upstream_values(name, up.release_tags if up else '', t.get('sha'), t.get('tag')))
 		break
 	return values
 

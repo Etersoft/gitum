@@ -10,8 +10,8 @@ from . import config as config_mod
 from . import state
 from .errors import EXIT_ERROR, EXIT_OK, EXIT_UPDATED, GitumError
 from .journal import JOURNAL_REF, JournalWriter
-from .git import RefTransaction
 from .repo import Repo
+from .util import short
 
 
 class Output:
@@ -48,10 +48,6 @@ def parse_pair(value, what):
 	if '=' not in value:
 		raise argparse.ArgumentTypeError('%s must be NAME=VALUE' % what)
 	return value.split('=', 1)
-
-
-def short(sha):
-	return sha[:12] if sha else '-'
 
 
 # commands
@@ -187,10 +183,7 @@ def cmd_config(repo, args, out):
 		journal = repo.journal()
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.put(config_mod.CONFIG_FILE, text)
-		new = writer.write('gitum: update configuration')
-		tr = RefTransaction(repo.git)
-		tr.update(JOURNAL_REF, new, journal.sha)
-		tr.commit()
+		new = writer.commit('gitum: update configuration')
 	out.result({'journal': new}, 'Configuration updated.')
 
 

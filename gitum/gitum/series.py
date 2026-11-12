@@ -7,7 +7,6 @@ In the journal a series is a directory compatible with wine-staging:
 Work on a series happens in its git branch; `gitum series save` records it.
 """
 
-import datetime
 import json
 import os
 import re
@@ -20,6 +19,7 @@ from . import changes as changes_mod
 from .errors import Busy, GitumError, NeedsHuman
 from .git import RefTransaction
 from .journal import JOURNAL_REF, JournalWriter, LayerState, describe_changes
+from .util import now
 
 # draft -> review (internal) -> queued -> sent (upstream, version vN) -> approved (by an upstream
 # reviewer) -> merged | rejected | superseded (upstream solved it another way); disabled: not applied
@@ -66,10 +66,6 @@ MANAGED = ('definition',)
 
 def is_managed(path):
 	return path.is_file() and (path.name in MANAGED or path.name.endswith('.patch'))
-
-
-def now():
-	return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
 
 
 def touch(meta, **event):
@@ -271,14 +267,6 @@ def drop_patches(journal, writer, name):
 			writer.remove('series/%s/%s' % (name, f))
 
 
-def _commit(repo, journal, writer, message, extra_parents=()):
-	new = writer.write(message, extra_parents)
-	tr = RefTransaction(repo.git)
-	tr.update(JOURNAL_REF, new, journal.sha)
-	tr.commit()
-	return new
-
-
 _UPSTREAM_COMMITTERS = {}
 _USER_EMAIL = {}
 
@@ -381,7 +369,7 @@ def add(repo, name, branch, base, depends=(), state='draft', **meta):
 		tracker = changes_mod.Tracker(journal)
 		_record(repo, journal, writer, tracker, name, data, tip, 'series add', known)
 		tracker.write(writer)
-		_commit(repo, journal, writer, 'gitum: series add %s' % name, [tip])
+		writer.commit('gitum: series add %s' % name, [tip])
 		if data.get('state') != 'draft':
 			state_hook(repo, journal.config, data, None, 'add')
 		data['warnings'] = [w for w in [suspect_warning(data)] if w]
@@ -430,7 +418,7 @@ def save(repo, names=None):
 		if not saved:
 			return {'changed': False, 'saved': [], 'claimed': claimed}
 		tracker.write(writer)
-		_commit(repo, journal, writer, 'gitum: series save %s' % ', '.join(saved), tips)
+		writer.commit('gitum: series save %s' % ', '.join(saved), tips)
 		warnings = [w for w in (suspect_warning(all_series[n]) for n in saved) if w]
 		return {'changed': True, 'saved': saved, 'warnings': warnings, 'claimed': claimed}
 
@@ -485,7 +473,8 @@ def set_(repo, name, values):
 			touch(meta)
 		writer = JournalWriter(repo.git, journal.sha)
 		tip = repo.git.rev('refs/heads/' + meta['branch']) if meta.get('branch') else None
-		if tip and meta.get('changes') is not None and {'export_dir', 'depends', 'base'} & set(values):
+		if tip and {'export_dir', 'depends', 'base', 'branch'} & set(values) and \
+				(meta.get('changes') is not None or 'branch' in values):
 			# the series boundary or the numbering of its patches may change
 			tracker = changes_mod.Tracker(journal)
 			_record(repo, journal, writer, tracker, name, meta, tip, 'series set')
@@ -493,7 +482,7 @@ def set_(repo, name, values):
 		else:
 			writer.put_json(meta_path(name), meta)
 		writer.put('series/%s/definition' % name, definition_text(meta, journal.config))
-		_commit(repo, journal, writer, 'gitum: series %s: %s' % (name, ', '.join('%s=%s' % kv for kv in values.items())))
+		writer.commit('gitum: series %s: %s' % (name, ', '.join('%s=%s' % kv for kv in values.items())))
 		if meta.get('state') != old_state:
 			state_hook(repo, journal.config, meta, old_state)
 		return meta
@@ -522,7 +511,7 @@ def remove(repo, name):
 				raise GitumError('series %s depends on %s' % (other, name))
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.remove_dir('series/%s' % name)
-		_commit(repo, journal, writer, 'gitum: series remove %s' % name)
+		writer.commit('gitum: series remove %s' % name)
 		(claims_dir(repo) / ('%s.json' % name)).unlink(missing_ok=True)
 
 
@@ -649,7 +638,7 @@ def import_staging(repo, directory, base, names=None):
 			imported.append((name, meta))
 		if not imported:
 			raise GitumError('no series found in %s' % directory)
-		_commit(repo, journal, writer, 'gitum: import %d series from %s' % (len(imported), directory.name))
+		writer.commit('gitum: import %d series from %s' % (len(imported), directory.name))
 		for name, meta in imported:
 			if name in changed_state:
 				state_hook(repo, journal.config, meta, changed_state[name], 'import-staging')
@@ -753,7 +742,7 @@ def import_json(repo, items, force=False):
 						writer = JournalWriter(repo.git, j.sha)
 						writer.put_json(meta_path(name), meta)
 						writer.put('series/%s/definition' % name, definition_text(meta, j.config))
-						_commit(repo, j, writer, 'gitum: series import %s' % name)
+						writer.commit('gitum: series import %s' % name)
 				created.append(name)
 			else:
 				updated.append(name)
@@ -792,4 +781,4 @@ def _put_dates(repo, name, updated, history):
 		meta['updated'] = updated or (meta.get('history') or [{}])[-1].get('date') or meta.get('updated')
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.put_json(meta_path(name), meta)
-		_commit(repo, journal, writer, 'gitum: series %s: dates' % name)
+		writer.commit('gitum: series %s: dates' % name)

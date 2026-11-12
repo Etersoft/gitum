@@ -16,8 +16,7 @@ import tempfile
 from . import changes as changes_mod
 from . import series as series_mod
 from .errors import GitumError
-from .journal import JOURNAL_REF, JournalWriter
-from .git import RefTransaction
+from .journal import JournalWriter
 
 SUSPECT_SCORE = 0.5
 MAX_CANDIDATES = 30
@@ -337,11 +336,8 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 				tracker.write(writer)
 				for name in list(merged) + filled:
 					writer.put_json(series_mod.meta_path(name), all_series[name])
-				new = writer.write('gitum: check-upstream: %d changes found upstream%s' % (
+				writer.commit('gitum: check-upstream: %d changes found upstream%s' % (
 					len(applied), '; merged: ' + ', '.join(series_merged) if series_merged else ''))
-				tr = RefTransaction(git)
-				tr.update(JOURNAL_REF, new, journal.sha)
-				tr.commit()
 				for name, previous in merged.items():
 					series_mod.state_hook(repo, journal.config, all_series[name], previous, 'check-upstream')
 	return {'results': found, 'applied': applied, 'series_merged': series_merged, 'release_filled': filled,

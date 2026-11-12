@@ -7,7 +7,7 @@ top of our result instead of being overwritten.
 """
 
 from . import hooks, state
-from .packaging import tag_version
+from .util import tag_version
 from .errors import GitumError, NeedsHuman
 from .git import RefTransaction
 from .journal import HISTORY_PREFIX, JOURNAL_BRANCH, JOURNAL_REF, history_ref

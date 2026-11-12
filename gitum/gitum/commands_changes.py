@@ -8,12 +8,8 @@ from . import bugs as bugs_mod
 from . import changes as changes_mod
 from . import forge, series, upstreamcheck
 from .errors import EXIT_ERROR, EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
-from .git import RefTransaction
 from .journal import JOURNAL_REF, JournalWriter
-
-
-def short(sha):
-	return sha[:12] if sha else '-'
+from .util import short
 
 
 def parse_values(pairs):
@@ -90,10 +86,7 @@ def cmd_change(repo, args, out):
 		recs = [tracker.set(ref, fate, **values) for ref in args.ref.split(',')]
 		writer = JournalWriter(repo.git, journal.sha)
 		tracker.write(writer)
-		new = writer.write('gitum: change %s: %s' % (args.ref, ' '.join(args.values)))
-		tr = RefTransaction(repo.git)
-		tr.update(JOURNAL_REF, new, journal.sha)
-		tr.commit()
+		writer.commit('gitum: change %s: %s' % (args.ref, ' '.join(args.values)))
 	out.result(recs, '\n'.join('%s: %s' % (r['id'], r['fate']) for r in recs))
 
 
@@ -128,10 +121,7 @@ def confirm(repo, ref, sha=None):
 		for name in list(merged) + filled:
 			writer.put_json(series.meta_path(name), all_series[name])
 		rec = {**rec, 'series_merged': sorted(merged), 'release_filled': filled}
-		new = writer.write('gitum: change %s confirmed as %s' % (rec['id'], commit[:12]))
-		tr = RefTransaction(git)
-		tr.update(JOURNAL_REF, new, journal.sha)
-		tr.commit()
+		writer.commit('gitum: change %s confirmed as %s' % (rec['id'], commit[:12]))
 		for name, previous in merged.items():
 			series.state_hook(repo, cfg, all_series[name], previous, 'change confirm')
 		return rec

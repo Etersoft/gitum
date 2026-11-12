@@ -92,9 +92,6 @@ class Git:
 		path = Path(self.out('rev-parse', '--git-common-dir'))
 		return path if path.is_absolute() else (self.cwd / path).resolve()
 
-	def toplevel(self):
-		return Path(self.out('rev-parse', '--show-toplevel'))
-
 	# objects and refs
 
 	def rev(self, rev):
@@ -201,9 +198,6 @@ class Git:
 			args.append(path.rstrip('/') + '/')
 		return [p.rsplit('/', 1)[-1] for p in self.zlines(*args)]
 
-	def hash_blob(self, data):
-		return self.out('hash-object', '-w', '--stdin', input=data)
-
 	def hash_blobs(self, datas):
 		"""Write many blobs in one git process; return their shas in order."""
 		datas = list(datas)
@@ -261,10 +255,6 @@ class Git:
 
 	def unmerged_files(self):
 		return sorted(set(self.zlines('diff', '-z', '--name-only', '--diff-filter=U')))
-
-	def config(self, key, default=None):
-		res = self.run('config', '--get', key, check=False)
-		return res.stdout.decode().strip() if res.returncode == 0 else default
 
 
 class RefTransaction:

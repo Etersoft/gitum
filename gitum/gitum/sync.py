@@ -6,7 +6,6 @@ resolver handles stops the run (exit 2); `gitum continue`, `skip` or `abort`
 resume it from the state saved in <common dir>/gitum/operation.json.
 """
 
-import datetime
 import re
 import shutil
 import subprocess
@@ -26,6 +25,7 @@ from .journal import (
 	history_commit,
 	history_ref,
 )
+from .util import now, upstream_values
 
 SHA_RE = re.compile(r'\b[0-9a-f]{40}\b')
 ORIGIN_RE = re.compile(r'^(?:Origin:.*|\(cherry picked from commit .*\))$', re.M)
@@ -41,10 +41,6 @@ EMPTIED = 'emptied'			# nothing left after applying: probably accepted with chan
 SKIPPED = 'skipped'			# dropped by a person (gitum skip)
 DROPPED_MARKED = 'dropped-marked'	# its fate says so (merged, fixed differently, disabled)
 TRUSTED_RESOLVERS = {'rerere', 'manual'}
-
-
-def utcnow():
-	return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
 
 
 def next_release(git, upstream, current):
@@ -104,15 +100,13 @@ class Sync:
 
 	def start(self, to=None, next_release_=False, candidate='auto', publish=False, fetch=True,
 		  find_culprit=False, allow_rewrite=False):
-		repo, git = self.repo, self.git
+		repo = self.repo
 		self.op_allow_rewrite = allow_rewrite
 		check_idle(repo)
 		journal = repo.journal()
 		cfg = journal.config
 		if fetch:
-			remotes = {u.remote for u in cfg.upstreams.values() if u.remote}
-			for remote in sorted(remotes):
-				git.run('fetch', '--quiet', '--tags', remote)
+			fetch_upstreams(repo, cfg)
 		# record work done with plain git before moving anything
 		state.save(repo, message='before sync')
 		journal = repo.journal()
@@ -120,7 +114,7 @@ class Sync:
 		targets, target_desc = self._targets(journal, to, next_release_)
 		run_id, run_dir = repo.new_run_dir('sync')
 		self.op = {
-			'kind': 'sync', 'run': run_id, 'run_dir': str(run_dir), 'started': utcnow(),
+			'kind': 'sync', 'run': run_id, 'run_dir': str(run_dir), 'started': now(),
 			'journal': journal.sha, 'targets': targets, 'target_desc': target_desc,
 			'options': {'candidate': candidate, 'publish': publish, 'find_culprit': find_culprit},
 			'snapshot': self._snapshot(journal), 'layers': {}, 'pending': [l.name for l in cfg.ordered_layers()],
@@ -284,10 +278,9 @@ class Sync:
 		up = cfg.root_upstream(cfg.layers[layer_name]) if layer_name else \
 			(next(iter(cfg.upstreams.values())) if len(cfg.upstreams) == 1 else None)
 		target = op['targets'].get(up.name, {}) if up else {}
-		return self.repo.hook_env(
-			worktree=op.get('worktree'), layer=layer_name, run=op['run'], run_dir=op['run_dir'],
-			upstream=up.name if up else None, target=target.get('sha'), target_tag=target.get('tag', ''),
-			version=packaging.tag_version(up.release_tags, target.get('tag', '')) if up else '', **extra)
+		values = upstream_values(up.name, up.release_tags, target.get('sha'), target.get('tag')) if up else {}
+		return self.repo.hook_env(worktree=op.get('worktree'), layer=layer_name, run=op['run'], run_dir=op['run_dir'],
+					  **values, **extra)
 
 	# the main loop
 
@@ -633,7 +626,7 @@ class Sync:
 			for r in l['results']:
 				counts[r['result']] = counts.get(r['result'], 0) + 1
 			layers[name] = {**l, 'counts': counts}
-		return {'run': op['run'], 'started': op['started'], 'finished': utcnow(), 'targets': op['targets'],
+		return {'run': op['run'], 'started': op['started'], 'finished': now(), 'targets': op['targets'],
 			'target': op['target_desc'], 'layers': layers, 'order': list(op['layers'])}
 
 	def _needs_review(self, report):
@@ -753,7 +746,7 @@ def commit_states(repo, op, report, tips=None):
 			moved.append((layer.branch, old, st.tip))
 		hist_old = op['snapshot'].get(history_ref(layer.name))
 		msg = '%s: sync to %s\n\nbase %s\ntip %s\nrun %s\n' % (layer.name, op['target_desc'], st.base, st.tip, op['run'])
-		tr.update(history_ref(layer.name), history_commit(git, layer.name, st.tip, hist_old, msg), hist_old or None)
+		tr.update(history_ref(layer.name), history_commit(git, st.tip, hist_old, msg), hist_old or None)
 		if layer.compat_start_tag:
 			tr.update('refs/tags/' + layer.compat_start_tag, st.base, '')
 	message = 'gitum: sync to %s\n\n%s' % (op['target_desc'], summary_text(report))
@@ -879,6 +872,11 @@ def step_targets(repo, to=None, next_release_=False):
 	return repo.git.rev_list('--reverse', '--first-parent', '%s..%s' % (current, target))
 
 
+def fetch_upstreams(repo, cfg):
+	for remote in sorted({u.remote for u in cfg.upstreams.values() if u.remote}):
+		repo.git.run('fetch', '--quiet', '--tags', remote)
+
+
 def check_idle(repo):
 	"""Stop if a sync is stopped or a candidate waits: nothing may move the branches under them."""
 	if repo.load_op():
@@ -897,8 +895,7 @@ def sync(repo, step=False, **kwargs):
 		if not step:
 			return Sync(repo).start(**kwargs)
 		if kwargs.get('fetch', True):
-			for remote in sorted({u.remote for u in cfg.upstreams.values() if u.remote}):
-				repo.git.run('fetch', '--quiet', '--tags', remote)
+			fetch_upstreams(repo, cfg)
 		commits = step_targets(repo, kwargs.pop('to', None), kwargs.pop('next_release_', False))
 		kwargs['fetch'] = False
 		steps = []

@@ -21,8 +21,7 @@ from pathlib import Path
 
 from . import series as series_mod
 from .errors import GitumError
-from .git import RefTransaction
-from .journal import JOURNAL_REF, JournalWriter
+from .journal import JournalWriter
 
 INTERNAL_START = '<!-- internal -->'
 INTERNAL_END = '<!-- /internal -->'
@@ -110,10 +109,7 @@ def _store(repo, name, text, assets, message):
 		series_mod.touch(meta, event='mr text')
 		writer.put_json(series_mod.meta_path(name), meta)
 		writer.put('series/%s/definition' % name, series_mod.definition_text(meta, journal.config))
-		new = writer.write('gitum: series %s: %s' % (name, message))
-		tr = RefTransaction(repo.git)
-		tr.update(JOURNAL_REF, new, journal.sha)
-		tr.commit()
+		writer.commit('gitum: series %s: %s' % (name, message))
 	return {'series': name, 'assets': sorted(assets), 'title': split_title(text)[0],
 		'internal': INTERNAL_START in text}
 
@@ -288,8 +284,5 @@ def record_uploads(repo, name, forge_name, project, pairs):
 		urls.update({assets[f]: u for f, u in pairs.items()})
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.put_json(series_mod.meta_path(name), meta)
-		new = writer.write('gitum: series %s: image URLs on %s' % (name, key))
-		tr = RefTransaction(repo.git)
-		tr.update(JOURNAL_REF, new, journal.sha)
-		tr.commit()
+		writer.commit('gitum: series %s: image URLs on %s' % (name, key))
 	return {'series': name, 'forge': key, 'recorded': sorted(pairs)}

@@ -13,6 +13,7 @@ from pathlib import Path
 from .errors import Busy, NeedsHuman, NotGitumRepo
 from .git import Git
 from .journal import JOURNAL_REF, Journal
+from .util import now
 
 LOCK_FILE = 'lock'
 OP_FILE = 'operation.json'
@@ -31,7 +32,7 @@ def owner_info():
 		'host': socket.gethostname(),
 		'user': os.environ.get('USER', ''),
 		'session': os.environ.get('GITUM_SESSION', ''),
-		'since': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
+		'since': now(),
 	}
 
 

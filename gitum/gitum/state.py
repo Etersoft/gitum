@@ -71,7 +71,7 @@ def write_initial_journal(repo, cfg_text, layer_states, upstream_states, message
 	tr.update(JOURNAL_REF, journal, None)
 	for name, state in layer_states.items():
 		msg = '%s: start of history at %s\n\nbase %s\ntip %s\n' % (name, state.tip[:12], state.base, state.tip)
-		tr.update(history_ref(name), history_commit(git, name, state.tip, None, msg), None)
+		tr.update(history_ref(name), history_commit(git, state.tip, None, msg), None)
 	tr.commit()
 	return {'journal': journal, 'layers': {n: s.to_json() | {'changes': len(s.changes)} for n, s in layer_states.items()},
 		'upstreams': upstream_states, 'layer_order': [l.name for l in cfg.ordered_layers()]}
@@ -188,7 +188,7 @@ def save(repo, layer_names=None, message=''):
 			body = ''.join('+ %s\n' % s for s in added) + ''.join('- %s\n' % s for s in removed)
 			hist_old = git.rev(history_ref(name))
 			msg = '%s: %s\n\n%s\ntip %s\n' % (name, message or 'save', body, state.tip)
-			tr.update(history_ref(name), history_commit(git, name, state.tip, hist_old, msg), hist_old or None)
+			tr.update(history_ref(name), history_commit(git, state.tip, hist_old, msg), hist_old or None)
 			summary[name] = {'added': added, 'removed': removed, 'tip': state.tip, 'changes': len(state.changes)}
 		tracker.write(writer)
 		new_journal = writer.write('gitum: save %s\n\n%s' % (', '.join(changed), message),
@@ -284,7 +284,7 @@ def move_layer(repo, name, new_tip, message, adjust=None, keep=()):
 	tr = RefTransaction(git)
 	tr.update(ref, new_tip, current or None)
 	hist_old = git.rev(history_ref(name))
-	tr.update(history_ref(name), history_commit(git, name, new_tip, hist_old, '%s: %s\n\ntip %s\n' % (
+	tr.update(history_ref(name), history_commit(git, new_tip, hist_old, '%s: %s\n\ntip %s\n' % (
 		name, message, new_tip)), hist_old or None)
 	tr.update(JOURNAL_REF, writer.write('gitum: %s: %s' % (name, message), [new_tip, *keep]), journal.sha)
 	with repo.committing(tr, [(layer.branch, current, new_tip)], kind='layer'):
