@@ -14,11 +14,9 @@ to upload. Importing reads public merge requests only.
 """
 
 import hashlib
-import json
 import os
 import re
 import urllib.parse
-import urllib.request
 from pathlib import Path
 
 from . import series as series_mod
@@ -142,26 +140,9 @@ def set_from_file(repo, name, path):
 
 # public merge requests
 
-def _get(url, what):
-	"""GET a public URL without credentials."""
-	req = urllib.request.Request(url, headers={'User-Agent': 'gitum', 'Accept': what})
-	try:
-		with urllib.request.urlopen(req, timeout=60) as resp:
-			return resp.read(), resp.headers.get_content_type()
-	except OSError as e:
-		raise GitumError('%s: %s' % (url, e)) from e
-
-
-def _get_json(url):
-	data, _ctype = _get(url, 'application/json')
-	try:
-		return json.loads(data)
-	except ValueError as e:
-		raise GitumError('%s: not a JSON answer (is the merge request public?)' % url) from e
-
-
 def _get_image(url):
-	data, ctype = _get(url, 'image/*')
+	from .forge import http_get
+	data, ctype = http_get(url, 'image/*')
 	if not (ctype.startswith('image/') or ctype in ('application/octet-stream', 'binary/octet-stream')):
 		raise GitumError('%s: got %s, not an image (is the project public?)' % (url, ctype))
 	return data
@@ -171,7 +152,7 @@ def import_mr(repo, name, link):
 	"""Take the title, description and images of a public merge request."""
 	cfg = repo.journal().config
 	url = series_mod.normalize_link(cfg, 'internal_mr', link) if '://' not in link else link
-	from .forge import parse_url
+	from .forge import get_json as _get_json, parse_url
 	kind, api, project, num, _conf = parse_url(url, cfg.forges)
 	if kind == 'gitlab':
 		data = _get_json('%s/projects/%s/merge_requests/%d' % (api, urllib.parse.quote(project, safe=''), num))

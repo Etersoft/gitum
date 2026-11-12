@@ -374,7 +374,7 @@ series = "tools/comment-in-bugs.py"  # серия сменила состоян�
 | `prepare СЕРИЯ [--push ФОРК] [--force]` | Серия в виде для апстрима: свежая база, новые даты с шагом в секунду, без trailer'ов Co-Authored-By/Gitum-Id, проверка заголовков, перераскладка путей для vendored-деревьев, range-diff с сохранённой серией. Зависимости должны быть уже приняты (`--force` включает их коммиты). Merge request вы открываете сами; `forge refresh` предупредит, если его голова отличается от подготовленной ветки. |
 | `backport SHA\|URL --into СЛОЙ` | Взять коммит апстрима с trailer'ом `Origin:`; он выбрасывается сам, когда база его содержит. |
 | `branches [--remote ФОРК] [--prune]` | Ветки серий и апстрима; устаревшие после merge. |
-| `forge refresh\|import-json\|export-json` | Состояния merge request'ов из GitHub, GitLab или Forgejo либо в виде JSON от ваших скриптов. |
+| `forge refresh\|import-json\|export-json` | Состояния merge request'ов из GitHub, GitLab или Forgejo либо в виде JSON от ваших скриптов. `refresh` читает только публичные запросы и не посылает учётных данных; закрытые читает ваш скрипт и передаёт состояния в `import-json`. Если одобрение открытого запроса прочитать не удалось, серия в состоянии `approved` остаётся одобренной. |
 | `export`, `import` | Наборы патчей для spec-файлов RPM (строки Patch между `# BEGIN gitum patches` / `# END gitum patches`), quilt, wine-staging. |
 | `log [ИЗМЕНЕНИЕ\|series:X\|layer:X]`, `diff СОСТОЯНИЕ1 [СОСТОЯНИЕ2]`, `report [ПРОГОН] [--html ФАЙЛ]` | История и отчёты. |
 | `mirror ИМЯ` | Общее зеркало апстрима в `~/.cache/gitum` вместо разовых клонов. |

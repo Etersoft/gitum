@@ -479,3 +479,16 @@ def test_local_date():
 	assert local_date('2026-11-11T21:30:00+00:00', '-0100') == '2026-11-11'
 	assert local_date('2026-11-11') == '2026-11-11'
 	assert local_date('') == ''
+
+
+def test_forge_unknown_approval_keeps_state(ser, tmp_path, capsys):
+	up, work = ser
+	assert gitum(work, 'series', 'set', 'ntdll-base', 'state=approved',
+		     'pr=https://gitlab.example/wine/-/merge_requests/9') == 0
+	items = tmp_path / 'items.json'
+	items.write_text(json.dumps([{'series': 'ntdll-base', 'state': 'open', 'approval_unknown': True}]))
+	assert gitum(work, 'forge', 'import-json', str(items)) == 0
+	assert journal(work).read_json('series/ntdll-base/meta.json')['state'] == 'approved'
+	items.write_text(json.dumps([{'series': 'ntdll-base', 'state': 'open'}]))
+	assert gitum(work, 'forge', 'import-json', str(items)) == 0
+	assert journal(work).read_json('series/ntdll-base/meta.json')['state'] == 'sent'

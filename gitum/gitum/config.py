@@ -114,7 +114,7 @@ KNOWN = {
 	'queue': {'one-at-a-time', 'done-limit', 'markdown'},
 	'queue.markdown': {'title', 'generated', 'next', 'nothing', 'paused', 'sections', 'fields', 'done-fields', 'titles',
 			   'bug-titles', 'timezone'},
-	'forge.*': {'type', 'url', 'api', 'token-env', 'mr-url', 'project'},
+	'forge.*': {'type', 'url', 'api', 'mr-url', 'project'},
 	'tracker.*': {'url', 'label'},
 	'identity': {'aliases'},
 }

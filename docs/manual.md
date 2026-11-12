@@ -373,7 +373,7 @@ Nothing asks questions interactively.
 | `prepare SERIES [--push FORK] [--force]` | Upstream form of a series: fresh base, new dates one second apart, no Co-Authored-By/Gitum-Id trailers, subject check, path remapping for vendored trees, a range-diff against the saved series. Dependencies must be merged first (`--force` includes them). You open the merge request yourself; `forge refresh` warns if its head differs from the prepared branch. |
 | `backport SHA\|URL --into LAYER` | Take an upstream commit with an `Origin:` trailer; it is dropped automatically once the base contains it. |
 | `branches [--remote FORK] [--prune]` | Series and upstream branches; stale ones after merge. |
-| `forge refresh\|import-json\|export-json` | Merge request states from GitHub, GitLab or Forgejo, or as JSON from your own scripts. |
+| `forge refresh\|import-json\|export-json` | Merge request states from GitHub, GitLab or Forgejo, or as JSON from your own scripts. `refresh` reads public requests only and sends no credentials; for private ones, have your script read them and pass the states to `import-json`. When the approval of an open request cannot be read, an `approved` series stays approved. |
 | `export`, `import` | Patch sets for RPM spec files (Patch lines between `# BEGIN gitum patches` / `# END gitum patches`), quilt, wine-staging. |
 | `log [CHANGE\|series:X\|layer:X]`, `diff STATE1 [STATE2]`, `report [RUN] [--html FILE]` | History and reports. |
 | `mirror NAME` | A shared mirror of an upstream in `~/.cache/gitum` instead of throwaway clones. |

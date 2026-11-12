@@ -1,13 +1,12 @@
 """Forge states of pull/merge requests: GitHub, GitLab, Forgejo/Gitea, or JSON from outside.
 
 A change or a series refers to its request by URL (meta 'pr', 'internal_mr').
-`refresh` asks the forge APIs; `import_json` takes the same data prepared by
+`refresh` asks the forge APIs about public requests, without any credentials; `import_json` takes the same data prepared by
 somebody else (for example an agent with Lavtomate MCP), `export_json` gives
 everything gitum knows.
 """
 
 import json
-import os
 import re
 import urllib.parse
 import urllib.request
@@ -21,7 +20,6 @@ from .journal import JOURNAL_REF, JournalWriter
 GITHUB_RE = re.compile(r'^https?://(?P<host>github\.com)/(?P<path>[^/]+/[^/]+)/pull/(?P<num>\d+)')
 GITLAB_RE = re.compile(r'^(?P<scheme>https?)://(?P<host>[^/]+)/(?P<path>.+?)/(?:-/)?merge_requests/(?P<num>\d+)')
 FORGEJO_RE = re.compile(r'^(?P<scheme>https?)://(?P<host>[^/]+)/(?P<path>[^/]+/[^/]+)/pulls/(?P<num>\d+)')
-TOKEN_ENV = {'github': 'GITHUB_TOKEN', 'gitlab': 'GITLAB_TOKEN', 'forgejo': 'FORGEJO_TOKEN'}
 
 
 def parse_url(url, forges=None):
@@ -50,36 +48,45 @@ def parse_url(url, forges=None):
 	raise GitumError('unknown request URL %s' % url)
 
 
-def _get(url, token, kind):
-	headers = {'Accept': 'application/json', 'User-Agent': 'gitum'}
-	if token:
-		headers['Authorization'] = {'github': 'Bearer %s', 'gitlab': 'Bearer %s', 'forgejo': 'token %s'}[kind] % token
-	req = urllib.request.Request(url, headers=headers)
+def http_get(url, accept='application/json'):
+	"""GET a public URL without credentials: (body, content type)."""
+	req = urllib.request.Request(url, headers={'Accept': accept, 'User-Agent': 'gitum'})
 	try:
-		with urllib.request.urlopen(req, timeout=30) as resp:
-			return json.loads(resp.read().decode())
+		with urllib.request.urlopen(req, timeout=60) as resp:
+			return resp.read(), resp.headers.get_content_type()
 	except OSError as e:
 		raise GitumError('%s: %s' % (url, e)) from e
 
 
-def _approved(url, token, kind):
-	"""Whether an open request is approved by a reviewer (best effort: False if unknown)."""
+def get_json(url):
+	data, _ctype = http_get(url)
 	try:
-		data = _get(url, token, kind)
+		return json.loads(data)
+	except ValueError as e:
+		raise GitumError('%s: not a JSON answer (is the request public?)' % url) from e
+
+
+def _approved(url, kind):
+	"""Whether an open request is approved by a reviewer; None if that is unknown."""
+	try:
+		data = get_json(url)
 	except GitumError:
-		return False
+		return None
 	if kind == 'gitlab':
 		return bool(data.get('approved') or data.get('approved_by'))
-	return any(r.get('state') == 'APPROVED' for r in data if isinstance(r, dict))
+	latest = {}
+	for r in data if isinstance(data, list) else []:
+		if isinstance(r, dict) and r.get('state') in ('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'):
+			latest[(r.get('user') or {}).get('login')] = r['state']
+	return bool(latest) and 'APPROVED' in latest.values() and 'CHANGES_REQUESTED' not in latest.values()
 
 
 def request_state(url, forges=None):
 	"""State of a pull/merge request: open, approved, merged or closed; merge commit and head commit."""
 	kind, api, path, num, conf = parse_url(url, forges)
-	token = os.environ.get(conf.get('token-env') or TOKEN_ENV[kind], '')
 	if kind == 'gitlab':
 		base = '%s/projects/%s/merge_requests/%d' % (api, urllib.parse.quote(path, safe=''), num)
-		data = _get(base, token, kind)
+		data = get_json(base)
 		state = {'opened': 'open', 'merged': 'merged', 'closed': 'closed', 'locked': 'open'}.get(data.get('state'), 'open')
 		commit = (data.get('merge_commit_sha') or data.get('squash_commit_sha') or '') if state == 'merged' else ''
 		head = data.get('sha') or ''
@@ -87,15 +94,20 @@ def request_state(url, forges=None):
 		reviews = base + '/approvals'
 	else:
 		base = '%s/repos/%s/pulls/%d' % (api, path, num)
-		data = _get(base, token, kind)
+		data = get_json(base)
 		state = 'merged' if data.get('merged') else data.get('state', 'open')
 		commit = (data.get('merge_commit_sha') or '') if data.get('merged') else ''
 		head = (data.get('head') or {}).get('sha', '')
 		merged_at = data.get('merged_at') or ''
 		reviews = base + '/reviews'
-	if state == 'open' and _approved(reviews, token, kind):
-		state = 'approved'
-	return {'state': state, 'merge_commit': commit or '', 'head': head, 'merged_at': merged_at, 'url': url}
+	result = {'state': state, 'merge_commit': commit or '', 'head': head, 'merged_at': merged_at, 'url': url}
+	if state == 'open':
+		approved = _approved(reviews, kind)
+		if approved:
+			result['state'] = 'approved'
+		elif approved is None:
+			result['approval_unknown'] = True
+	return result
 
 
 CHANGE_FATE = {'open': 'sent', 'approved': 'sent', 'merged': 'merged', 'closed': 'rejected'}
@@ -113,6 +125,8 @@ def _apply(tracker, all_series, item):
 		state = item.get('state')
 		if state in SERIES_STATE:
 			state = SERIES_STATE[state]
+		if item.get('approval_unknown') and state == 'sent' and old_state == 'approved':
+			state = 'approved'		# the approval could not be read: keep what is known
 		if state:
 			if state not in series_mod.STATES:
 				raise GitumError('unknown series state %s' % state)
