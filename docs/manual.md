@@ -457,8 +457,8 @@ python3 -m pytest
 python3 -m gitum --help
 ```
 
-The design and the decisions behind it are in
-[docs/design-v2.md](design-v2.md) (in Russian).
+Why gitum is built this way, and the decisions behind it, are in
+[docs/design.md](design.md).
 
 ## Links
 

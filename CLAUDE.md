@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 gitum (Git Upstream Manager) keeps your changes developed in parallel with an external upstream and syncs them with it.
-- The code is the package `gitum/gitum/`. Its design and the decisions taken are in `docs/design-v2.md` (Russian); read it before changing the gitum 2 code. All stages of the plan in section 9 of the design are implemented: 0 foundation, 1 sync, 2 changes/series/upstream check/forges, 3 upstream work (`upstreamwork.py`), 4 packaging (`packaging.py`: generated layers, spec/quilt/staging export and import, HTML reports).
+- The code is the package `gitum/gitum/`. Why it is built this way, the decisions and the rejected options are in `docs/design.md` / `docs/design.ru.md`; read it before changing the code. It holds only reasons and decisions: what things do belongs in the manual, and the design links to it. Record new design decisions there in both languages.
 
 User docs:
 - `README.md` / `README.ru.md` are short: what gitum is, why, pictures, installation, quick start. `tests/test_core_readme.py` runs the quick start as written.

@@ -463,7 +463,7 @@ python3 -m pytest
 python3 -m gitum --help
 ```
 
-Проект и принятые решения — в [docs/design-v2.md](design-v2.md).
+Почему gitum устроен так и какие решения приняты — в [docs/design.ru.md](design.ru.md).
 
 ## Ссылки
 

@@ -84,7 +84,7 @@ gitum check-upstream series:my-fix --apply    # later: was it accepted?
 
 - [Manual](docs/manual.md): layers, the journal, the fate of changes, series
   and the upstream queue, configuration, all commands, hooks, reliability.
-- [Design and decisions](docs/design-v2.md) (in Russian).
+- [Design and decisions](docs/design.md).
 - Project page: <https://wiki.etersoft.ru/GitUM>
 
 ## License
