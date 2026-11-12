@@ -72,14 +72,18 @@ Package build: `.gear/rules` is `tar: gitum` (it tars the `gitum/` subdir), and 
   - Claims live in `<common dir>/gitum/claims/`; `check_claims` guards series operations.
   - Queues are per `target` and are paused through `queue/<target>.json` in the journal.
 - **Upstream check.** `upstreamcheck.py` matches by patch-id, then scores candidates touching the same files by subject + diff similarity. `merged-modified` requires verified content (`content_in`: a three-way apply onto upstream changes nothing). A similar but unverified match is `suspect` and is never recorded or dropped automatically.
-- **Forges.** `forge.py` reads GitHub/GitLab/Forgejo REST APIs (tokens from env) and supports JSON import/export.
+- **Forges.** `forge.py` reads public GitHub/GitLab/Forgejo merge requests (no tokens, no writes: gitum never uploads or opens anything on a forge) and supports JSON import/export for everything else.
+- **MR texts.** `mrtext.py` keeps `series/<name>/mr.md` + `assets/` in the journal; `render` leaves `{{gitum-asset:FILE}}` placeholders, `record` remembers URLs uploaded by whoever opens the MR, `import` reads public MRs.
+- **Bugs.** `bugs.py`: series bugs are `TRACKER:N` (`[tracker.NAME]`, `[series] bug-tracker`, `fixes-tracker` maps to `Fixes:` lines); `gitum bugs` is the index; `[hooks] series` gets state changes (`series.state_hook`).
+- **DEP-3.** `dep3.py` maps change fates to `Forwarded`/`Applied-Upstream`/`Origin`/`Bug-*` (`export --dep3`, read back by `import`).
 - **Generated layers.** A layer with `generator = "staging"` (`staging-repo`, `staging-ref` = `v{version}`, `staging-exclude`) or `"command"` is rebuilt on the new base instead of cherry-picked.
   - `post-command` runs afterwards (autoreconf etc.).
   - On wine-rebased this reproduced the robot's `rebased-11.20` except `configure`, whose content depends on the autoconf version.
 - **Shared rerere.** `rrcache.py` keeps the rerere cache in the journal under `rr-cache/`.
 - **Hooks.** `hooks.py` passes JSON events on stdin; hook failures never fail a run.
 - **Publishing.** `publish.py` pushes layers with a lease and the journal/history without force. Commits others pushed since our last publish (`refs/gitum/published/...`) are cherry-picked on top. `pull` fast-forwards the journal, or merges diverged journals with `git merge-tree` when they touched different files, and moves the branches.
-- **Exit codes** (`errors.py`): 0 ok, 1 error, 2 `NeedsHuman` (conflict, review, diverged), 10 updated (with `--detailed-exitcode`), 75 busy. Every command takes `--json`.
+- **Exit codes** (`errors.py`): 0 ok, 1 error (also usage mistakes), 2 `NeedsHuman` (conflict, review, diverged), 10 updated (with `--detailed-exitcode`), 75 busy. Every command takes `--json`.
+- **Command line.** Every command group (`change`, `series`, `forge`, `mr`, `queue`, `config`) uses real argparse subcommands; shared helpers are in `cmdline.py` (`Parser`, `pairs`, `done`, `only_with`, `write_output`). Options that mean nothing without another one are refused with `only_with`, never ignored. Commands only format: logic belongs in the core modules. Small shared helpers (`now`, `short`, `tag_version`, `local_date`) are in `util.py`; write journal states with `JournalWriter.commit`.
 
 Tests:
 - `tests/core_helpers.py` builds an upstream with release tags and a work clone with layers `rebased` → `rebased-basealt` → `rebased-etersoft` and their `-START` tags, like wine-rebased.
