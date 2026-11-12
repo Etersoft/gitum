@@ -1,6 +1,5 @@
 """gitum command line."""
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -8,7 +7,8 @@ from pathlib import Path
 from . import __version__
 from . import config as config_mod
 from . import state
-from .errors import EXIT_ERROR, EXIT_OK, EXIT_UPDATED, GitumError
+from .cmdline import Parser, UsageError, done, only_with, pairs
+from .errors import EXIT_ERROR, EXIT_OK, GitumError
 from .journal import JOURNAL_REF, JournalWriter
 from .repo import Repo
 from .util import short
@@ -33,41 +33,24 @@ class Output:
 		print('gitum: %s' % err.message, file=sys.stderr)
 
 
-class UsageError(GitumError):
-	"""A mistake on the command line (exit code 1, not 2: nothing waits for a person)."""
-
-
-class Parser(argparse.ArgumentParser):
-	"""argparse that reports usage mistakes as a GitumError instead of exiting with 2."""
-
-	def error(self, message):
-		raise UsageError('%s: %s' % (self.prog, message), usage=self.format_usage().strip())
-
-
-def parse_pair(value, what):
-	if '=' not in value:
-		raise argparse.ArgumentTypeError('%s must be NAME=VALUE' % what)
-	return value.split('=', 1)
-
-
 # commands
 
 def cmd_init(repo, args, out):
+	if args.config and (args.upstream or args.layer or args.release_tags):
+		raise UsageError('--config replaces --upstream, --layer and --release-tags')
 	if args.config:
 		text = Path(args.config).read_text()
 		config_mod.parse(text, strict=True)
 		data = state.init(repo, config_text=text)
 	else:
 		upstreams = []
-		for spec in args.upstream:
-			name, ref = parse_pair(spec, '--upstream')
+		for name, ref in pairs(args.upstream, 'NAME=REF').items():
 			up = {'name': name, 'ref': ref}
 			if args.release_tags:
 				up['release-tags'] = args.release_tags
 			upstreams.append(up)
 		layers = []
-		for spec in args.layer:
-			name, rest = parse_pair(spec, '--layer')
+		for name, rest in pairs(args.layer, 'NAME=BRANCH[:BASE]').items():
 			branch, _, base = rest.partition(':')
 			layers.append({'name': name, 'branch': branch, 'base': base})
 		data = state.init(repo, upstreams, layers)
@@ -87,7 +70,7 @@ def cmd_save(repo, args, out):
 	for name, l in data['layers'].items():
 		lines.append('%s: %d changes (+%d -%d)' % (name, l['changes'], len(l['added']), len(l['removed'])))
 	out.result(data, '\n'.join(lines))
-	return EXIT_UPDATED if args.detailed_exitcode else EXIT_OK
+	return done(args, True)
 
 
 def format_status(data):
@@ -133,6 +116,8 @@ def format_status(data):
 
 def cmd_status(repo, args, out):
 	from .commands_changes import format_change_table, format_tree
+	only_with(args, '--series', '--variants', '--bug')
+	only_with(args, '--changes', '--all')
 	data = state.status(repo, changes=args.changes, all_changes=args.all)
 	text = format_status(data)
 	if data['fates']:
@@ -157,16 +142,22 @@ def cmd_config(repo, args, out):
 			   journal.config_text + ''.join('# warning: %s\n' % w for w in warnings))
 		return
 	text = Path(args.file).read_text()
+	if text == journal.config_text:
+		out.result({'journal': journal.sha, 'changed': False}, 'The configuration is the same.')
+		return EXIT_OK
 	config_mod.parse(text, strict=True)
 	with repo.lock():
 		journal = repo.journal()
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.put(config_mod.CONFIG_FILE, text)
 		new = writer.commit('gitum: update configuration')
-	out.result({'journal': new}, 'Configuration updated.')
+	out.result({'journal': new, 'changed': True}, 'Configuration updated.')
+	return done(args, True)
 
 
 def cmd_log(repo, args, out):
+	if args.target and args.max_count:
+		raise UsageError('-n is for the journal history, not for the history of %s' % args.target)
 	if args.target:
 		from .journal import object_history
 		from . import changes as changes_mod
@@ -220,8 +211,10 @@ def build_parser():
 	s.set_defaults(func=cmd_save)
 
 	s = sub.add_parser('config', help='show or replace gitum.toml')
-	s.add_argument('action', choices=['show', 'load'])
-	s.add_argument('file', nargs='?')
+	cs = s.add_subparsers(dest='action', required=True, metavar='action')
+	cs.add_parser('show', help='print gitum.toml with warnings about unknown settings')
+	c = cs.add_parser('load', help='check a file and make it the configuration')
+	c.add_argument('file')
 	s.set_defaults(func=cmd_config)
 
 	s = sub.add_parser('log', help='journal history, or the history of a change, series:NAME or layer:NAME')

@@ -232,12 +232,12 @@ def test_series_save_and_log(with_series, capsys):
 def test_series_export_import_checkout(with_series, tmp_path, capsys):
 	up, work = with_series
 	out = tmp_path / 'patches'
-	code, data = gitum_json(work, capsys, 'series', 'export', '--dir', str(out))
+	code, data = gitum_json(work, capsys, 'export', 'series', '--format', 'staging', '--dir', str(out))
 	assert set(data['written']) == {'ntdll-base', 'ntdll-use'}
 	assert (out / 'ntdll-use' / 'definition').read_text() == 'Depends: ntdll-base\n'
-	assert gitum(work, 'series', 'export', '--dir', str(out), '--check') == 0
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(out), '--check') == 0
 	(out / 'ntdll-use' / 'definition').write_text('stale\n')
-	assert gitum(work, 'series', 'export', '--dir', str(out), '--check') == EXIT_NEEDS_HUMAN
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(out), '--check') == EXIT_NEEDS_HUMAN
 	# a wine-staging style directory with a disabled series
 	staging = tmp_path / 'staging'
 	(staging / 'foo-Bar').mkdir(parents=True)
@@ -245,7 +245,7 @@ def test_series_export_import_checkout(with_series, tmp_path, capsys):
 		'Fixes: [999] Make foo work\nDepends: ntdll-use\n# broken since 1.1\nDisabled: true\n')
 	(staging / 'foo-Bar' / '0001-foo.patch').write_bytes(
 		journal(work).read('series/ntdll-base/0001-ntdll-Add-a-helper.patch'))
-	assert gitum(work, 'series', 'import-staging', str(staging), '--base', 'upstream:winehq') == 0
+	assert gitum(work, 'import', str(staging), '--format', 'staging', '--base', 'upstream:winehq') == 0
 	meta = journal(work).read_json('series/foo-Bar/meta.json')
 	assert meta['fixes'] == ['[999] Make foo work'] and meta['depends'] == ['ntdll-use']
 	assert meta['disabled'] == 'broken since 1.1' and meta['state'] == 'disabled'
@@ -409,7 +409,7 @@ def test_series_export_keeps_foreign_files(with_series, tmp_path, capsys):
 	(work_dir / 'README.md').write_text('notes\n')
 	(work_dir / 'run-tests.sh').write_text('#!/bin/sh\n')
 	(work_dir / '0009-stale.patch').write_text('old\n')
-	assert gitum(work, 'series', 'export', 'ntdll-use', '--dir', str(out)) == 0
+	assert gitum(work, 'export', 'series:ntdll-use', '--format', 'staging', '--dir', str(out)) == 0
 	# a patch the series never wrote is not ours: it stays
 	assert sorted(p.name for p in work_dir.iterdir()) == [
 		'0001-ntdll-Use-the-helper-bug-123.patch', '0002-ntdll-tests-Test-the-helper.patch', '0009-stale.patch',
@@ -417,7 +417,7 @@ def test_series_export_keeps_foreign_files(with_series, tmp_path, capsys):
 	assert (work_dir / 'src' / 'probe.c').read_text() == 'int main;\n'
 	# foreign files do not make the copy stale
 	(work_dir / 'notes.tsv').write_text('a\tb\n')
-	assert gitum(work, 'series', 'export', 'ntdll-use', '--dir', str(out), '--check') == 0
+	assert gitum(work, 'export', 'series:ntdll-use', '--format', 'staging', '--dir', str(out), '--check') == 0
 
 
 def test_series_nested_directories_and_reimport(with_series, tmp_path, capsys):
@@ -429,21 +429,21 @@ def test_series_nested_directories_and_reimport(with_series, tmp_path, capsys):
 		(src / sub).mkdir(parents=True)
 		(src / sub / '0001-a.patch').write_bytes(patch)
 	(src / 'font' / 'README.md').write_text('two merge requests\n')
-	code, data = gitum_json(work, capsys, 'series', 'import-staging', str(src), '--base', 'upstream:winehq')
+	code, data = gitum_json(work, capsys, 'import', str(src), '--format', 'staging', '--base', 'upstream:winehq')
 	assert sorted(data['imported']) == ['font-bold', 'font-regular']
 	assert journal(work).read_json('series/font-bold/meta.json')['export_dir'] == 'font/bold'
 	assert gitum(work, 'series', 'set', 'font-bold', 'state=sent', 'pr=https://example.org/mr/21') == 0
 	# re-import keeps the metadata, updates definition and patches
 	(src / 'font' / 'bold' / 'definition').write_text('Fixes: [5] Bold strikes\n')
-	assert gitum(work, 'series', 'import-staging', str(src), '--base', 'upstream:winehq', 'font/bold') == 0
+	assert gitum(work, 'import', str(src), '--format', 'staging', '--base', 'upstream:winehq', '--series', 'font/bold') == 0
 	meta = journal(work).read_json('series/font-bold/meta.json')
 	assert meta['state'] == 'sent' and meta['pr'] == 'https://example.org/mr/21'
 	assert meta['fixes'] == ['[5] Bold strikes']
 	out = tmp_path / 'out'
-	assert gitum(work, 'series', 'export', 'font-bold', '--dir', str(out)) == 0
+	assert gitum(work, 'export', 'series:font-bold', '--format', 'staging', '--dir', str(out)) == 0
 	assert sorted(p.name for p in (out / 'font' / 'bold').iterdir()) == ['0001-a.patch', 'definition']
 	assert gitum(work, 'series', 'set', 'font-bold', 'export_dir=../escape') == 0
-	assert gitum(work, 'series', 'export', 'font-bold', '--dir', str(out)) == 1
+	assert gitum(work, 'export', 'series:font-bold', '--format', 'staging', '--dir', str(out)) == 1
 
 
 def test_forge_approved_and_outdated_head(with_series, tmp_path, capsys):
@@ -516,7 +516,7 @@ def test_dependent_series_and_shared_export_dir(stack, tmp_path, capsys):
 	assert [c['subject'] for c in gasp['changes']] == ['win32u: Use gasp.']
 	assert gasp['base_sha'] == work.rev('series/italic')
 	out = tmp_path / 'patches'
-	assert gitum(work, 'series', 'export', '--dir', str(out)) == 0
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(out)) == 0
 	assert sorted(p.name for p in (out / 'italic').iterdir() if p.name.endswith('.patch')) == [
 		'0001-win32u-Fake-italic-1.patch', '0002-win32u-Fake-italic-2.patch', '0003-win32u-Use-gasp.patch']
 	# the dependency changes: its own old patch goes, the gasp patch stays
@@ -524,7 +524,7 @@ def test_dependent_series_and_shared_export_dir(stack, tmp_path, capsys):
 	work.run('commit', '-q', '--amend', '-m', 'win32u: Fake italic 2, reworded.')
 	work.run('checkout', '-q', '--detach')
 	assert gitum(work, 'series', 'save', 'italic') == 0
-	assert gitum(work, 'series', 'export', 'italic', '--dir', str(out)) == 0
+	assert gitum(work, 'export', 'series:italic', '--format', 'staging', '--dir', str(out)) == 0
 	names = sorted(p.name for p in (out / 'italic').iterdir() if p.name.endswith('.patch'))
 	assert names == ['0001-win32u-Fake-italic-1.patch', '0002-win32u-Fake-italic-2-reworded.patch',
 			 '0003-win32u-Use-gasp.patch']
@@ -613,9 +613,9 @@ def test_explicit_save_recounts_and_shared_definition(stack, tmp_path, capsys):
 	gitum(work, 'series', 'set', 'italic', 'fixes=[1] Italic', 'depends=other')
 	gitum(work, 'series', 'set', 'gasp', 'fixes=[2] Gasp', 'export_dir=italic')
 	out = tmp_path / 'p'
-	assert gitum(work, 'series', 'export', '--dir', str(out)) == 0
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(out)) == 0
 	assert (out / 'italic' / 'definition').read_text() == 'Fixes: [1] Italic\nFixes: [2] Gasp\nDepends: other\n'
-	assert gitum(work, 'series', 'export', '--dir', str(out), '--check') == 0
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(out), '--check') == 0
 
 
 def test_import_json_does_not_roll_back(with_series, tmp_path, capsys):
@@ -673,7 +673,7 @@ def test_save_all_renumbers_dependents_in_a_shared_directory(stack, tmp_path, ca
 	assert gitum(work, 'series', 'save') == 0
 	assert [f for f in journal(work).list('series/b') if f.endswith('.patch')] == ['0004-b-Three.patch']
 	out = tmp_path / 'p'
-	assert gitum(work, 'series', 'export', '--dir', str(out)) == 0
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(out)) == 0
 	assert sorted(p.name for p in (out / 'a').glob('*.patch')) == [
 		'0001-a-One.patch', '0002-a-Two.patch', '0003-a-Extra.patch', '0004-b-Three.patch']
 	# patches made in one go read like those made one by one

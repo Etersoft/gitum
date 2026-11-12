@@ -239,7 +239,7 @@ def test_fork_through_three_releases(world):
 	assert journal.upstream('winehq')['tag'] == 'v1.3'
 	assert len(journal.list('runs')) == 3
 	html = tmp / 'report.html'
-	g(robot, 'report', '--html', str(html))
+	g(robot, 'report', '--format', 'html', '-o', str(html))
 	assert 'Sync to winehq v1.3' in html.read_text()
 	assert w['origin'].rev(JOURNAL_REF) == robot.rev(JOURNAL_REF)
 
@@ -292,7 +292,7 @@ def test_series_from_branch_to_upstream(world):
 		assert g(robot, 'queue')['queues']['upstream']['next'] == 'helper'
 
 		# a variant for our builds; and our builds need the helper now: it goes into the etersoft layer
-		g(robot, 'port', 'helper', '--to', 'layer:etersoft')
+		g(robot, 'port', 'helper', '--onto', 'layer:etersoft')
 		assert not g(robot, 'variants', 'helper')['layer:etersoft']['diverged']
 		robot.run('checkout', '-q', 'rebased-etersoft')
 		robot.run('cherry-pick', 'series/helper')
@@ -335,14 +335,14 @@ def test_series_from_branch_to_upstream(world):
 		data = g(robot, 'prepare', 'use-helper', '--push', 'fork')
 		assert robot.subjects('winehq/master..upstream/use-helper') == ['ntdll: Use the helper.']
 		md = tmp / 'UPSTREAM-QUEUE.md'
-		g(robot, 'queue', '--format', 'md', '-o', str(md))
+		g(robot, 'queue', 'list', '--format', 'md', '-o', str(md))
 		text = md.read_text()
 		assert 'Next to send: **use-helper**' in text
 		assert '| helper | 2026-11-10 | v1.1 |' in text
 		out = tmp / 'patches'
-		g(robot, 'series', 'export', '--dir', str(out))
+		g(robot, 'export', 'series', '--format', 'staging', '--dir', str(out))
 		assert (out / 'use-helper' / 'definition').read_text() == 'Depends: helper\n'
-		g(robot, 'series', 'export', '--dir', str(out), '--check')
+		g(robot, 'export', 'series', '--format', 'staging', '--dir', str(out), '--check')
 		no_leftovers(robot)
 	finally:
 		server.shutdown()

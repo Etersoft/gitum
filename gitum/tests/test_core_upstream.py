@@ -63,7 +63,7 @@ def test_clean_message():
 
 def test_port_and_variants(ser, capsys):
 	up, work = ser
-	code, data = gitum_json(work, capsys, 'port', 'ntdll-base', '--to', 'layer:etersoft')
+	code, data = gitum_json(work, capsys, 'port', 'ntdll-base', '--onto', 'layer:etersoft')
 	assert code == 0 and data['branch'] == 'series/ntdll-base@etersoft'
 	assert work.git.is_ancestor('rebased-etersoft', 'series/ntdll-base@etersoft')
 	assert work.subjects('rebased-etersoft..series/ntdll-base@etersoft') == ['ntdll: Add a helper.']
@@ -83,7 +83,7 @@ def test_port_skips_changes_already_in_base(ser, capsys):
 	work.run('checkout', '-q', 'rebased-etersoft')
 	work.run('cherry-pick', 'series/ntdll-base')
 	work.run('checkout', '-q', '--detach')
-	code, data = gitum_json(work, capsys, 'port', 'ntdll-base', '--to', 'refs/heads/rebased-etersoft',
+	code, data = gitum_json(work, capsys, 'port', 'ntdll-base', '--onto', 'refs/heads/rebased-etersoft',
 				'--branch', 'v-eter')
 	assert data['ported'] == 0 and len(data['already_in_base']) == 1
 
@@ -125,7 +125,7 @@ def test_queue_one_at_a_time_and_dependencies(ser, tmp_path, capsys):
 	assert gitum(work, 'queue', 'resume') == 0
 	assert queue_of(work, capsys)['next'] == 'ntdll-use'
 	md = tmp_path / 'UPSTREAM-QUEUE.md'
-	assert gitum(work, 'queue', '--format', 'md', '-o', str(md)) == 0
+	assert gitum(work, 'queue', 'list', '--format', 'md', '-o', str(md)) == 0
 	text = md.read_text()
 	assert 'Next to send: **ntdll-use**' in text
 	assert '### Queue' in text and '### Done' in text and '| 1 | ntdll-use | queued |' in text
@@ -144,7 +144,7 @@ def test_queue_targets_and_labels(ser, tmp_path, capsys):
 	load_config(work, tmp_path, '[queue.markdown]\ntitle = "Очередь в апстрим"\n'
 		    'fields = ["position", "name", "state", "reviewer"]\n'
 		    '[queue.markdown.titles]\nqueued = "Очередь"\nname = "Серия"\nreviewer = "Ревьюер"\n')
-	code, data = gitum_json(work, capsys, 'queue', '--target', 'upstream', '--format', 'md')
+	code, data = gitum_json(work, capsys, 'queue', 'list', '--target', 'upstream', '--format', 'md')
 	text = queue_markdown(data, journal(work).config.queue['markdown'])
 	assert text.startswith('# Очередь в апстрим') and '### Очередь' in text
 	assert '| # | Серия | State | Ревьюер |' in text
@@ -352,7 +352,7 @@ def test_queue_markdown_sections_links_and_done(ser, tmp_path, capsys):
 	assert gitum(work, 'series', 'set', 'later', 'pr=wine/wine!3') == 1		# no default forge for pr
 	gitum(work, 'series', 'set', 'ntdll-base', 'state=merged', 'release=v1.1', 'upstream_commit=' + 'a' * 40,
 	      'merged_at=2026-11-05T10:00:00+00:00')
-	code, data = gitum_json(work, capsys, 'queue', '--format', 'md')
+	code, data = gitum_json(work, capsys, 'queue', 'list', '--format', 'md')
 	text = queue_markdown(data, {})
 	assert '### Waiting to be queued' in text
 	assert '[wine/wine!7](https://gitlab.example.org/wine/wine/-/merge_requests/7)' in text
@@ -449,7 +449,7 @@ def test_bugs_with_trackers(ser, tmp_path, capsys):
 	# the queue markdown shows bugs as links and can carry the index as a section
 	load_config(work, tmp_path, '[queue.markdown]\nsections = ["queued", "draft", "bugs"]\n')
 	capsys.readouterr()
-	assert gitum(work, 'queue', '--format', 'md') == 0
+	assert gitum(work, 'queue', 'list', '--format', 'md') == 0
 	md = capsys.readouterr().out
 	assert '[#19979](https://bugs.etersoft.ru/show_bug.cgi?id=19979), [winehq 60741]' in md and '\n### Bugs\n' in md
 
@@ -467,7 +467,7 @@ def test_bugs_import(stack, tmp_path, capsys):
 	d = tmp_path / 'staging' / 'gdi32-tahoma'
 	d.mkdir(parents=True)
 	(d / 'definition').write_text('Fixes: [60741] Tahoma is wrong\nFixes: something without a number\n')
-	assert gitum(work, 'series', 'import-staging', str(tmp_path / 'staging'), '--base', 'upstream:winehq') == 0
+	assert gitum(work, 'import', str(tmp_path / 'staging'), '--format', 'staging', '--base', 'upstream:winehq') == 0
 	assert journal(work).read_json('series/gdi32-tahoma/meta.json')['bugs'] == ['winehq:60741']
 	items = [{'name': 'old-one', 'base': 'upstream:winehq', 'bugs': ['19819', 'winehq:60629']}]
 	(tmp_path / 'items.json').write_text(json.dumps(items))
@@ -494,3 +494,34 @@ def test_forge_unknown_approval_keeps_state(ser, tmp_path, capsys):
 	items.write_text(json.dumps([{'series': 'ntdll-base', 'state': 'open'}]))
 	assert gitum(work, 'forge', 'import-json', str(items)) == 0
 	assert journal(work).read_json('series/ntdll-base/meta.json')['state'] == 'sent'
+
+
+def test_cli_symmetry_and_refused_combinations(ser, tmp_path, capsys):
+	up, work = ser
+	# options that mean nothing without another one are refused, not ignored
+	assert gitum(work, 'status', '--variants') == 1
+	assert gitum(work, 'status', '--all') == 1
+	assert gitum(work, 'log', 'series:ntdll-base', '-n', '3') == 1
+	assert gitum(work, 'sync', '--to', 'v1.0', '--to', 'v1.0') == 1
+	assert gitum(work, 'export', 'layer:etersoft', '--format', 'quilt', '--dir', str(tmp_path), '--first', '3') == 1
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(tmp_path), '--clean') == 1
+	assert gitum(work, 'change', 'set') == 1			# subcommands check their arguments
+	assert gitum(work, 'mr', 'record', 'ntdll-base', 'a.png=u') == 1	# --forge is required
+	# --detailed-exitcode: 10 when something changed, 0 when nothing did
+	work.run('checkout', '-q', 'series/ntdll-use')
+	work.commit('ntdll: More.', {'more': 'm\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, '--detailed-exitcode', 'series', 'save') == 10
+	assert gitum(work, '--detailed-exitcode', 'series', 'save') == 0
+	# series records go out and back in
+	code, records = gitum_json(work, capsys, 'series', 'export-json')
+	assert [r['name'] for r in records] == ['ntdll-base', 'ntdll-use'] and 'changes' not in records[0]
+	(tmp_path / 's.json').write_text(json.dumps(records))
+	assert gitum(work, 'series', 'import-json', str(tmp_path / 's.json')) == 0
+	# staging export and import: the format of a directory is guessed
+	out = tmp_path / 'patches'
+	assert gitum(work, 'export', 'series', '--format', 'staging', '--dir', str(out)) == 0
+	code, data = gitum_json(work, capsys, 'import', str(out), '--base', 'upstream:winehq')
+	assert code == 0 and sorted(data['imported']) == ['ntdll-base', 'ntdll-use']
+	code, data = gitum_json(work, capsys, 'queue')
+	assert 'upstream' in data['queues']

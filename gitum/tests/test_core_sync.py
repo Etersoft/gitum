@@ -265,7 +265,7 @@ def test_candidate_always_and_drop(stack, capsys):
 	before = tips(work)
 	assert gitum(work, 'sync', '--next-release', '--candidate', 'always') == EXIT_NEEDS_HUMAN
 	assert work.rev('candidate/rebased')
-	assert gitum(work, 'drop-candidate') == 0
+	assert gitum(work, 'reject') == 0
 	assert not work.rev('candidate/rebased') and tips(work) == before
 	assert gitum(work, 'sync', '--next-release') == 0
 

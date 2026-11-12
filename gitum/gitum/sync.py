@@ -809,12 +809,12 @@ def accept(repo, publish_=False):
 		tips = {name: git.rev(ref) for name, ref in cand['refs'].items()}
 		missing = [ref for name, ref in cand['refs'].items() if not tips[name]]
 		if missing:
-			raise NeedsHuman('candidate branches are gone: %s; gitum drop-candidate and sync again'
+			raise NeedsHuman('candidate branches are gone: %s; gitum reject and sync again'
 					 % ', '.join(missing), missing=missing)
 		snapshot = op.get('snapshot', {})
 		moved = [ref for ref, sha in snapshot.items() if ref.startswith('refs/heads/') and git.rev(ref) != sha]
 		if moved:
-			raise NeedsHuman('%s moved since the candidate was made; gitum drop-candidate and sync again'
+			raise NeedsHuman('%s moved since the candidate was made; gitum reject and sync again'
 					 % ', '.join(r[len('refs/heads/'):] for r in moved), moved=moved)
 		# the remote keeps the candidate until the accepted state is published there
 		on_remote = {'remote': cfg.publish_remote, 'refs': list(cand['refs'].values())} \
@@ -882,7 +882,7 @@ def check_idle(repo):
 	if repo.load_op():
 		raise NeedsHuman('an operation is in progress: gitum continue, skip or abort')
 	if (repo.gitum_dir / CANDIDATE_FILE).exists():
-		raise NeedsHuman('a candidate is waiting for review: gitum accept or gitum drop-candidate')
+		raise NeedsHuman('a candidate is waiting for review: gitum accept or gitum reject')
 
 
 def sync(repo, step=False, **kwargs):

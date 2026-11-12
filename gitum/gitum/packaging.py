@@ -199,7 +199,7 @@ def export(repo, what, fmt, directory, spec=None, prefix='', first=1, clean=Fals
 	directory = Path(directory)
 	if fmt == 'staging':
 		if not what.startswith('series:'):
-			raise GitumError('the staging format is for series (gitum series export)')
+			raise GitumError('the staging format is for series: gitum export series:NAME --format staging')
 		return series_mod.export(repo, [name], directory)
 	target = directory / 'patches' if fmt == 'quilt' else directory
 	removed = []

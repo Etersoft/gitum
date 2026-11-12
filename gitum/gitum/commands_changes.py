@@ -1,25 +1,19 @@
 """Commands for changes, series, upstream checks and forges."""
 
 import json
-import sys
-from pathlib import Path
 
 from . import bugs as bugs_mod
 from . import changes as changes_mod
 from . import forge, series, upstreamcheck
-from .errors import EXIT_ERROR, EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
+from .cmdline import done, pairs, read_json_input, write_output
+from .errors import EXIT_ERROR, EXIT_NEEDS_HUMAN, EXIT_OK
 from .journal import JOURNAL_REF, JournalWriter
 from .util import short
 
 
-def parse_values(pairs):
-	values = {}
-	for pair in pairs:
-		key, sep, value = pair.partition('=')
-		if not sep:
-			raise GitumError('expected KEY=VALUE, got %r' % pair)
-		values[key.replace('-', '_')] = value
-	return values
+def parse_values(items):
+	"""KEY=VALUE arguments of set commands; keys may be written with - or _."""
+	return {k.replace('-', '_'): v for k, v in pairs(items).items()}
 
 
 def format_change_table(rows):
@@ -42,7 +36,7 @@ def cmd_change(repo, args, out):
 		out.result(rows, format_change_table(rows) or 'No changes.')
 		return
 	if args.action == 'confirm':
-		data = upstreamcheck.confirm(repo, args.ref, args.values[0] if args.values else None)
+		data = upstreamcheck.confirm(repo, args.ref, args.sha)
 		out.result(data, '%s: %s as %s%s' % (data['id'], data['fate'], short(data['meta']['upstream_commit']),
 						    ' in ' + data['meta']['release'] if data['meta'].get('release') else ''))
 		return
@@ -62,8 +56,6 @@ def cmd_change(repo, args, out):
 		return
 	# set
 	values = parse_values(args.values)
-	if not values:
-		raise GitumError('gitum change set ID needs KEY=VALUE (fate=..., pr=..., ...)')
 	fate = values.pop('fate', None)
 	if values.get('pr'):
 		values['pr'] = series.normalize_link(repo.journal().config, 'pr', values['pr'])
@@ -129,6 +121,8 @@ def cmd_series(repo, args, out):
 	if a == 'list':
 		journal = repo.journal()
 		data = series.load_all(journal)
+		if args.state:
+			data = {n: m for n, m in data.items() if m.get('state') == args.state}
 		if args.bug:
 			data = {n: m for n, m in data.items() if bugs_mod.matches(journal.config, m, args.bug)}
 		out.result(data, format_series(data, journal) or 'No series.')
@@ -145,37 +139,32 @@ def cmd_series(repo, args, out):
 		return with_warnings(out, meta, 'Series %s: %d patches on %s' % (
 			args.name, len(meta['changes']), short(meta['base_sha'])))
 	elif a == 'save':
-		data = series.save(repo, args.names or None)
-		return with_warnings(out, data, ('Saved: ' + ', '.join(data['saved'])) if data['saved'] else 'Nothing to save.')
+		data = series.save(repo, args.names or None, args.message)
+		code = with_warnings(out, data, ('Saved: ' + ', '.join(data['saved'])) if data['saved'] else 'Nothing to save.')
+		return code or done(args, data['changed'])
 	elif a == 'set':
 		meta = series.set_(repo, args.name, parse_values(args.values))
 		out.result(meta, 'Series %s updated.' % args.name)
 	elif a == 'remove':
 		series.remove(repo, args.name)
 		out.result({'removed': args.name}, 'Series %s removed.' % args.name)
-	elif a == 'export':
-		data = series.export(repo, args.names, args.dir, args.check)
-		if args.check:
-			out.result(data, ('Stale: ' + ', '.join(data['stale'])) if data['stale'] else 'Up to date.')
-			return EXIT_NEEDS_HUMAN if data['stale'] else EXIT_OK
-		out.result(data, 'Written: %s' % (', '.join(data['written']) or 'nothing (up to date)'))
-	elif a == 'import-staging':
-		data = series.import_staging(repo, args.dir, args.base, args.names or None)
-		out.result(data, 'Imported %d series.' % len(data['imported']))
 	elif a == 'claim':
 		data = series.claim(repo, args.name, args.reason or '', args.force)
 		out.result(data, 'Series %s claimed by %s.' % (args.name, data['session']))
 	elif a == 'release':
 		data = series.release(repo, args.name, args.force)
 		out.result(data or {}, 'Series %s released.' % args.name if data else 'Series %s was not claimed.' % args.name)
+	elif a == 'export-json':
+		data = series.export_json(repo, args.names)
+		out.result(data, json.dumps(data, indent=1, ensure_ascii=False))
 	elif a == 'import-json':
-		text = sys.stdin.read() if args.file in (None, '-') else Path(args.file).read_text()
-		data = series.import_json(repo, json.loads(text), args.force)
+		data = series.import_json(repo, read_json_input(args.file), args.force)
 		lines = ['Created: %s; updated: %s' % (', '.join(data['created']) or '-', ', '.join(data['updated']) or '-')]
 		for sk in data['skipped']:
 			lines.append('kept %s state %s instead of %s: %s; if it is right anyway: %s (or import with --force)' % (
 				sk['series'], sk['kept'], sk['state'], sk['reason'], sk['command']))
-		return with_warnings(out, data, '\n'.join(lines))
+		code = with_warnings(out, data, '\n'.join(lines))
+		return code or done(args, bool(data['created'] or data['updated']))
 	elif a == 'checkout':
 		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends, args.force)
 		out.result(data, '%s: %d patches on %s' % (data['branch'], len(data['applied']), short(data['base'])))
@@ -206,7 +195,7 @@ def cmd_check_upstream(repo, args, out):
 	if data['suspect'] and args.apply:
 		lines.append('Confirm a suspect with: gitum change confirm ID [UPSTREAM_SHA]')
 	out.result(data, '\n'.join(lines) or 'Nothing found upstream.')
-	return EXIT_NEEDS_HUMAN if data['suspect'] else EXIT_OK
+	return EXIT_NEEDS_HUMAN if data['suspect'] else done(args, bool(data['applied'] or data.get('series_merged')))
 
 
 # forge
@@ -217,8 +206,7 @@ def cmd_forge(repo, args, out):
 		out.result(data, json.dumps(data, indent=1, ensure_ascii=False))
 		return
 	if args.action == 'import-json':
-		text = sys.stdin.read() if args.file in (None, '-') else Path(args.file).read_text()
-		data = forge.import_json(repo, json.loads(text))
+		data = forge.import_json(repo, read_json_input(args.file))
 	else:
 		data = forge.refresh(repo)
 	text = 'Updated: %s' % (', '.join(data['updated']) or 'nothing')
@@ -232,6 +220,7 @@ def cmd_forge(repo, args, out):
 		return EXIT_ERROR		# what could be read is recorded; the rest needs a look
 	if data.get('outdated'):
 		return EXIT_NEEDS_HUMAN
+	return done(args, bool(data['updated']))
 
 
 # journal diff and object history
@@ -269,8 +258,7 @@ def cmd_bugs(repo, args, out):
 	else:
 		text = bugs_mod.text(rows)
 	if args.output:
-		Path(args.output).write_text(text if text.endswith('\n') else text + '\n')
-		text = 'Written %s' % args.output
+		text = write_output(args.output, text)
 	out.result(rows, text)
 
 
@@ -282,20 +270,28 @@ def register(sub):
 	s.set_defaults(func=cmd_bugs)
 
 	s = sub.add_parser('change', help='changes and their fate')
-	s.add_argument('action', choices=['list', 'show', 'set', 'confirm'])
-	s.add_argument('ref', nargs='?', help='change id (or prefix, or commit sha); several with commas for set')
-	s.add_argument('values', nargs='*', metavar='KEY=VALUE',
+	cs = s.add_subparsers(dest='action', required=True, metavar='action')
+	p = cs.add_parser('list', help='changes with their fate and the action they need')
+	p.add_argument('--layer')
+	p.add_argument('--fate')
+	p.add_argument('--all', action='store_true', help='also changes that left their layer')
+	p = cs.add_parser('show', help='one change with its history')
+	p.add_argument('ref', metavar='ID', help='change id (or prefix, or commit sha)')
+	p = cs.add_parser('set', help='set the fate or metadata of changes')
+	p.add_argument('ref', metavar='ID[,ID...]')
+	p.add_argument('values', nargs='+', metavar='KEY=VALUE',
 		       help='fate=..., pr=URL, bugs=1,2, upstream_commit=SHA, release=, reason=, link=, drop_on=REF')
-	s.add_argument('--layer')
-	s.add_argument('--fate')
-	s.add_argument('--all', action='store_true', help='also changes that left their layer')
+	p = cs.add_parser('confirm', help='confirm that a change was accepted upstream (a suspect of check-upstream)')
+	p.add_argument('ref', metavar='ID')
+	p.add_argument('sha', nargs='?', metavar='UPSTREAM_SHA', help='default: the remembered candidate')
 	s.set_defaults(func=cmd_change)
 
 	s = sub.add_parser('series', help='series of changes')
-	ss = s.add_subparsers(dest='action', required=True)
-	p = ss.add_parser('list')
+	ss = s.add_subparsers(dest='action', required=True, metavar='action')
+	p = ss.add_parser('list', help='all series')
+	p.add_argument('--state', choices=series.STATES, help='only the series in this state')
 	p.add_argument('--bug', metavar='[TRACKER:]N', help='only the series of this bug')
-	p = ss.add_parser('show')
+	p = ss.add_parser('show', help='one series with its changes')
 	p.add_argument('name')
 	p = ss.add_parser('add', help='register a branch as a series')
 	p.add_argument('name')
@@ -306,20 +302,19 @@ def register(sub):
 	p.add_argument('--upstream', help='the upstream the series is for, if not its base (vendored trees)')
 	p = ss.add_parser('save', help='record series branches in the journal')
 	p.add_argument('names', nargs='*')
-	p = ss.add_parser('set')
+	p.add_argument('-m', '--message', default='')
+	p = ss.add_parser('set', help='set the state or metadata of a series')
 	p.add_argument('name')
 	p.add_argument('values', nargs='+', metavar='KEY=VALUE',
 		       help='state=, pr=URL, internal_mr=URL, bugs=, depends=, disabled=REASON, fixes=, title=')
-	p = ss.add_parser('remove')
+	p = ss.add_parser('remove', help='forget a series (its branch stays)')
 	p.add_argument('name')
-	p = ss.add_parser('export', help='write series in the wine-staging layout')
-	p.add_argument('names', nargs='*')
-	p.add_argument('--dir', required=True)
-	p.add_argument('--check', action='store_true', help='only report stale copies (exit 2 if any)')
-	p = ss.add_parser('import-staging', help='import <dir>/<series>/{definition,*.patch}')
-	p.add_argument('dir')
-	p.add_argument('--base', required=True, help='base of the imported series, e.g. upstream:winehq')
-	p.add_argument('names', nargs='*')
+	p = ss.add_parser('checkout', help='build a branch from the patches of a series')
+	p.add_argument('name')
+	p.add_argument('--onto', help='base commit (default: the series base)')
+	p.add_argument('--branch')
+	p.add_argument('--no-depends', action='store_true')
+	p.add_argument('--force', action='store_true', help='replace a branch with unsaved commits')
 	p = ss.add_parser('claim', help='mark a series as being worked on by this session (GITUM_SESSION)')
 	p.add_argument('name')
 	p.add_argument('--reason')
@@ -327,15 +322,11 @@ def register(sub):
 	p = ss.add_parser('release', help='release a claimed series')
 	p.add_argument('name')
 	p.add_argument('--force', action='store_true')
+	p = ss.add_parser('export-json', help='series records as JSON, as import-json takes them')
+	p.add_argument('names', nargs='*')
 	p = ss.add_parser('import-json', help='create or update series from a JSON list')
-	p.add_argument('file', nargs='?')
+	p.add_argument('file', nargs='?', help='default: standard input')
 	p.add_argument('--force', action='store_true', help='also roll back states changed after the record')
-	p = ss.add_parser('checkout', help='build a branch from the patches of a series')
-	p.add_argument('name')
-	p.add_argument('--onto', help='base commit (default: the series base)')
-	p.add_argument('--branch')
-	p.add_argument('--no-depends', action='store_true')
-	p.add_argument('--force', action='store_true', help='replace a branch with unsaved commits')
 	s.set_defaults(func=cmd_series)
 
 	s = sub.add_parser('check-upstream', help='find our changes in upstream, also edited ones')
@@ -348,8 +339,11 @@ def register(sub):
 	s.set_defaults(func=cmd_check_upstream)
 
 	s = sub.add_parser('forge', help='states of pull/merge requests')
-	s.add_argument('action', choices=['refresh', 'import-json', 'export-json'])
-	s.add_argument('file', nargs='?')
+	fs = s.add_subparsers(dest='action', required=True, metavar='action')
+	fs.add_parser('refresh', help='read the states of public merge requests from their forges')
+	p = fs.add_parser('import-json', help='take states prepared by your own scripts')
+	p.add_argument('file', nargs='?', help='default: standard input')
+	fs.add_parser('export-json', help='everything gitum knows about changes and series')
 	s.set_defaults(func=cmd_forge)
 
 	s = sub.add_parser('diff', help='range-diff of layers and series between two journal states')

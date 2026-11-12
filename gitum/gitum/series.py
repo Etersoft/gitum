@@ -376,7 +376,7 @@ def add(repo, name, branch, base, depends=(), state='draft', **meta):
 		return data
 
 
-def save(repo, names=None):
+def save(repo, names=None, message=''):
 	git = repo.git
 	with repo.lock():
 		journal = repo.journal()
@@ -418,7 +418,7 @@ def save(repo, names=None):
 		if not saved:
 			return {'changed': False, 'saved': [], 'claimed': claimed}
 		tracker.write(writer)
-		writer.commit('gitum: series save %s' % ', '.join(saved), tips)
+		writer.commit('gitum: series save %s%s' % (', '.join(saved), ('\n\n' + message) if message else ''), tips)
 		warnings = [w for w in (suspect_warning(all_series[n]) for n in saved) if w]
 		return {'changed': True, 'saved': saved, 'warnings': warnings, 'claimed': claimed}
 
@@ -695,6 +695,16 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True, force=False)
 
 
 IMPORT_KEYS = SET_KEYS | {'name', 'branch', 'base', 'depends', 'state', 'updated', 'history'}
+
+
+def export_json(repo, names=None):
+	"""Series records with the keys import_json takes (and their dates), for another repository."""
+	all_series = load_all(repo.journal())
+	for name in names or []:
+		if name not in all_series:
+			raise GitumError('no series %s' % name)
+	return [{k: v for k, v in all_series[n].items() if k in IMPORT_KEYS}
+		for n in order(all_series, names or sorted(all_series))]
 
 
 def import_json(repo, items, force=False):

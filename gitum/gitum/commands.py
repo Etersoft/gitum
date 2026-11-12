@@ -2,6 +2,7 @@
 
 from . import publish, sync
 from .journal import report_layers
+from .cmdline import UsageError
 from .errors import EXIT_OK, EXIT_UPDATED
 from .util import short
 
@@ -42,10 +43,10 @@ def cmd_sync(repo, args, out):
 	to = {}
 	for spec in args.to or []:
 		name, sep, ref = spec.partition('=')
-		if sep:
-			to[name] = ref
-		else:
-			to[None] = spec
+		key, value = (name, ref) if sep else (None, spec)
+		if key in to:
+			raise UsageError('--to %s is given twice' % (key or 'without an upstream name'))
+		to[key] = value
 	data = sync.sync(repo, to=to or None, next_release_=args.next_release, candidate=args.candidate,
 			 publish=args.publish, fetch=not args.no_fetch, find_culprit=args.find_culprit,
 			 wait=args.wait, step=args.step,
@@ -65,9 +66,9 @@ def cmd_accept(repo, args, out):
 	return _result(args, out, sync.accept(repo, args.publish))
 
 
-def cmd_drop_candidate(repo, args, out):
+def cmd_reject(repo, args, out):
 	data = sync.drop_candidate(repo)
-	out.result(data, 'Candidate of run %s dropped.' % data['dropped'])
+	out.result(data, 'Candidate of run %s rejected; the branches stay as they were.' % data['dropped'])
 
 
 def cmd_publish(repo, args, out):
@@ -118,8 +119,8 @@ def register(sub):
 	s = sub.add_parser('accept', help='publish the reviewed candidate')
 	s.add_argument('--publish', action='store_true')
 	s.set_defaults(func=cmd_accept)
-	s = sub.add_parser('drop-candidate', help='throw the candidate away')
-	s.set_defaults(func=cmd_drop_candidate)
+	s = sub.add_parser('reject', help='throw the reviewed candidate away')
+	s.set_defaults(func=cmd_reject)
 	s = sub.add_parser('publish', help='push layers, history and journal')
 	s.add_argument('remote', nargs='?')
 	s.set_defaults(func=cmd_publish)

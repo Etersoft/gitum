@@ -1,15 +1,14 @@
 """Commands for working with upstream: variants, queue, prepare, backport, branches, mirrors."""
 
-from pathlib import Path
-
 from . import mrtext
 from . import upstreamwork as uw
-from .errors import EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
+from .cmdline import done, pairs, write_output
+from .errors import EXIT_NEEDS_HUMAN, EXIT_OK
 from .util import short
 
 
 def cmd_port(repo, args, out):
-	data = uw.port(repo, args.name, args.to, args.branch)
+	data = uw.port(repo, args.name, args.onto, args.branch)
 	out.result(data, '%s: %d changes ported, %d already in the base' % (
 		data['branch'], data['ported'], len(data['already_in_base'])))
 
@@ -30,28 +29,25 @@ def cmd_variants(repo, args, out):
 
 
 def cmd_queue(repo, args, out):
+	action = args.action or 'list'
 	target = args.target or uw.DEFAULT_TARGET
-	if args.action == 'add':
+	if action == 'add':
 		meta = uw.queue_add(repo, args.name, args.position)
 		out.result(meta, '%s queued at %d' % (args.name, meta['position']))
-		return
-	if args.action in ('pause', 'resume'):
-		data = uw.queue_pause(repo, target, args.action == 'pause', args.reason or '')
+		return done(args, True)
+	if action in ('pause', 'resume'):
+		data = uw.queue_pause(repo, target, action == 'pause', getattr(args, 'reason', None) or '')
 		out.result(data, 'Queue %s %s.' % (target, 'paused' if data['paused'] else 'resumed'))
 		return
 	data = uw.queue(repo, args.target)
-	if args.format == 'md':
+	if getattr(args, 'format', 'text') == 'md':
 		labels = repo.journal().config.queue.get('markdown', {})
 		text = uw.queue_markdown(data, labels)
-		if args.output:
-			Path(args.output).write_text(text)
-			out.result(data, 'Written %s' % args.output)
-		else:
-			out.result(data, text)
+		out.result(data, write_output(args.output, text) if args.output else text)
 		return
 	lines = []
 	for t, q in data['queues'].items():
-		if args.action == 'next':
+		if action == 'next':
 			lines.append('%s: %s' % (t, q['next'] or 'nothing to send (%s)' % q['reason']))
 			continue
 		lines.append('== %s%s' % (t, ' (paused: %s)' % q['pause_reason'] if q['paused'] else ''))
@@ -61,7 +57,8 @@ def cmd_queue(repo, args, out):
 			lines.append('%2d %-32s %-9s %3d patches%s%s' % (i, r['name'], r['state'] + version, r['patches'],
 								      blocked, ('  ' + r['pr']) if r['pr'] else ''))
 		lines.append('next: %s' % (q['next'] or 'none (%s)' % q['reason']))
-	out.result(data, '\n'.join(lines))
+	text = '\n'.join(lines)
+	out.result(data, write_output(args.output, text) if getattr(args, 'output', None) else text)
 
 
 def cmd_prepare(repo, args, out):
@@ -91,6 +88,7 @@ def cmd_branches(repo, args, out):
 	if data['deleted']:
 		lines.append('deleted: ' + ', '.join(data['deleted']))
 	out.result(data, '\n'.join(lines) or 'No series branches.')
+	return done(args, bool(data['deleted']))
 
 
 def cmd_mirror(repo, args, out):
@@ -99,50 +97,55 @@ def cmd_mirror(repo, args, out):
 
 
 def cmd_mr(repo, args, out):
-	if args.action in ('set', 'import') and not args.source:
-		raise GitumError('gitum mr %s needs %s' % (args.action, 'a file' if args.action == 'set' else 'a merge request'))
-	if args.action == 'set':
-		data = mrtext.set_from_file(repo, args.name, args.source)
-	elif args.action == 'import':
-		data = mrtext.import_mr(repo, args.name, args.source)
-	elif args.action == 'record':
-		if not args.forge:
-			raise GitumError('gitum mr record needs --forge')
-		pairs = dict(p.split('=', 1) for p in [args.source] + args.pairs if p and '=' in p)
-		data = mrtext.record_uploads(repo, args.name, args.forge, args.project, pairs)
+	if args.action == 'record':
+		data = mrtext.record_uploads(repo, args.name, args.forge, args.project, pairs(args.pairs, 'FILE=URL'))
 		out.result(data, 'Remembered %s for %s' % (', '.join(data['recorded']), data['forge']))
-		return
-	else:
+		return done(args, True)
+	if args.action == 'render':
 		data = mrtext.render(repo, args.name, args.forge, args.project, args.internal, args.assets_dir)
 		text = ('# %s\n\n' % data['title'] if data['title'] else '') + data['description']
 		if args.output:
-			Path(args.output).write_text(text)
-			text = 'Written %s' % args.output
+			text = write_output(args.output, text)
 		notes = ['upload %s and replace %s, then: gitum mr record %s %s=URL --forge %s'
 			 % (p['path'], p['placeholder'], args.name, p['file'], args.forge or 'F') for p in data['pending']]
 		out.result(data, text.rstrip('\n') + ('\n\n' + '\n'.join(notes) if notes else ''))
 		return
+	if args.action == 'set':
+		data = mrtext.set_from_file(repo, args.name, args.file)
+	else:
+		data = mrtext.import_mr(repo, args.name, args.mr)
 	out.result(data, '%s: merge request text%s, %d images' % (
 		args.name, (' "%s"' % data['title']) if data['title'] else '', len(data['assets'])))
+	return done(args, True)
 
 
 def register(sub):
 	s = sub.add_parser('mr', help='the merge request text of a series, with images')
-	s.add_argument('action', choices=['set', 'import', 'render', 'record'])
-	s.add_argument('name', help='series')
-	s.add_argument('source', nargs='?', help='set: a markdown file; import: [forge:]group/project!N or a URL')
-	s.add_argument('pairs', nargs='*', metavar='FILE=URL', help='record: URLs of images uploaded outside gitum')
-	s.add_argument('--forge', help='render/record: the [forge.NAME] the text is for')
-	s.add_argument('--project', help='render/record: the project there (default: from the series links)')
-	s.add_argument('--internal', action='store_true', help='render: keep the internal parts')
-	s.add_argument('-o', '--output', metavar='FILE', help='render: write the text to FILE')
-	s.add_argument('--assets-dir', metavar='DIR', help='render: write images to upload by hand to DIR/SERIES/ '
+	ms = s.add_subparsers(dest='action', required=True, metavar='action')
+	p = ms.add_parser('set', help='take the text from a markdown file; local images it shows become assets')
+	p.add_argument('name', metavar='SERIES')
+	p.add_argument('file')
+	p = ms.add_parser('import', help='take the title, text and images of a public merge request')
+	p.add_argument('name', metavar='SERIES')
+	p.add_argument('mr', metavar='[FORGE:]GROUP/PROJECT!N|URL')
+	p = ms.add_parser('render', help='the text for a forge: known image URLs, placeholders for the rest')
+	p.add_argument('name', metavar='SERIES')
+	p.add_argument('--forge', help='the [forge.NAME] the text is for (its recorded image URLs are used)')
+	p.add_argument('--project', help='the project there (default: from the series links or the upstream remote)')
+	p.add_argument('--internal', action='store_true', help='keep the internal parts')
+	p.add_argument('-o', '--output', metavar='FILE')
+	p.add_argument('--assets-dir', metavar='DIR', help='write images to upload to DIR/SERIES/ '
 		       '(default: [series] mr-assets-dir, or <common dir>/gitum/mr)')
+	p = ms.add_parser('record', help='remember the URLs of images uploaded outside gitum')
+	p.add_argument('name', metavar='SERIES')
+	p.add_argument('pairs', nargs='+', metavar='FILE=URL')
+	p.add_argument('--forge', required=True)
+	p.add_argument('--project')
 	s.set_defaults(func=cmd_mr)
 
 	s = sub.add_parser('port', help='put a series onto another base as a variant branch')
 	s.add_argument('name')
-	s.add_argument('--to', required=True, help='upstream:NAME, layer:NAME or a ref')
+	s.add_argument('--onto', required=True, help='upstream:NAME, layer:NAME or a ref')
 	s.add_argument('--branch')
 	s.set_defaults(func=cmd_port)
 
@@ -152,15 +155,23 @@ def register(sub):
 	s.add_argument('--check', action='store_true', help='exit 2 if a variant diverged')
 	s.set_defaults(func=cmd_variants)
 
-	s = sub.add_parser('queue', help='the upstream submission queue')
-	s.add_argument('action', nargs='?', default='list', choices=['list', 'next', 'add', 'pause', 'resume'])
-	s.add_argument('name', nargs='?')
-	s.add_argument('--position', type=int)
-	s.add_argument('--target', help='queue of this target (series field target; default: all)')
-	s.add_argument('--reason', help='why the queue is paused')
-	s.add_argument('--format', choices=['text', 'md'], default='text')
-	s.add_argument('-o', '--output', help='write the markdown queue to a file')
-	s.set_defaults(func=cmd_queue)
+	s = sub.add_parser('queue', help='the upstream submission queue (default: list)')
+	qs = s.add_subparsers(dest='action', metavar='action')
+	p = qs.add_parser('list', help='the queues in order, with what to send next')
+	p.add_argument('--target', help='queue of this target (series field target; default: all)')
+	p.add_argument('--format', choices=['text', 'md'], default='text')
+	p.add_argument('-o', '--output', metavar='FILE')
+	p = qs.add_parser('next', help='the series to send next')
+	p.add_argument('--target')
+	p = qs.add_parser('add', help='queue a series')
+	p.add_argument('name', metavar='SERIES')
+	p.add_argument('--position', type=int)
+	p = qs.add_parser('pause', help='stop sending to a target')
+	p.add_argument('--target')
+	p.add_argument('--reason')
+	p = qs.add_parser('resume', help='send to a target again')
+	p.add_argument('--target')
+	s.set_defaults(func=cmd_queue, target=None)
 
 	s = sub.add_parser('prepare', help='build the upstream form of a series and push it to a fork')
 	s.add_argument('name')

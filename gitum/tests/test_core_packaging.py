@@ -199,7 +199,7 @@ def test_export_quilt_and_spec(simple, tmp_path, capsys):
 	assert data['spec_updated'] is False
 	bad = tmp_path / 'bad.spec'
 	bad.write_text('Name: x\n')
-	assert gitum(work, 'export', 'layer:pkg', '--dir', str(tmp_path / 'b'), '--spec', str(bad)) == 1
+	assert gitum(work, 'export', 'layer:pkg', '--format', 'spec', '--dir', str(tmp_path / 'b'), '--spec', str(bad)) == 1
 
 
 def test_import_spec_and_quilt(simple, tmp_path, capsys):
@@ -238,7 +238,7 @@ def test_html_report(simple, tmp_path, capsys):
 	assert gitum(work, 'config', 'load', str(tmp_path / 'c.toml')) == 0
 	assert gitum(work, 'sync', '--next-release') == 0
 	out = tmp_path / 'report.html'
-	assert gitum(work, 'report', '--html', str(out)) == 0
+	assert gitum(work, 'report', '--format', 'html', '-o', str(out)) == 0
 	page = out.read_text()
 	assert '<h1>Sync to u v1.1</h1>' in page and 'dropped-upstream' in page and 'fix one' in page
 	code, data = gitum_json(work, capsys, 'report')
