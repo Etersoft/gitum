@@ -6,17 +6,17 @@ assets/<file>. A part between the lines <!-- internal --> and <!-- /internal -->
 (or from <!-- internal --> to the end) is for internal review only and is not
 rendered for upstream.
 
-Rendering for a forge uploads the images where the forge API allows it
-(GitLab project uploads) and remembers the URLs, so that a new version of
-the merge request uploads only new or changed images. Otherwise the text
-gets placeholders and the images are written out for an external tool.
+gitum never uploads anything and uses no tokens. Rendering puts placeholders
+in place of the images and writes the images out; whoever opens the merge
+request uploads them and tells gitum the URLs (gitum mr record), so that the
+next version of the text uses them and only new or changed images are left
+to upload. Importing reads public merge requests only.
 """
 
 import hashlib
 import json
 import os
 import re
-import secrets
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -140,93 +140,69 @@ def set_from_file(repo, name, path):
 	return _store(repo, name, text, assets, 'merge request text from %s' % path.name)
 
 
-# forges
+# public merge requests
 
-def _forge(cfg, forge_name):
-	conf = cfg.forges.get(forge_name)
-	if not conf or not conf.get('url'):
-		raise GitumError('no [forge.%s] url in gitum.toml' % forge_name)
-	from .forge import TOKEN_ENV
-	kind = conf.get('type', 'gitlab')
-	base = conf['url'].rstrip('/')
-	api = conf.get('api') or {'gitlab': base + '/api/v4', 'forgejo': base + '/api/v1',
-				  'github': 'https://api.github.com'}[kind]
-	token = os.environ.get(conf.get('token-env') or TOKEN_ENV[kind], '')
-	return kind, base, api, token, conf
-
-
-def _headers(kind, token):
-	headers = {'User-Agent': 'gitum'}
-	if token:
-		headers['Authorization'] = ('token %s' if kind == 'forgejo' else 'Bearer %s') % token
-	return headers
-
-
-def _http(url, kind, token, data=None, content_type=None):
-	headers = _headers(kind, token)
-	if content_type:
-		headers['Content-Type'] = content_type
-	req = urllib.request.Request(url, data=data, headers=headers, method='POST' if data is not None else 'GET')
+def _get(url, what):
+	"""GET a public URL without credentials."""
+	req = urllib.request.Request(url, headers={'User-Agent': 'gitum', 'Accept': what})
 	try:
 		with urllib.request.urlopen(req, timeout=60) as resp:
-			return resp.read()
+			return resp.read(), resp.headers.get_content_type()
 	except OSError as e:
 		raise GitumError('%s: %s' % (url, e)) from e
 
 
+def _get_json(url):
+	data, _ctype = _get(url, 'application/json')
+	try:
+		return json.loads(data)
+	except ValueError as e:
+		raise GitumError('%s: not a JSON answer (is the merge request public?)' % url) from e
+
+
+def _get_image(url):
+	data, ctype = _get(url, 'image/*')
+	if not (ctype.startswith('image/') or ctype in ('application/octet-stream', 'binary/octet-stream')):
+		raise GitumError('%s: got %s, not an image (is the project public?)' % (url, ctype))
+	return data
+
+
 def import_mr(repo, name, link):
-	"""Take the title, description and images of an existing merge request."""
+	"""Take the title, description and images of a public merge request."""
 	cfg = repo.journal().config
 	url = series_mod.normalize_link(cfg, 'internal_mr', link) if '://' not in link else link
-	from .forge import TOKEN_ENV, parse_url
+	from .forge import parse_url
 	kind, api, project, num, _conf = parse_url(url, cfg.forges)
-	forge_name = next((n for n, c in cfg.forges.items() if url.startswith(c.get('url', '').rstrip('/') + '/')), None)
-	token = _forge(cfg, forge_name)[3] if forge_name else os.environ.get(TOKEN_ENV[kind], '')
 	if kind == 'gitlab':
-		data = json.loads(_http('%s/projects/%s/merge_requests/%d' % (api, urllib.parse.quote(project, safe=''), num),
-				       kind, token))
+		data = _get_json('%s/projects/%s/merge_requests/%d' % (api, urllib.parse.quote(project, safe=''), num))
 		title, body = data.get('title', ''), data.get('description') or ''
 	else:
-		data = json.loads(_http('%s/repos/%s/pulls/%d' % (api, project, num), kind, token))
+		data = _get_json('%s/repos/%s/pulls/%d' % (api, project, num))
 		title, body = data.get('title', ''), data.get('body') or ''
 	site = url.split('://', 1)[0] + '://' + url.split('://', 1)[1].split('/', 1)[0]
 	base = url[:url.index('/' + project + '/') + len(project) + 1]
-	assets, taken = {}, set()
+	assets, taken, by_src = {}, set(), {}
 
 	def take(link):
-		m = re.match(r'^/uploads/([0-9a-f]+)/([^/?#]+)$', link)
-		if kind == 'gitlab' and m:
-			# GitLab: relative to the project; the API serves it with a token, the web only with a session
-			file = unique_name(urllib.parse.unquote(m.group(2)), taken)
-			try:
-				assets[file] = _http('%s/projects/%s/uploads/%s/%s' % (
-					api, urllib.parse.quote(project, safe=''), m.group(1), m.group(2)), kind, token)
-			except GitumError:
-				assets[file] = _http(base + link, kind, token)
-			return 'assets/' + file
 		if link.startswith('/uploads/'):
-			src = base + link
+			src = base + link		# GitLab: relative to the project
 		elif link.startswith('/'):
 			src = site + link
-		elif link.startswith(site + '/'):
+		elif link.startswith(('https://', 'http://')):
 			src = link
 		else:
-			return None		# an image somewhere else stays a link
-		file = unique_name(urllib.parse.unquote(src.rsplit('/', 1)[-1].split('?')[0]), taken)
-		assets[file] = _http(src, kind, token)
-		return 'assets/' + file
+			return None
+		if src not in by_src:
+			file = unique_name(urllib.parse.unquote(src.rsplit('/', 1)[-1].split('?')[0]), taken)
+			assets[file] = _get_image(src)
+			by_src[src] = file
+		return 'assets/' + by_src[src]
 
 	text = ('# %s\n\n' % title if title else '') + replace_images(body, take).strip('\n') + '\n'
 	return _store(repo, name, text, assets, 'merge request text from %s' % url)
 
 
-def _multipart(field, filename, data):
-	boundary = 'gitum' + secrets.token_hex(12)
-	body = (b'--%s\r\nContent-Disposition: form-data; name="%s"; filename="%s"\r\n'
-		b'Content-Type: application/octet-stream\r\n\r\n' % (boundary.encode(), field.encode(), filename.encode())
-		+ data + b'\r\n--%s--\r\n' % boundary.encode())
-	return body, 'multipart/form-data; boundary=' + boundary
-
+# rendering for a forge
 
 def remote_project(remote_url, forge_url):
 	"""group/project of a remote URL on the forge's host (https, ssh:// or scp-like), or None."""
@@ -259,7 +235,7 @@ def _project_for(git, cfg, meta, forge_name, project):
 	conf = cfg.forges.get(forge_name, {})
 	for key in ('pr', 'internal_mr'):
 		url = meta.get(key, '')
-		if url and url.startswith(conf.get('url', '').rstrip('/') + '/'):
+		if url and conf.get('url') and url.startswith(conf['url'].rstrip('/') + '/'):
 			from .forge import parse_url
 			return parse_url(url, cfg.forges)[2]
 	if conf.get('project'):
@@ -270,8 +246,12 @@ def _project_for(git, cfg, meta, forge_name, project):
 	raise GitumError('which project of %s? use --project or set [forge.%s] project' % (forge_name, forge_name))
 
 
-def render(repo, name, forge_name=None, project=None, internal=False, upload=True, assets_dir=None):
-	"""The title and description for a forge; images are uploaded there or left as placeholders."""
+def _key(git, cfg, meta, forge_name, project):
+	return '%s:%s' % (forge_name, _project_for(git, cfg, meta, forge_name, project))
+
+
+def render(repo, name, forge_name=None, project=None, internal=False, assets_dir=None):
+	"""The title and description for a forge: known image URLs there, placeholders for the rest."""
 	journal = repo.journal()
 	cfg = journal.config
 	meta = series_mod.load(journal, name)
@@ -282,14 +262,11 @@ def render(repo, name, forge_name=None, project=None, internal=False, upload=Tru
 		text = strip_internal(text)
 	title, description = split_title(text)
 	assets = (meta.get('mr') or {}).get('assets', {})
-	key = '%s:%s' % (forge_name, _project_for(repo.git, cfg, meta, forge_name, project)) if forge_name else None
-	known = dict(((meta.get('mr') or {}).get('uploads') or {}).get(key, {})) if key else {}
-	kind, api, token = (None, None, '')
-	if forge_name:
-		kind, _base, api, token, _conf = _forge(cfg, forge_name)
-	uploaded, pending = [], []
+	key = _key(repo.git, cfg, meta, forge_name, project) if forge_name else None
+	known = ((meta.get('mr') or {}).get('uploads') or {}).get(key, {}) if key else {}
 	assets_dir = assets_dir or cfg.series.get('mr-assets-dir')
 	out_dir = (Path(assets_dir).expanduser() if assets_dir else repo.gitum_dir / 'mr') / name
+	pending, reused = [], []
 
 	def place(link):
 		if not link.startswith('assets/'):
@@ -299,51 +276,38 @@ def render(repo, name, forge_name=None, project=None, internal=False, upload=Tru
 		if digest is None:
 			raise GitumError('series %s: %s is not among its assets' % (name, link))
 		if digest in known:
+			if file not in reused:
+				reused.append(file)
 			return known[digest]
-		if forge_name and upload and kind == 'gitlab' and token:
-			body, ctype = _multipart('file', file, journal.read(asset_path(name, file)))
-			proj = urllib.parse.quote(key.split(':', 1)[1], safe='')
-			data = json.loads(_http('%s/projects/%s/uploads' % (api, proj), kind, token, body, ctype))
-			known[digest] = data['url']
-			uploaded.append({'file': file, 'url': data['url']})
-			return data['url']
-		out_dir.mkdir(parents=True, exist_ok=True)
-		(out_dir / file).write_bytes(journal.read(asset_path(name, file)))
-		pending.append({'file': file, 'path': str(out_dir / file), 'placeholder': PLACEHOLDER % file, 'sha256': digest})
+		if file not in {p['file'] for p in pending}:
+			out_dir.mkdir(parents=True, exist_ok=True)
+			(out_dir / file).write_bytes(journal.read(asset_path(name, file)))
+			pending.append({'file': file, 'path': str(out_dir / file), 'placeholder': PLACEHOLDER % file,
+					'sha256': digest})
 		return PLACEHOLDER % file
 
 	description = replace_images(description, place)
-	if uploaded:
-		_remember(repo, name, key, {d: u for d, u in known.items()})
 	return {'series': name, 'forge': forge_name, 'project': key.split(':', 1)[1] if key else None, 'title': title,
-		'description': description, 'uploaded': uploaded, 'pending': pending,
-		'reused': sorted(f for f, d in assets.items() if d in known and f not in {u['file'] for u in uploaded})}
-
-
-def _remember(repo, name, key, urls):
-	with repo.lock():
-		journal = repo.journal()
-		meta = series_mod.load(journal, name)
-		mr = meta.setdefault('mr', {'assets': {}})
-		mr.setdefault('uploads', {})[key] = urls
-		writer = JournalWriter(repo.git, journal.sha)
-		writer.put_json(series_mod.meta_path(name), meta)
-		new = writer.write('gitum: series %s: images uploaded to %s' % (name, key))
-		tr = RefTransaction(repo.git)
-		tr.update(JOURNAL_REF, new, journal.sha)
-		tr.commit()
+		'description': description, 'pending': pending, 'reused': sorted(reused)}
 
 
 def record_uploads(repo, name, forge_name, project, pairs):
-	"""Remember URLs of images uploaded by an external tool: pairs {file: url}."""
-	journal = repo.journal()
-	meta = series_mod.load(journal, name)
-	assets = (meta.get('mr') or {}).get('assets', {})
-	key = '%s:%s' % (forge_name, _project_for(repo.git, journal.config, meta, forge_name, project))
-	urls = dict(((meta.get('mr') or {}).get('uploads') or {}).get(key, {}))
-	for file, url in pairs.items():
-		if file not in assets:
-			raise GitumError('series %s has no asset %s' % (name, file))
-		urls[assets[file]] = url
-	_remember(repo, name, key, urls)
+	"""Remember URLs of images uploaded outside gitum: pairs {file: url}."""
+	with repo.lock():
+		journal = repo.journal()
+		meta = series_mod.load(journal, name)
+		assets = (meta.get('mr') or {}).get('assets', {})
+		key = _key(repo.git, journal.config, meta, forge_name, project)
+		for file in pairs:
+			if file not in assets:
+				raise GitumError('series %s has no asset %s' % (name, file))
+		mr = meta.setdefault('mr', {'assets': {}})
+		urls = mr.setdefault('uploads', {}).setdefault(key, {})
+		urls.update({assets[f]: u for f, u in pairs.items()})
+		writer = JournalWriter(repo.git, journal.sha)
+		writer.put_json(series_mod.meta_path(name), meta)
+		new = writer.write('gitum: series %s: image URLs on %s' % (name, key))
+		tr = RefTransaction(repo.git)
+		tr.update(JOURNAL_REF, new, journal.sha)
+		tr.commit()
 	return {'series': name, 'forge': key, 'recorded': sorted(pairs)}

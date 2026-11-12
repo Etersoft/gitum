@@ -170,8 +170,11 @@ refined along the way.
 - **The MR text with images is kept with the series.** The internal MR and
   the upstream MR are on different forges, images have to be uploaded
   again, and internal notes must not leak. So the text and images live in
-  the journal, the internal part is marked, and the URLs of uploaded images
-  are remembered by content.
+  the journal, the internal part is marked, and the URLs of the images
+  uploaded by whoever opens the MR are remembered by content. gitum itself
+  uploads nothing and handles no tokens: writing to somebody else's service
+  on the user's behalf is not its job, and tokens are a needless risk.
+  Import reads public MRs only.
 - **Hooks instead of integrations.** gitum does not write to trackers or
   chats: it passes JSON events on stdin to hooks, and a failing hook never
   fails the operation.

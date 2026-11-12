@@ -109,19 +109,20 @@ def cmd_mr(repo, args, out):
 	elif args.action == 'import':
 		data = mrtext.import_mr(repo, args.name, args.source)
 	elif args.action == 'record':
+		if not args.forge:
+			raise GitumError('gitum mr record needs --forge')
 		pairs = dict(p.split('=', 1) for p in [args.source] + args.pairs if p and '=' in p)
 		data = mrtext.record_uploads(repo, args.name, args.forge, args.project, pairs)
 		out.result(data, 'Remembered %s for %s' % (', '.join(data['recorded']), data['forge']))
 		return
 	else:
-		data = mrtext.render(repo, args.name, args.forge, args.project, args.internal, not args.no_upload,
-				     args.assets_dir)
+		data = mrtext.render(repo, args.name, args.forge, args.project, args.internal, args.assets_dir)
 		text = ('# %s\n\n' % data['title'] if data['title'] else '') + data['description']
 		if args.output:
 			Path(args.output).write_text(text)
 			text = 'Written %s' % args.output
-		notes = ['uploaded %s -> %s' % (u['file'], u['url']) for u in data['uploaded']]
-		notes += ['upload %s by hand and replace %s' % (p['path'], p['placeholder']) for p in data['pending']]
+		notes = ['upload %s and replace %s, then: gitum mr record %s %s=URL --forge %s'
+			 % (p['path'], p['placeholder'], args.name, p['file'], args.forge or 'F') for p in data['pending']]
 		out.result(data, text.rstrip('\n') + ('\n\n' + '\n'.join(notes) if notes else ''))
 		return
 	out.result(data, '%s: merge request text%s, %d images' % (
@@ -133,11 +134,10 @@ def register(sub):
 	s.add_argument('action', choices=['set', 'import', 'render', 'record'])
 	s.add_argument('name', help='series')
 	s.add_argument('source', nargs='?', help='set: a markdown file; import: [forge:]group/project!N or a URL')
-	s.add_argument('pairs', nargs='*', metavar='FILE=URL', help='record: images uploaded by hand')
+	s.add_argument('pairs', nargs='*', metavar='FILE=URL', help='record: URLs of images uploaded outside gitum')
 	s.add_argument('--forge', help='render/record: the [forge.NAME] the text is for')
 	s.add_argument('--project', help='render/record: the project there (default: from the series links)')
 	s.add_argument('--internal', action='store_true', help='render: keep the internal parts')
-	s.add_argument('--no-upload', action='store_true', help='render: placeholders instead of uploading')
 	s.add_argument('-o', '--output', metavar='FILE', help='render: write the text to FILE')
 	s.add_argument('--assets-dir', metavar='DIR', help='render: write images to upload by hand to DIR/SERIES/ '
 		       '(default: [series] mr-assets-dir, or <common dir>/gitum/mr)')

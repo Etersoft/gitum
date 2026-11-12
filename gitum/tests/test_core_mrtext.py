@@ -29,10 +29,10 @@ def journal(work):
 
 
 class FakeGitLab(http.server.BaseHTTPRequestHandler):
-	"""Merge requests, uploads by secret, and the upload API of one GitLab."""
+	"""A public GitLab: merge requests by API and uploads by their web path. Any credentials are refused."""
 	mrs = {}		# (project path, iid) -> {title, description}
-	files = {}		# '/uploads/<secret>/<name>' -> bytes (per project, simplified)
-	uploads = []		# (project path, file name, bytes)
+	files = {}		# '/<project>/uploads/<secret>/<name>' -> bytes
+	requests = []
 
 	def _send(self, code, data, ctype='application/json'):
 		self.send_response(code)
@@ -42,28 +42,22 @@ class FakeGitLab(http.server.BaseHTTPRequestHandler):
 
 	def do_GET(self):
 		from urllib.parse import unquote
-		path = self.path
-		if self.headers.get('Authorization') != 'Bearer secret':
-			return self._send(401, {})
-		if path.startswith('/api/v4/projects/'):
-			project, _, rest = path[len('/api/v4/projects/'):].partition('/')
-			project = unquote(project)
-			if rest.startswith('merge_requests/'):
-				data = self.mrs.get((project, int(rest.split('/')[1])))
-				return self._send(200 if data else 404, data or {})
-			if rest.startswith('uploads/'):
-				data = self.files.get('/' + rest)
-				return self._send(200 if data else 404, data or b'', 'image/png')
+		self.requests.append((self.command, self.path))
+		if self.headers.get('Authorization') or self.headers.get('Private-Token'):
+			return self._send(400, {'message': 'gitum must not send credentials'})
+		if self.path.startswith('/api/v4/projects/'):
+			project, _, rest = self.path[len('/api/v4/projects/'):].partition('/')
+			data = self.mrs.get((unquote(project), int(rest.split('/')[1])))
+			return self._send(200 if data else 404, data or {})
+		if self.path in self.files:
+			return self._send(200, self.files[self.path], 'image/png')
+		if '/uploads/' in self.path:
+			return self._send(200, b'<html>sign in</html>', 'text/html')
 		return self._send(404, {})
 
 	def do_POST(self):
-		from urllib.parse import unquote
-		body = self.rfile.read(int(self.headers['Content-Length']))
-		project = unquote(self.path[len('/api/v4/projects/'):].split('/')[0])
-		name = body.split(b'filename="', 1)[1].split(b'"', 1)[0].decode()
-		data = body.split(b'\r\n\r\n', 1)[1].rsplit(b'\r\n--', 1)[0]
-		self.uploads.append((project, name, data))
-		self._send(201, {'url': '/uploads/%032x/%s' % (len(self.uploads), name)})
+		self.requests.append((self.command, self.path))
+		self._send(405, {})
 
 	def log_message(self, *args):
 		pass
@@ -73,9 +67,9 @@ class FakeGitLab(http.server.BaseHTTPRequestHandler):
 def world(tmp_path, capsys, monkeypatch):
 	server = http.server.HTTPServer(('127.0.0.1', 0), FakeGitLab)
 	threading.Thread(target=server.serve_forever, daemon=True).start()
-	FakeGitLab.mrs, FakeGitLab.files, FakeGitLab.uploads = {}, {}, []
+	FakeGitLab.mrs, FakeGitLab.files, FakeGitLab.requests = {}, {}, []
 	url = 'http://127.0.0.1:%d' % server.server_port
-	monkeypatch.setenv('GITLAB_TOKEN', 'secret')
+	monkeypatch.setenv('GITLAB_TOKEN', 'secret')		# must not be used
 	up, work = make_stack(tmp_path)
 	assert main(['--repo', str(work.path), *INIT_ARGS]) == 0
 	cfg = tmp_path / 'cfg.toml'
@@ -111,7 +105,7 @@ def test_mark_internal_and_remote_project():
 	assert remote_project('/srv/git/wine.git', 'https://gitlab.winehq.org') is None
 
 
-def test_set_render_upload_once(world, capsys):
+def test_set_render_record(world, capsys):
 	work, tmp = world['work'], world['tmp']
 	(tmp / 'img').mkdir()
 	(tmp / 'img' / 'before.png').write_bytes(PNG)
@@ -129,56 +123,43 @@ def test_set_render_upload_once(world, capsys):
 	assert main(['--repo', str(work.path), 'series', 'save', 'fix']) == 0
 	assert journal(work).read('series/fix/assets/before.png') == PNG
 
-	# upstream rendering: no internal part, the image uploaded to the upstream project
+	# upstream rendering: no internal part, a placeholder for the image; nothing goes to the forge
 	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'upstream')
 	assert data['title'] == 'ntdll: Fix it' and data['project'] == 'wine/wine'
 	assert 'Internal note' not in data['description'] and 'Done.' in data['description']
-	assert FakeGitLab.uploads == [('wine/wine', 'before.png', PNG)]
-	assert '](%s)' % data['uploaded'][0]['url'] in data['description']
+	assert '](' + '{{gitum-asset:before.png}})' in data['description'] and not FakeGitLab.requests
 
-	# a new version with the same image and a new one: only the new one is uploaded
+	# the URL of the uploaded image is used from now on; only the new image is left to upload
+	gitum(work, capsys, 'mr', 'record', 'fix', 'before.png=/uploads/1/before.png', '--forge', 'upstream')
 	(tmp / 'img' / 'after.png').write_bytes(SHOT)
 	md.write_text(md.read_text() + '\nAfter:\n\n<img src="img/after.png" width="300">\n')
 	gitum(work, capsys, 'mr', 'set', 'fix', str(md))
 	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'upstream')
-	assert [u[1] for u in FakeGitLab.uploads] == ['before.png', 'after.png']
-	assert data['reused'] == ['before.png'] and '<img src="/uploads/' in data['description']
+	assert data['reused'] == ['before.png'] and [p['file'] for p in data['pending']] == ['after.png']
+	assert '](/uploads/1/before.png)' in data['description']
+	assert '<img src="{{gitum-asset:after.png}}"' in data['description']
 
 	# internal rendering keeps the internal part
 	data = gitum(work, capsys, 'mr', 'render', 'fix', '--internal', '--forge', 'upstream')
 	assert 'Internal note' in data['description']
 
 
-def test_placeholders_and_record(world, capsys):
-	work, tmp = world['work'], world['tmp']
-	(tmp / 'a.png').write_bytes(PNG)
-	md = tmp / 'mr.md'
-	md.write_text('# Title\n\n![a](a.png)\n')
-	gitum(work, capsys, 'mr', 'set', 'fix', str(md))
-	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'other')
-	assert not data['uploaded'] and data['pending'][0]['placeholder'] == '{{gitum-asset:a.png}}'
-	assert open(data['pending'][0]['path'], 'rb').read() == PNG
-	assert '](' + '{{gitum-asset:a.png}})' in data['description']
-	# the external tool uploaded it: next time the URL is used
-	gitum(work, capsys, 'mr', 'record', 'fix', 'a.png=https://github.com/u/a.png', '--forge', 'other')
-	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'other')
-	assert not data['pending'] and '](https://github.com/u/a.png)' in data['description']
-
-
-def test_import_from_internal_mr(world, capsys):
+def test_import_public_mr(world, capsys):
 	work = world['work']
-	FakeGitLab.mrs[('etersoft/wine', 7)] = {
+	FakeGitLab.mrs[('wine/wine', 7)] = {
 		'title': 'ntdll: Fix it',
-		'description': 'See ![s](/uploads/abc123/shot.png) and ![x](https://example.org/x.png).'}
-	FakeGitLab.files['/uploads/abc123/shot.png'] = SHOT
-	data = gitum(work, capsys, 'mr', 'import', 'fix', 'internal:etersoft/wine!7')
+		'description': 'See ![s](/uploads/abc123/shot.png), again ![s](/uploads/abc123/shot.png).'}
+	FakeGitLab.files['/wine/wine/uploads/abc123/shot.png'] = SHOT
+	data = gitum(work, capsys, 'mr', 'import', 'fix', 'upstream:wine/wine!7')
 	assert data['assets'] == ['shot.png'] and data['title'] == 'ntdll: Fix it'
 	text = journal(work).read_text('series/fix/mr.md')
-	assert text.startswith('# ntdll: Fix it\n') and '](assets/shot.png)' in text
-	assert '](https://example.org/x.png)' in text
+	assert text.startswith('# ntdll: Fix it\n') and text.count('](assets/shot.png)') == 2
 	assert journal(work).read('series/fix/assets/shot.png') == SHOT
-	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'upstream', '--no-upload')
-	assert data['pending'][0]['file'] == 'shot.png' and not FakeGitLab.uploads
+	assert all(m == 'GET' for m, _ in FakeGitLab.requests)
+	# a private upload answers with a login page: refused, not stored as an image
+	FakeGitLab.mrs[('wine/wine', 8)] = {'title': 'x', 'description': '![p](/uploads/def/private.png)'}
+	err = gitum(work, capsys, 'mr', 'import', 'fix', 'upstream:wine/wine!8', expect=1)
+	assert 'not an image' in err['error']
 
 
 def test_separator_assets_dir_and_upstream_project(world, capsys):
@@ -191,6 +172,6 @@ def test_separator_assets_dir_and_upstream_project(world, capsys):
 	# no project for the forge, no links: taken from the remote of the series' upstream
 	work.run('remote', 'set-url', 'winehq', 'git@127.0.0.1:wine/wine.git')
 	out = tmp / 'lavtomate-in'
-	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'plain', '--no-upload', '--assets-dir', str(out))
+	data = gitum(work, capsys, 'mr', 'render', 'fix', '--forge', 'plain', '--assets-dir', str(out))
 	assert data['project'] == 'wine/wine' and 'Внутреннее' not in data['description']
 	assert data['pending'][0]['path'] == str(out / 'fix' / 'a.png') and (out / 'fix' / 'a.png').read_bytes() == PNG

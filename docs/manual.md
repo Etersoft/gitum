@@ -240,11 +240,12 @@ gitum check-upstream series:ntdll-fix --apply    # confirm the acceptance by con
 Once the series is accepted, its changes leave the layers at the next sync and the queue moves on.
 
 The merge request text travels with the series, images included. Write it once
-(or take it from the internal merge request) and render it for each forge:
+(or take it from a public merge request, for example one upstream has not
+accepted yet) and render it for each forge:
 
 ```sh
 gitum mr set ntdll-fix mr.md                     # mr.md and the local images it shows
-gitum mr import ntdll-fix internal:etersoft/wine!7   # or: title, text and images of an MR
+gitum mr import ntdll-fix upstream:wine/wine!7   # or: title, text and images of a public MR
 gitum mr render ntdll-fix --forge upstream -o out.md # without the internal parts
 ```
 
@@ -255,18 +256,18 @@ mr-internal-separator = "---"`, `mr set` and `mr import` turn the first line
 `---` of a text without markers into `<!-- internal -->`, for internal merge
 requests that put the review notes after such a line. The text is stored
 as `series/NAME/mr.md`, the images as `series/NAME/assets/`; `series save` and
-export leave them alone. For a GitLab forge with a token, `render` uploads the
-images to the project (`--project`, or the project of the series' `pr`/`internal_mr`
-link, or `[forge.NAME] project`, or the project of the series' upstream remote
-when it is on that forge's host) and remembers their URLs by content, so a new
-version of the text uploads only new or changed images. For other forges, or
-with `--no-upload`, the text gets placeholders `{{gitum-asset:FILE}}` and the
-images are written to `<common dir>/gitum/mr/NAME/` (or `DIR/NAME/` with
-`--assets-dir DIR` or `[series] mr-assets-dir`; listed under `pending` in
-`--json`); after uploading them some other way, `gitum mr record NAME
-FILE=URL... --forge F` makes later renders use those URLs. gitum does not open
-or edit merge requests itself: a person or an agent does that with the rendered
-text.
+export leave them alone.
+
+gitum never uploads anything and uses no tokens: `mr import` reads public
+merge requests only. `render` puts placeholders `{{gitum-asset:FILE}}` in place
+of the images and writes the images to `<common dir>/gitum/mr/NAME/` (or
+`DIR/NAME/` with `--assets-dir DIR` or `[series] mr-assets-dir`; listed under
+`pending` in `--json`). Whoever opens the merge request uploads them and tells
+gitum the URLs with `gitum mr record NAME FILE=URL... --forge F`; later renders
+for that forge project use them, so only new or changed images are left to
+upload. The project is `--project`, or the project of the series' `pr`/`internal_mr`
+link on that forge, or `[forge.NAME] project`, or the project of the series'
+upstream remote when it is on that forge's host.
 
 ### A distribution package
 
