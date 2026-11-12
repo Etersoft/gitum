@@ -132,41 +132,20 @@ def format_status(data):
 
 
 def cmd_status(repo, args, out):
-	from . import changes as changes_mod
-	from . import series as series_mod
-	from .commands_changes import change_rows, format_change_table
-	data = state.status(repo)
-	journal = repo.journal()
-	fates = {}
-	for rec in changes_mod.load_all(journal).values():
-		if not rec.get('gone'):
-			fates[rec.get('fate', 'local')] = fates.get(rec.get('fate', 'local'), 0) + 1
-	data['fates'] = fates
-	all_series = series_mod.load_all(journal)
-	states = {}
-	for meta in all_series.values():
-		states[meta.get('state', '')] = states.get(meta.get('state', ''), 0) + 1
-	data['series'] = states
+	from .commands_changes import format_change_table, format_tree
+	data = state.status(repo, changes=args.changes, all_changes=args.all)
 	text = format_status(data)
-	if fates:
-		text += '\nchanges: ' + ', '.join('%s %d' % kv for kv in sorted(fates.items()))
-	if states:
-		text += '\nseries: ' + ', '.join('%s %d' % kv for kv in sorted(states.items()))
-	if all_series:
-		from .series import suspect_warning
-		suspects = [w for w in (suspect_warning(m) for _, m in sorted(all_series.items())) if w]
-		if suspects:
-			data['warnings'] = suspects
-			text += ''.join('\nwarning: ' + w for w in suspects)
+	if data['fates']:
+		text += '\nchanges: ' + ', '.join('%s %d' % kv for kv in sorted(data['fates'].items()))
+	if data['series']:
+		text += '\nseries: ' + ', '.join('%s %d' % kv for kv in sorted(data['series'].items()))
+	text += ''.join('\nwarning: ' + w for w in data.get('warnings', []))
 	if args.changes:
-		rows = [r for r in change_rows(journal) if args.all or r['action']]
-		data['changes'] = rows
-		text += '\n\n' + (format_change_table(rows) or 'No changes need attention.')
-	if args.series and all_series:
-		from .commands_changes import format_tree, series_tree
-		rows = series_tree(repo, journal, args.variants, args.bug)
-		data['series_tree'] = rows
-		text += '\n\n' + format_tree(rows)
+		text += '\n\n' + (format_change_table(data['changes']) or 'No changes need attention.')
+	if args.series and data['series']:
+		from .upstreamwork import series_tree
+		data['series_tree'] = series_tree(repo, repo.journal(), args.variants, args.bug)
+		text += '\n\n' + format_tree(data['series_tree'])
 	out.result(data, text)
 
 
@@ -189,9 +168,9 @@ def cmd_config(repo, args, out):
 
 def cmd_log(repo, args, out):
 	if args.target:
-		from .commands_changes import object_history
+		from .journal import object_history
 		from . import changes as changes_mod
-		entries = object_history(repo, args.target)
+		entries = object_history(repo.git, args.target)
 		if entries is None:
 			rec = changes_mod.Tracker(repo.journal()).get(args.target)
 			entries = rec.get('events', [])

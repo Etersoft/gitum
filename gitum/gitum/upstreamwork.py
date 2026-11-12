@@ -532,3 +532,54 @@ def mirror(repo, name):
 		git.run('remote', 'add', remote, str(path))
 	git.run('fetch', '--quiet', '--tags', remote)
 	return {'upstream': name, 'mirror': str(path), 'remote': remote}
+
+
+def series_tree(repo, journal, with_variants=False, bug=None):
+	"""Series as a tree by their dependencies with state, base lag, claims and variants."""
+	git = repo.git
+	cfg = journal.config
+	all_series = series_mod.load_all(journal)
+	rows, up_tips, lags = {}, {}, {}
+	for name, meta in all_series.items():
+		if bug and not bugs_mod.matches(cfg, meta, bug):
+			continue
+		up_name = meta.get('upstream') or (meta['base'].split(':', 1)[1] if meta['base'].startswith('upstream:') else '')
+		up = cfg.upstreams.get(up_name)
+		lag = None
+		if up and meta.get('base_sha'):
+			if up.name not in up_tips:
+				up_tips[up.name] = git.rev(up.ref)
+			if up_tips[up.name]:
+				key = (meta['base_sha'], up_tips[up.name])
+				if key not in lags:		# series on the same base share the count
+					lags[key] = git.count('%s..%s' % key)
+				lag = lags[key]
+		row = {'name': name, 'state': meta.get('state', ''), 'version': meta.get('version', ''),
+		       'patches': len(meta.get('changes') or []), 'depends': meta.get('depends', []),
+		       'target': meta.get('target') or DEFAULT_TARGET, 'base_behind': lag,
+		       'claimed_by': (series_mod.claim_owner(repo, name) or {}).get('session'), 'updated': meta.get('updated', ''),
+		       'variants': sorted(meta.get('variants') or {}), 'pr': meta.get('pr', ''),
+		       'upstream_suspects': len(meta.get('upstream_suspects') or []),
+		       'warning': series_mod.suspect_warning(meta),
+		       'bugs': [i['label'] for i in bugs_mod.of_series(cfg, meta)]}
+		if with_variants and meta.get('variants'):
+			row['diverged'] = sorted(spec for spec, v in variants(repo, name).items() if v['diverged'])
+		rows[name] = row
+	children = {}
+	roots = []
+	for name in sorted(rows):
+		deps = [d for d in rows[name]['depends'] if d in rows]
+		if deps:
+			children.setdefault(deps[0], []).append(name)
+		else:
+			roots.append(name)
+	ordered = []
+
+	def walk(name, depth):
+		ordered.append({**rows[name], 'depth': depth})
+		for child in children.get(name, []):
+			walk(child, depth + 1)
+
+	for name in roots:
+		walk(name, 0)
+	return ordered

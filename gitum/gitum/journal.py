@@ -225,3 +225,16 @@ def make_root(git):
 def history_commit(git, tip, parent, message):
 	"""A commit of the linear history branch of a layer: the tree of the layer tip."""
 	return git.commit_tree(git.tree(tip), [parent] if parent else [], message)
+
+
+def object_history(git, target):
+	"""Journal states that touched a series or a layer."""
+	kind, _, name = target.partition(':')
+	path = {'series': 'series/%s' % name, 'layer': 'layers/%s.json' % name}.get(kind)
+	if not path:
+		return None
+	entries = []
+	for line in git.lines('log', '--first-parent', '--format=%H%x00%cI%x00%s', JOURNAL_REF, '--', path):
+		sha, date, subject = line.split('\x00')
+		entries.append({'sha': sha, 'date': date, 'subject': subject})
+	return entries

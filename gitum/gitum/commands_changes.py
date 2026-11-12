@@ -22,19 +22,6 @@ def parse_values(pairs):
 	return values
 
 
-def change_rows(journal, layer=None, fate=None, include_gone=False):
-	rows = []
-	for rec in sorted(changes_mod.load_all(journal).values(), key=lambda c: (c.get('layer', ''), c.get('subject', ''))):
-		if rec.get('gone') and not include_gone:
-			continue
-		if layer and rec.get('layer') != layer:
-			continue
-		if fate and rec.get('fate') != fate:
-			continue
-		rows.append({**rec, 'action': changes_mod.action(rec)})
-	return rows
-
-
 def format_change_table(rows):
 	lines = []
 	for r in rows:
@@ -51,11 +38,11 @@ def format_change_table(rows):
 def cmd_change(repo, args, out):
 	journal = repo.journal()
 	if args.action == 'list':
-		rows = change_rows(journal, args.layer, args.fate, args.all)
+		rows = changes_mod.rows(changes_mod.load_all(journal), args.layer, args.fate, args.all)
 		out.result(rows, format_change_table(rows) or 'No changes.')
 		return
 	if args.action == 'confirm':
-		data = confirm(repo, args.ref, args.values[0] if args.values else None)
+		data = upstreamcheck.confirm(repo, args.ref, args.values[0] if args.values else None)
 		out.result(data, '%s: %s as %s%s' % (data['id'], data['fate'], short(data['meta']['upstream_commit']),
 						    ' in ' + data['meta']['release'] if data['meta'].get('release') else ''))
 		return
@@ -92,41 +79,6 @@ def cmd_change(repo, args, out):
 
 # series
 
-def confirm(repo, ref, sha=None):
-	"""A person confirms that a change was accepted upstream (as the remembered candidate or sha)."""
-	git = repo.git
-	with repo.lock():
-		journal = repo.journal()
-		tracker = changes_mod.Tracker(journal)
-		rec = tracker.get(ref)
-		commit = git.rev(sha) if sha else git.rev(rec['meta'].get('candidate', '') or 'none-given')
-		if not commit:
-			raise GitumError('change %s: give the upstream commit (no candidate remembered)' % rec['id'])
-		cfg = journal.config
-		upstream = None
-		layer = rec.get('layer', '')
-		if layer in cfg.layers:
-			upstream = cfg.root_upstream(cfg.layers[layer])
-		elif layer.startswith('series:'):
-			meta = series.load_all(journal).get(layer.split(':', 1)[1], {})
-			up_name = meta.get('upstream') or meta.get('base', '').partition(':')[2]
-			upstream = cfg.upstreams.get(up_name)
-		rec = tracker.set(rec['id'], 'merged-modified', upstream_commit=commit, candidate='',
-				  release=upstreamcheck.first_release(git, upstream, commit))
-		writer = JournalWriter(git, journal.sha)
-		tracker.write(writer)
-		all_series = series.load_all(journal)
-		merged, filled = upstreamcheck.merged_series(tracker, all_series, {layer}, git) \
-			if layer.startswith('series:') else ({}, [])
-		for name in list(merged) + filled:
-			writer.put_json(series.meta_path(name), all_series[name])
-		rec = {**rec, 'series_merged': sorted(merged), 'release_filled': filled}
-		writer.commit('gitum: change %s confirmed as %s' % (rec['id'], commit[:12]))
-		for name, previous in merged.items():
-			series.state_hook(repo, cfg, all_series[name], previous, 'change confirm')
-		return rec
-
-
 def format_series(all_series, journal):
 	lines = []
 	for name, meta in sorted(all_series.items()):
@@ -137,58 +89,6 @@ def format_series(all_series, journal):
 			name, meta.get('state', ''), count, meta.get('base', ''), meta.get('branch') or '-', deps,
 			('  ' + link) if link else ''))
 	return '\n'.join(lines)
-
-
-def series_tree(repo, journal, with_variants=False, bug=None):
-	"""Series as a tree by their dependencies with state, base lag, claims and variants."""
-	from . import upstreamwork
-	git = repo.git
-	cfg = journal.config
-	all_series = series.load_all(journal)
-	rows, up_tips, lags = {}, {}, {}
-	for name, meta in all_series.items():
-		if bug and not bugs_mod.matches(cfg, meta, bug):
-			continue
-		up_name = meta.get('upstream') or (meta['base'].split(':', 1)[1] if meta['base'].startswith('upstream:') else '')
-		up = cfg.upstreams.get(up_name)
-		lag = None
-		if up and meta.get('base_sha'):
-			if up.name not in up_tips:
-				up_tips[up.name] = git.rev(up.ref)
-			if up_tips[up.name]:
-				key = (meta['base_sha'], up_tips[up.name])
-				if key not in lags:		# series on the same base share the count
-					lags[key] = git.count('%s..%s' % key)
-				lag = lags[key]
-		row = {'name': name, 'state': meta.get('state', ''), 'version': meta.get('version', ''),
-		       'patches': len(meta.get('changes') or []), 'depends': meta.get('depends', []),
-		       'target': meta.get('target') or upstreamwork.DEFAULT_TARGET, 'base_behind': lag,
-		       'claimed_by': (series.claim_owner(repo, name) or {}).get('session'), 'updated': meta.get('updated', ''),
-		       'variants': sorted(meta.get('variants') or {}), 'pr': meta.get('pr', ''),
-		       'upstream_suspects': len(meta.get('upstream_suspects') or []),
-		       'warning': series.suspect_warning(meta),
-		       'bugs': [i['label'] for i in bugs_mod.of_series(cfg, meta)]}
-		if with_variants and meta.get('variants'):
-			row['diverged'] = sorted(spec for spec, v in upstreamwork.variants(repo, name).items() if v['diverged'])
-		rows[name] = row
-	children = {}
-	roots = []
-	for name in sorted(rows):
-		deps = [d for d in rows[name]['depends'] if d in rows]
-		if deps:
-			children.setdefault(deps[0], []).append(name)
-		else:
-			roots.append(name)
-	ordered = []
-
-	def walk(name, depth):
-		ordered.append({**rows[name], 'depth': depth})
-		for child in children.get(name, []):
-			walk(child, depth + 1)
-
-	for name in roots:
-		walk(name, 0)
-	return ordered
 
 
 def format_tree(rows):
@@ -358,19 +258,6 @@ def cmd_diff(repo, args, out):
 		result['series:' + name] = rd
 		text.append('== series %s\n%s' % (name, rd))
 	out.result(result, '\n'.join(text) or 'No differences.')
-
-
-def object_history(repo, target):
-	"""Journal states that touched a series or a layer."""
-	kind, _, name = target.partition(':')
-	path = {'series': 'series/%s' % name, 'layer': 'layers/%s.json' % name}.get(kind)
-	if not path:
-		return None
-	entries = []
-	for line in repo.git.lines('log', '--first-parent', '--format=%H%x00%cI%x00%s', JOURNAL_REF, '--', path):
-		sha, date, subject = line.split('\x00')
-		entries.append({'sha': sha, 'date': date, 'subject': subject})
-	return entries
 
 
 def cmd_bugs(repo, args, out):

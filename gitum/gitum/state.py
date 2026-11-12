@@ -1,6 +1,5 @@
 """Creating the journal and recording branch states: init, save, status."""
 
-import json
 
 from . import changes as changes_mod
 from . import config as config_mod
@@ -198,7 +197,8 @@ def save(repo, layer_names=None, message=''):
 		return {'changed': True, 'journal': new_journal, 'layers': summary}
 
 
-def status(repo):
+def status(repo, changes=False, all_changes=False):
+	"""Where everything stands; with changes, also the change table (all_changes: not only those to act on)."""
 	git = repo.git
 	journal = repo.journal()
 	cfg = journal.config
@@ -248,9 +248,22 @@ def status(repo):
 				'interrupted; gitum continue resumes it, gitum abort drops it'
 	if (repo.gitum_dir / COMMIT_FILE).exists():
 		result['interrupted_commit'] = repo.read_json(COMMIT_FILE).get('kind')
-	cand = repo.gitum_dir / CANDIDATE_FILE
-	if cand.exists():
-		result['candidate'] = json.loads(cand.read_text())
+	result['candidate'] = repo.read_json(CANDIDATE_FILE)
+	records = changes_mod.load_all(journal)
+	result['fates'] = {}
+	for rec in records.values():
+		if not rec.get('gone'):
+			result['fates'][rec.get('fate', 'local')] = result['fates'].get(rec.get('fate', 'local'), 0) + 1
+	from . import series as series_mod
+	all_series = series_mod.load_all(journal)
+	result['series'] = {}
+	for meta in all_series.values():
+		result['series'][meta.get('state', '')] = result['series'].get(meta.get('state', ''), 0) + 1
+	warnings = [w for w in (series_mod.suspect_warning(m) for _, m in sorted(all_series.items())) if w]
+	if warnings:
+		result['warnings'] = warnings
+	if changes:
+		result['changes'] = [r for r in changes_mod.rows(records) if all_changes or r['action']]
 	return result
 
 

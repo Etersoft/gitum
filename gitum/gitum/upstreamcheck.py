@@ -342,3 +342,38 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 					series_mod.state_hook(repo, journal.config, all_series[name], previous, 'check-upstream')
 	return {'results': found, 'applied': applied, 'series_merged': series_merged, 'release_filled': filled,
 		'suspect': [e for e in found if e['status'] == 'suspect']}
+
+
+def confirm(repo, ref, sha=None):
+	"""A person confirms that a change was accepted upstream (as the remembered candidate or sha)."""
+	git = repo.git
+	with repo.lock():
+		journal = repo.journal()
+		tracker = changes_mod.Tracker(journal)
+		rec = tracker.get(ref)
+		commit = git.rev(sha) if sha else git.rev(rec['meta'].get('candidate', '') or 'none-given')
+		if not commit:
+			raise GitumError('change %s: give the upstream commit (no candidate remembered)' % rec['id'])
+		cfg = journal.config
+		upstream = None
+		layer = rec.get('layer', '')
+		if layer in cfg.layers:
+			upstream = cfg.root_upstream(cfg.layers[layer])
+		elif layer.startswith('series:'):
+			meta = series_mod.load_all(journal).get(layer.split(':', 1)[1], {})
+			up_name = meta.get('upstream') or meta.get('base', '').partition(':')[2]
+			upstream = cfg.upstreams.get(up_name)
+		rec = tracker.set(rec['id'], 'merged-modified', upstream_commit=commit, candidate='',
+				  release=first_release(git, upstream, commit))
+		writer = JournalWriter(git, journal.sha)
+		tracker.write(writer)
+		all_series = series_mod.load_all(journal)
+		merged, filled = merged_series(tracker, all_series, {layer}, git) \
+			if layer.startswith('series:') else ({}, [])
+		for name in list(merged) + filled:
+			writer.put_json(series_mod.meta_path(name), all_series[name])
+		rec = {**rec, 'series_merged': sorted(merged), 'release_filled': filled}
+		writer.commit('gitum: change %s confirmed as %s' % (rec['id'], commit[:12]))
+		for name, previous in merged.items():
+			series_mod.state_hook(repo, cfg, all_series[name], previous, 'change confirm')
+		return rec

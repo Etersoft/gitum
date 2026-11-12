@@ -124,6 +124,20 @@ def should_drop(change, in_base):
 	return None
 
 
+def rows(records, layer=None, fate=None, include_gone=False):
+	"""Change records with the action each needs, by layer and subject."""
+	result = []
+	for rec in sorted(records.values(), key=lambda c: (c.get('layer', ''), c.get('subject', ''))):
+		if rec.get('gone') and not include_gone:
+			continue
+		if layer and rec.get('layer') != layer:
+			continue
+		if fate and rec.get('fate') != fate:
+			continue
+		result.append({**rec, 'action': action(rec)})
+	return result
+
+
 class Tracker:
 	"""Matches the changes of new layer states to known change ids and records events."""
 
