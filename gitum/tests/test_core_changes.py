@@ -255,6 +255,14 @@ def test_series_export_import_checkout(with_series, tmp_path, capsys):
 	assert code == 0 and len(data['applied']) == 3
 	assert work.subjects('v1.0..try-use') == ['ntdll: Add a helper.', 'ntdll: Use the helper (bug 123).',
 						  'ntdll/tests: Test the helper.']
+	# a branch with commits the series does not have yet is kept
+	work.run('checkout', '-q', '-b', 'series/ntdll-use', 'try-use')
+	work.commit('ntdll: Unsaved work.', {'unsaved': 'x\n'})
+	work.run('checkout', '-q', '--detach')
+	code, data = gitum_json(work, capsys, 'series', 'checkout', 'ntdll-use')
+	assert code == EXIT_NEEDS_HUMAN and 'not saved' in data['error']
+	assert work.subjects('try-use..series/ntdll-use') == ['ntdll: Unsaved work.']
+	assert gitum(work, 'series', 'checkout', 'ntdll-use', '--force') == 0
 
 
 # forges
@@ -632,3 +640,54 @@ def test_change_confirm_merges_the_series(with_series, capsys):
 	assert code == 0 and rec['series_merged'] == ['ntdll-base']
 	meta = journal(work).read_json('series/ntdll-base/meta.json')
 	assert meta['state'] == 'merged' and meta['merged_at'] and meta['release'] == 'v1.1'
+
+
+def test_reused_gitum_id_keeps_the_record():
+	from gitum.changes import Tracker
+	from gitum.journal import Change
+	t = Tracker()
+	t.changes['aaaa'] = {'id': 'aaaa', 'fate': 'sent', 'meta': {'pr': 'u'}, 'events': [{'event': 'x'}]}
+	one = Change(sha='1' * 40, subject='one', patch_id='p1', gitum_id='aaaa')
+	two = Change(sha='2' * 40, subject='two', patch_id='p2', gitum_id='aaaa')
+	t.track_layer('l', None, [one, two])
+	assert t.changes['aaaa']['fate'] == 'sent' and t.changes['aaaa']['meta'] == {'pr': 'u'}
+	assert one.gitum_id == 'aaaa' and two.gitum_id not in ('aaaa', '')
+
+
+def test_save_all_renumbers_dependents_in_a_shared_directory(stack, tmp_path, capsys):
+	up, work = stack
+	work.run('checkout', '-q', '-b', 'series/a', 'v1.0')
+	work.commit('a: One.', {'a1': '1\n'})
+	work.commit('a: Two.', {'a2': '2\n'})
+	work.run('checkout', '-q', '-b', 'series/b')
+	work.commit('b: Three.', {'b3': '3\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'add', 'a', '--base', 'upstream:winehq') == 0
+	assert gitum(work, 'series', 'add', 'b', '--base', 'upstream:winehq', '--depends', 'a') == 0
+	assert gitum(work, 'series', 'set', 'b', 'export_dir=a') == 0
+	assert [f for f in journal(work).list('series/b') if f.endswith('.patch')] == ['0003-b-Three.patch']
+	# a gains a patch; saving everything renumbers b, whose own branch did not move
+	work.run('checkout', '-q', 'series/a')
+	work.commit('a: Extra.', {'a4': '4\n'})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'series', 'save') == 0
+	assert [f for f in journal(work).list('series/b') if f.endswith('.patch')] == ['0004-b-Three.patch']
+	out = tmp_path / 'p'
+	assert gitum(work, 'series', 'export', '--dir', str(out)) == 0
+	assert sorted(p.name for p in (out / 'a').glob('*.patch')) == [
+		'0001-a-One.patch', '0002-a-Two.patch', '0003-a-Extra.patch', '0004-b-Three.patch']
+	# patches made in one go read like those made one by one
+	assert 'Subject: [PATCH] a: Two.' in (out / 'a' / '0002-a-Two.patch').read_text()
+
+
+def test_disabled_state_and_definition_agree(with_series):
+	up, work = with_series
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'state=disabled') == 0
+	assert 'Disabled: true' in journal(work).read_text('series/ntdll-use/definition')
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'state=draft') == 0
+	assert 'Disabled' not in journal(work).read_text('series/ntdll-use/definition')
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'disabled=breaks the build') == 0
+	meta = journal(work).read_json('series/ntdll-use/meta.json')
+	assert meta['state'] == 'disabled' and meta['disabled'] == 'breaks the build'
+	assert gitum(work, 'series', 'set', 'ntdll-use', 'disabled=') == 0
+	assert journal(work).read_json('series/ntdll-use/meta.json')['state'] == 'draft'

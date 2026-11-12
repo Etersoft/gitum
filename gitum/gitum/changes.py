@@ -190,9 +190,11 @@ class Tracker:
 			elif c.subject in old_by_subject:
 				cid = old_by_subject[c.subject]
 			if cid in seen:
-				cid = None
-			if cid is None or cid not in self.changes:
-				cid = cid or c.gitum_id or new_id(self.changes)
+				cid = None		# a second commit with the same identity (a copy) is a new change
+			if cid is None:
+				free = c.gitum_id and c.gitum_id not in self.changes and c.gitum_id not in seen
+				cid = c.gitum_id if free else new_id(self.changes)
+			if cid not in self.changes:
 				self.changes[cid] = {'id': cid, 'fate': 'local', 'meta': {}, 'created': now()}
 				bugs = sorted(set(BUG_RE.findall(c.subject)))
 				if bugs:

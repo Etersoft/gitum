@@ -244,6 +244,8 @@ def test_branches_stale_and_prune(ser, tmp_path, capsys):
 	work.run('remote', 'add', 'fork', str(fork.path))
 	assert gitum(work, 'prepare', 'ntdll-base', '--push', 'fork') == 0
 	work.run('branch', 'series/forgotten', 'v1.0')
+	work.run('fetch', '-q', 'fork')
+	work.run('remote', 'set-head', 'fork', 'ntdll-base')		# refs/remotes/fork/HEAD, as in a clone
 	code, data = gitum_json(work, capsys, 'branches', '--remote', 'fork')
 	rows = {(r['where'], r['branch']): r for r in data['branches']}
 	assert rows[('local', 'series/forgotten')]['unknown']

@@ -122,7 +122,7 @@ def set_from_file(repo, name, path):
 	"""Take the text from a markdown file; local images it refers to become assets."""
 	path = Path(path)
 	text = path.read_text()
-	assets, taken = {}, set()
+	assets, taken, by_path = {}, set(), {}
 
 	def take(link):
 		if re.match(r'^[a-z][a-z0-9+.-]*:', link) or link.startswith('/'):
@@ -130,9 +130,10 @@ def set_from_file(repo, name, path):
 		local = (path.parent / urllib.parse.unquote(link)).resolve()
 		if not local.is_file():
 			raise GitumError('%s: image %s does not exist' % (path, link))
-		file = unique_name(local.name, taken)
-		assets[file] = local.read_bytes()
-		return 'assets/' + file
+		if local not in by_path:
+			by_path[local] = unique_name(local.name, taken)
+			assets[by_path[local]] = local.read_bytes()
+		return 'assets/' + by_path[local]
 
 	text = replace_images(text, take)
 	return _store(repo, name, text, assets, 'merge request text from %s' % path.name)

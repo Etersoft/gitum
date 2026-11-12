@@ -104,25 +104,26 @@ def claim_owner(repo, name):
 
 def claim(repo, name, reason='', force=False):
 	"""Mark a series as being worked on by this session (shared by all work trees of the repository)."""
-	load(repo.journal(), name)
-	owner = claim_owner(repo, name)
-	if owner and owner.get('session') != session_id() and not force:
-		raise Busy('series %s is claimed by %s since %s' % (name, owner.get('session'), owner.get('since')),
-			   owner=owner)
-	data = {'series': name, 'session': session_id(), 'pid': os.getpid(), 'host': socket.gethostname(),
-		'since': now(), 'reason': reason}
-	claims_dir(repo).mkdir(parents=True, exist_ok=True)
-	(claims_dir(repo) / ('%s.json' % name)).write_text(json.dumps(data, ensure_ascii=False))
+	with repo.lock():
+		load(repo.journal(), name)
+		owner = claim_owner(repo, name)
+		if owner and owner.get('session') != session_id() and not force:
+			raise Busy('series %s is claimed by %s since %s' % (name, owner.get('session'), owner.get('since')),
+				   owner=owner)
+		data = {'series': name, 'session': session_id(), 'pid': os.getpid(), 'host': socket.gethostname(),
+			'since': now(), 'reason': reason}
+		repo.write_json('claims/%s.json' % name, data)
 	return data
 
 
 def release(repo, name, force=False):
-	owner = claim_owner(repo, name)
-	if not owner:
-		return None
-	if owner.get('session') != session_id() and not force:
-		raise Busy('series %s is claimed by %s; use --force' % (name, owner.get('session')), owner=owner)
-	(claims_dir(repo) / ('%s.json' % name)).unlink()
+	with repo.lock():
+		owner = claim_owner(repo, name)
+		if not owner:
+			return None
+		if owner.get('session') != session_id() and not force:
+			raise Busy('series %s is claimed by %s; use --force' % (name, owner.get('session')), owner=owner)
+		(claims_dir(repo) / ('%s.json' % name)).unlink()
 	return owner
 
 
@@ -233,10 +234,14 @@ def order(all_series, names):
 
 def _format_patches(git, shas, start=1):
 	"""format-patch files of commits (oldest first) as {filename: bytes}, numbered from start."""
+	if not shas:
+		return {}
 	with tempfile.TemporaryDirectory() as tmp:
-		for i, sha in enumerate(shas):
-			git.run('format-patch', '--quiet', '--no-signature', '--zero-commit', '--start-number', str(start + i),
-				'-o', tmp, '-1', sha)
+		# one process; format-patch numbers the listed commits in the reverse of the given order
+		# (a single revision would mean "since <rev>", so one commit is given as -1)
+		revs = ['-1', shas[0]] if len(shas) == 1 else ['--no-walk=unsorted', *reversed(shas)]
+		git.run('format-patch', '--quiet', '--no-numbered', '--no-signature', '--zero-commit', '--start-number', str(start),
+			'-o', tmp, *revs)
 		return {p.name: p.read_bytes() for p in sorted(Path(tmp).iterdir())}
 
 
@@ -253,7 +258,9 @@ def dependencies_of(git, journal, all_series, meta):
 		tips += [t for t in (branch_tip, d.get('tip')) if t]
 		pids |= {c['patch_id'] for c in (d.get('changes') or []) if c.get('patch_id')}
 		if export_dir(d) == own_dir:
-			offset += len([f for f in journal.list('series/' + n) if f.endswith('.patch')])
+			# the recorded changes, already updated when the dependency was saved in the same run
+			offset += len(d['changes']) if d.get('changes') is not None else \
+				len([f for f in journal.list('series/' + n) if f.endswith('.patch')])
 	return tips, pids, offset
 
 
@@ -273,6 +280,7 @@ def _commit(repo, journal, writer, message, extra_parents=()):
 
 
 _UPSTREAM_COMMITTERS = {}
+_USER_EMAIL = {}
 
 
 def upstream_looking(git, ref, base, tip):
@@ -285,7 +293,10 @@ def upstream_looking(git, ref, base, tip):
 	if ref_sha not in _UPSTREAM_COMMITTERS:
 		_UPSTREAM_COMMITTERS[ref_sha] = set(git.lines('log', '-n', '500', '--no-merges', '--format=%ce', ref_sha))
 	ups = _UPSTREAM_COMMITTERS[ref_sha]
-	me = git.out('config', 'user.email', check=False)
+	key = str(git.cwd)
+	if key not in _USER_EMAIL:
+		_USER_EMAIL[key] = git.out('config', 'user.email', check=False)
+	me = _USER_EMAIL[key]
 	found = []
 	for line in git.lines('log', '--reverse', '--no-merges', '--format=%H %ce', '%s..%s' % (base, tip)):
 		sha, _, email = line.partition(' ')
@@ -371,6 +382,8 @@ def add(repo, name, branch, base, depends=(), state='draft', **meta):
 		_record(repo, journal, writer, tracker, name, data, tip, 'series add', known)
 		tracker.write(writer)
 		_commit(repo, journal, writer, 'gitum: series add %s' % name, [tip])
+		if data.get('state') != 'draft':
+			state_hook(repo, journal.config, data, None, 'add')
 		data['warnings'] = [w for w in [suspect_warning(data)] if w]
 		return data
 
@@ -382,33 +395,44 @@ def save(repo, names=None):
 		all_series = load_all(journal)
 		writer = JournalWriter(git, journal.sha)
 		tracker = changes_mod.Tracker(journal)
-		saved, tips = [], []
+		saved, tips, claimed = [], [], []
 		if names:
+			for name in names:
+				if name not in all_series:
+					raise GitumError('no series %s' % name)
 			check_claims(repo, names)
-		for name in names or sorted(all_series):
-			if name not in all_series:
-				raise GitumError('no series %s' % name)
+		named = set(names or [])
+		# dependencies first: a dependent series numbers its patches after theirs
+		for name in order(all_series, names or sorted(all_series)):
 			meta = all_series[name]
 			if not meta.get('branch'):
 				continue
 			tip = git.rev('refs/heads/' + meta['branch'])
 			if not tip:
-				if names:
+				if name in named:
 					raise GitumError('series %s: branch %s does not exist' % (name, meta['branch']))
 				continue
-			if tip == meta.get('tip') and not names:
+			renumber = any(d in saved and export_dir(all_series[d]) == export_dir(meta)
+				       for d in order(all_series, [name])[:-1])
+			if tip == meta.get('tip') and name not in named and not renumber:
 				continue		# named series are always recounted (rules or dependencies may have changed)
+			if names and name not in named and not renumber:
+				continue		# a dependency of a named series is saved only by its own name
+			owner = claim_owner(repo, name)
+			if owner and owner.get('session') != session_id():
+				claimed.append(name)
+				continue
 			_record(repo, journal, writer, tracker, name, meta, tip, 'series save', all_series)
 			touch(meta, event='saved', tip=tip)
 			writer.put_json(meta_path(name), meta)
 			saved.append(name)
 			tips.append(tip)
 		if not saved:
-			return {'changed': False, 'saved': []}
+			return {'changed': False, 'saved': [], 'claimed': claimed}
 		tracker.write(writer)
 		_commit(repo, journal, writer, 'gitum: series save %s' % ', '.join(saved), tips)
 		warnings = [w for w in (suspect_warning(all_series[n]) for n in saved) if w]
-		return {'changed': True, 'saved': saved, 'warnings': warnings}
+		return {'changed': True, 'saved': saved, 'warnings': warnings, 'claimed': claimed}
 
 
 def set_(repo, name, values):
@@ -440,6 +464,17 @@ def set_(repo, name, values):
 				meta.pop(key, None)
 			else:
 				meta[key] = value
+		# the state and the Disabled: line of the definition are one thing
+		if 'disabled' in values and 'state' not in values:
+			if meta.get('disabled'):
+				meta['state'] = 'disabled'
+			elif meta.get('state') == 'disabled':
+				meta['state'] = 'draft'
+		elif 'state' in values:
+			if meta.get('state') == 'disabled' and not meta.get('disabled'):
+				meta['disabled'] = True
+			elif meta.get('state') != 'disabled':
+				meta.pop('disabled', None)
 		if 'fixes' in values:
 			found = bugs_mod.from_fixes(journal.config, meta.get('fixes'))
 			if found:
@@ -479,6 +514,7 @@ def state_hook(repo, cfg, meta, previous, source=''):
 
 def remove(repo, name):
 	with repo.lock():
+		check_claims(repo, [name])
 		journal = repo.journal()
 		load(journal, name)
 		for other, meta in load_all(journal).items():
@@ -487,6 +523,7 @@ def remove(repo, name):
 		writer = JournalWriter(repo.git, journal.sha)
 		writer.remove_dir('series/%s' % name)
 		_commit(repo, journal, writer, 'gitum: series remove %s' % name)
+		(claims_dir(repo) / ('%s.json' % name)).unlink(missing_ok=True)
 
 
 def export(repo, names, directory, check=False):
@@ -504,8 +541,8 @@ def export(repo, names, directory, check=False):
 	for name in names:
 		if name not in all_series:
 			raise GitumError('no series %s' % name)
-		files = {f: journal.read('series/%s/%s' % (name, f)) for f in journal.list('series/' + name)
-			 if f.endswith('.patch')}
+		files = {p.rsplit('/', 1)[1]: data for p, data in journal.read_files('series/' + name, '.patch').items()
+			 if p.count('/') == 2}
 		files['definition'] = shared_definition(all_series, all_series[name], journal.config).encode()
 		target = directory / export_dir(all_series[name])
 		# files of this series: its current files and every patch name it ever had
@@ -568,7 +605,7 @@ def import_staging(repo, directory, base, names=None):
 		journal = repo.journal()
 		known = load_all(journal)
 		writer = JournalWriter(repo.git, journal.sha)
-		imported = []
+		imported, changed_state = [], {}
 		for rel, d in series_dirs(directory):
 			if rel == Path('.'):
 				continue
@@ -576,8 +613,11 @@ def import_staging(repo, directory, base, names=None):
 			if names and name not in names and str(rel) not in names:
 				continue
 			check_name(name)
+			if name in known:
+				check_claims(repo, [name])
 			meta = dict(known.get(name) or {'name': name, 'base': base, 'branch': '', 'state': 'draft',
 							 'changes': None})
+			previous = known[name].get('state') if name in known else None
 			definition = parse_definition((d / 'definition').read_text(errors='replace')) \
 				if (d / 'definition').exists() else {'fixes': [], 'depends': [], 'disabled': ''}
 			meta.update(fixes=definition['fixes'], depends=definition['depends'],
@@ -602,18 +642,28 @@ def import_staging(repo, directory, base, names=None):
 					writer.put('series/%s/%s' % (name, p.name), p.read_bytes())
 					names_here.append(p.name)
 			meta['patch_files'] = sorted(set(meta.get('patch_files', [])) | set(names_here))
+			if meta.get('state') != previous and (previous is not None or meta['state'] != 'draft'):
+				touch(meta, state=meta['state'], previous=previous, source='import-staging')
+				changed_state[name] = previous
 			writer.put_json(meta_path(name), meta)
-			imported.append(name)
+			imported.append((name, meta))
 		if not imported:
 			raise GitumError('no series found in %s' % directory)
 		_commit(repo, journal, writer, 'gitum: import %d series from %s' % (len(imported), directory.name))
-		return {'imported': imported}
+		for name, meta in imported:
+			if name in changed_state:
+				state_hook(repo, journal.config, meta, changed_state[name], 'import-staging')
+		return {'imported': [n for n, _m in imported]}
 
 
-def checkout(repo, name, onto=None, branch=None, with_depends=True):
-	"""Build a branch from the patches of a series (and of its dependencies) in the journal."""
+def checkout(repo, name, onto=None, branch=None, with_depends=True, force=False):
+	"""Build a branch from the patches of a series (and of its dependencies) in the journal.
+
+	An existing branch with commits the journal does not have is kept unless force.
+	"""
 	git = repo.git
 	with repo.lock():
+		check_claims(repo, [name])
 		journal = repo.journal()
 		all_series = load_all(journal)
 		meta = load(journal, name)
@@ -623,15 +673,17 @@ def checkout(repo, name, onto=None, branch=None, with_depends=True):
 		branch = branch or meta.get('branch') or 'series/' + name
 		ref = 'refs/heads/' + branch
 		old = git.rev(ref)
+		if old and old != meta.get('tip') and not force:
+			raise NeedsHuman('%s has commits that are not saved in the series (%s): gitum series save %s, '
+					 'or checkout --force to throw them away' % (branch, old[:12], name), branch=branch)
 		names = order(all_series, [name]) if with_depends else [name]
 		wt = repo.add_worktree(start, 'checkout-' + name)
 		applied = []
 		try:
 			for n in names:
-				for f in sorted(journal.list('series/' + n)):
-					if not f.endswith('.patch'):
-						continue
-					data = journal.read('series/%s/%s' % (n, f))
+				files = journal.read_files('series/' + n, '.patch')
+				for path in sorted(p for p in files if p.count('/') == 2):
+					f, data = path.rsplit('/', 1)[1], files[path]
 					res = wt.run('am', '--keep-cr', '-3', input=data, check=False)
 					if res.returncode != 0:
 						wt.run('am', '--abort', check=False)

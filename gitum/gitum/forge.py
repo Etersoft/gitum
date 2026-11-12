@@ -11,6 +11,7 @@ import re
 import urllib.parse
 import urllib.request
 
+from . import bugs as bugs_mod
 from . import changes as changes_mod
 from . import series as series_mod
 from .errors import GitumError
@@ -114,12 +115,19 @@ CHANGE_FATE = {'open': 'sent', 'approved': 'sent', 'merged': 'merged', 'closed':
 SERIES_STATE = {'open': 'sent', 'approved': 'approved', 'merged': 'merged', 'closed': 'rejected'}
 
 
-def _apply(tracker, all_series, item):
+SERIES_ITEM_KEYS = {'series', 'state', 'pr', 'internal_mr', 'upstream_commit', 'version', 'reviewer', 'note',
+		    'merged_at', 'merge_commit', 'head', 'approval_unknown', 'url', 'bugs', 'title'}
+
+
+def _apply(cfg, tracker, all_series, item):
 	"""Apply one state record; return a short description of what changed or None."""
 	if item.get('series'):
 		meta = all_series.get(item['series'])
 		if meta is None:
 			raise GitumError('no series %s' % item['series'])
+		unknown = set(item) - SERIES_ITEM_KEYS
+		if unknown:
+			raise GitumError('series %s: unknown keys %s' % (item['series'], ', '.join(sorted(unknown))))
 		before = json.dumps(meta, sort_keys=True)
 		old_state = meta.get('state')
 		state = item.get('state')
@@ -131,9 +139,12 @@ def _apply(tracker, all_series, item):
 			if state not in series_mod.STATES:
 				raise GitumError('unknown series state %s' % state)
 			meta['state'] = state
-		for key in ('pr', 'internal_mr', 'upstream_commit', 'version', 'reviewer', 'note', 'merged_at'):
+		for key in ('pr', 'internal_mr', 'upstream_commit', 'version', 'reviewer', 'note', 'merged_at', 'title'):
 			if item.get(key):
-				meta[key] = item[key]
+				meta[key] = series_mod.normalize_link(cfg, key, item[key]) if key in ('pr', 'internal_mr') \
+					else item[key]
+		if item.get('bugs'):
+			meta['bugs'] = bugs_mod.normalize_list(cfg, list(meta.get('bugs') or []) + list(item['bugs']))
 		if item.get('merge_commit'):
 			meta['upstream_commit'] = item['merge_commit']
 		if item.get('head'):
@@ -175,8 +186,8 @@ def import_json(repo, items):
 		tracker = changes_mod.Tracker(journal)
 		all_series = series_mod.load_all(journal)
 		states_before = {n: m.get('state') for n, m in all_series.items()}
-		updated = [u for u in (_apply(tracker, all_series, i) for i in items) if u]
-		touched = [u.split(' ', 1)[1] for u in updated if u.startswith('series ')]
+		updated = [u for u in (_apply(journal.config, tracker, all_series, i) for i in items) if u]
+		touched = sorted({u.split(' ', 1)[1] for u in updated if u.startswith('series ')})
 		if updated:
 			_write(repo, journal, tracker, all_series, touched, 'gitum: forge import (%d updates)' % len(updated))
 		for name in touched:

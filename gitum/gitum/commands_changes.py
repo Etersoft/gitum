@@ -121,14 +121,17 @@ def confirm(repo, ref, sha=None):
 		writer = JournalWriter(git, journal.sha)
 		tracker.write(writer)
 		all_series = series.load_all(journal)
-		merged = upstreamcheck._merged_series(tracker, all_series, {layer}, git) if layer.startswith('series:') else []
-		for name in merged:
+		merged, filled = upstreamcheck.merged_series(tracker, all_series, {layer}, git) \
+			if layer.startswith('series:') else ({}, [])
+		for name in list(merged) + filled:
 			writer.put_json(series.meta_path(name), all_series[name])
-		rec = {**rec, 'series_merged': merged}
+		rec = {**rec, 'series_merged': sorted(merged), 'release_filled': filled}
 		new = writer.write('gitum: change %s confirmed as %s' % (rec['id'], commit[:12]))
 		tr = RefTransaction(git)
 		tr.update(JOURNAL_REF, new, journal.sha)
 		tr.commit()
+		for name, previous in merged.items():
+			series.state_hook(repo, cfg, all_series[name], previous, 'change confirm')
 		return rec
 
 
@@ -276,7 +279,7 @@ def cmd_series(repo, args, out):
 				sk['series'], sk['kept'], sk['state'], sk['reason'], sk['command']))
 		return with_warnings(out, data, '\n'.join(lines))
 	elif a == 'checkout':
-		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends)
+		data = series.checkout(repo, args.name, args.onto, args.branch, not args.no_depends, args.force)
 		out.result(data, '%s: %d patches on %s' % (data['branch'], len(data['applied']), short(data['base'])))
 
 
@@ -443,6 +446,7 @@ def register(sub):
 	p.add_argument('--onto', help='base commit (default: the series base)')
 	p.add_argument('--branch')
 	p.add_argument('--no-depends', action='store_true')
+	p.add_argument('--force', action='store_true', help='replace a branch with unsaved commits')
 	s.set_defaults(func=cmd_series)
 
 	s = sub.add_parser('check-upstream', help='find our changes in upstream, also edited ones')

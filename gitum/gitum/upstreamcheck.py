@@ -186,9 +186,13 @@ def one_to_one(found):
 				e['note'] = 'upstream commit %s matches %s better' % (commit[:12], entries[0].get('id') or '')
 
 
-def _merged_series(tracker, all_series, containers, git=None):
-	"""Series whose changes are all accepted upstream become merged (source check-upstream)."""
-	merged = []
+def merged_series(tracker, all_series, containers, git=None):
+	"""Series whose changes are all accepted upstream become merged (source check-upstream).
+
+	Returns ({name: previous state} of the series that became merged, [names of merged
+	series whose release was filled in]); the metadata in all_series is updated.
+	"""
+	merged, filled = {}, []
 	for spec in sorted(containers):
 		kind, _, name = spec.partition(':')
 		meta = all_series.get(name) if kind == 'series' else None
@@ -202,7 +206,7 @@ def _merged_series(tracker, all_series, containers, git=None):
 			if meta.get('state') == 'merged' and not meta.get('release'):
 				meta['release'] = max((r['meta'].get('release', '') for r in recs), key=_version_key)
 				if meta['release']:
-					merged.append(name)
+					filled.append(name)
 			continue
 		last = recs[-1]['meta']
 		previous = meta.get('state')
@@ -211,19 +215,26 @@ def _merged_series(tracker, all_series, containers, git=None):
 		if git and meta['upstream_commit'] and not meta.get('merged_at'):
 			meta['merged_at'] = git.out('show', '-s', '--format=%cI', meta['upstream_commit'], check=False)
 		series_mod.touch(meta, state='merged', previous=previous, source='check-upstream')
-		merged.append(name)
-	return merged
+		merged[name] = previous
+	return merged, filled
 
 
 def _version_key(tag):
 	return [int(p) if p.isdigit() else p for p in re.split(r'(\d+)', tag or '')]
 
 
+_RELEASES = {}
+
+
 def first_release(git, upstream, sha):
-	if not upstream or not upstream.release_tags:
+	"""The first release tag that contains sha (cached per upstream and commit)."""
+	if not upstream or not upstream.release_tags or not sha:
 		return ''
-	tags = git.lines('tag', '--contains', sha, '--list', upstream.release_tags, '--sort=v:refname')
-	return tags[0] if tags else ''
+	key = (str(git.cwd), upstream.release_tags, sha)
+	if key not in _RELEASES:
+		tags = git.lines('tag', '--contains', sha, '--list', upstream.release_tags, '--sort=v:refname')
+		_RELEASES[key] = tags[0] if tags else ''
+	return _RELEASES[key]
 
 
 def containers(journal, what):
@@ -298,7 +309,7 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 				entry['release'] = first_release(git, upstream, res['upstream_commit'])
 			found.append(entry)
 	one_to_one(found)
-	applied, series_merged = [], []
+	applied, series_merged, filled = [], [], []
 	if apply:
 		with repo.lock():
 			journal = repo.journal()
@@ -319,16 +330,19 @@ def check(repo, what=None, ref=None, apply=False, since=None):
 						rec['meta'].get('candidate') != e['upstream_commit']:
 					# remembered for gitum change confirm
 					tracker.set(e['id'], candidate=e['upstream_commit'])
-			series_merged = _merged_series(tracker, all_series, {e['container'] for e in found}, git)
-			if tracker.dirty or series_merged:
+			merged, filled = merged_series(tracker, all_series, {e['container'] for e in found}, git)
+			series_merged = sorted(merged)
+			if tracker.dirty or merged or filled:
 				writer = JournalWriter(git, journal.sha)
 				tracker.write(writer)
-				for name in series_merged:
+				for name in list(merged) + filled:
 					writer.put_json(series_mod.meta_path(name), all_series[name])
 				new = writer.write('gitum: check-upstream: %d changes found upstream%s' % (
 					len(applied), '; merged: ' + ', '.join(series_merged) if series_merged else ''))
 				tr = RefTransaction(git)
 				tr.update(JOURNAL_REF, new, journal.sha)
 				tr.commit()
-	return {'results': found, 'applied': applied, 'series_merged': series_merged,
+				for name, previous in merged.items():
+					series_mod.state_hook(repo, journal.config, all_series[name], previous, 'check-upstream')
+	return {'results': found, 'applied': applied, 'series_merged': series_merged, 'release_filled': filled,
 		'suspect': [e for e in found if e['status'] == 'suspect']}

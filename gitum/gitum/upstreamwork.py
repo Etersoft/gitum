@@ -57,8 +57,8 @@ def base_short(spec):
 def port(repo, name, to, branch=None):
 	"""Put the changes of a series onto another base as a variant branch."""
 	git = repo.git
-	series_mod.check_claims(repo, [name])
 	with repo.lock():
+		series_mod.check_claims(repo, [name])
 		journal = repo.journal()
 		meta = series_mod.load(journal, name)
 		if meta.get('changes') is None:
@@ -208,11 +208,12 @@ def queue(repo, target=None):
 
 
 def queue_add(repo, name, position=None):
-	journal = repo.journal()
-	if position is None:
-		positions = [m.get('position', 0) for m in series_mod.load_all(journal).values() if m.get('position')]
-		position = max(positions, default=0) + 1
-	return series_mod.set_(repo, name, {'state': 'queued', 'position': int(position)})
+	with repo.lock():		# the position is computed and taken in one step
+		journal = repo.journal()
+		if position is None:
+			positions = [m.get('position', 0) for m in series_mod.load_all(journal).values() if m.get('position')]
+			position = max(positions, default=0) + 1
+		return series_mod.set_(repo, name, {'state': 'queued', 'position': int(position)})
 
 
 def queue_pause(repo, target, paused, reason=''):
@@ -388,9 +389,10 @@ def _prepare(repo, name, onto, branch, push, directory, strip, lint, with_depend
 	problems = []
 	first = datetime.datetime.fromisoformat(now) if now else datetime.datetime.now().astimezone()
 	wt = repo.add_worktree(start, 'prepare-' + name)
+	infos = git.commit_infos(commits)
 	try:
 		for sha in commits:
-			info = git.commit_info(sha)
+			info = infos[sha]
 			before = wt.rev('HEAD')
 			if directory:
 				patch = git.run('format-patch', '--stdout', '-1', '--relative=' + directory, sha).stdout
@@ -517,25 +519,27 @@ def branches(repo, remote=None, prune=False):
 			     'where': 'local'})
 	if remote:
 		git.run('fetch', '--quiet', '--prune', remote, check=False)
-		for b in git.lines('for-each-ref', '--format=%(refname:short)', 'refs/remotes/%s/' % remote):
-			short = b.split('/', 1)[1]
-			hit = next(((n, m) for n, m in all_series.items() if m.get('upstream_branch') == short), None)
-			if hit:
-				done = hit[1].get('state') in ('merged', 'rejected')
-				rows.append({'branch': short, 'series': hit[0], 'state': hit[1].get('state'), 'stale': done,
-					     'unknown': False, 'where': remote})
+		by_upstream_branch = {m['upstream_branch']: n for n, m in all_series.items() if m.get('upstream_branch')}
+		for short in git.lines('for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/%s/' % remote):
+			if short == 'HEAD' or short not in by_upstream_branch:
+				continue
+			name = by_upstream_branch[short]
+			st = all_series[name].get('state')
+			rows.append({'branch': short, 'series': name, 'state': st, 'stale': st in ('merged', 'rejected'),
+				     'unknown': False, 'where': remote})
 	deleted = []
 	if prune:
-		for r in rows:
-			if not r['stale']:
-				continue
-			if r['where'] == 'local':
-				if repo.checked_out(r['branch']):
-					continue
-				git.run('branch', '-D', r['branch'])
-			else:
-				git.run('push', '--quiet', remote, ':refs/heads/' + r['branch'])
-			deleted.append('%s:%s' % (r['where'], r['branch']))
+		stale = [r for r in rows if r['stale']]
+		local = [r for r in stale if r['where'] == 'local' and not repo.checked_out(r['branch'])]
+		if local:
+			tr = RefTransaction(git)
+			for r in local:
+				tr.delete('refs/heads/' + r['branch'], git.rev('refs/heads/' + r['branch']))
+			tr.commit()
+		far = [r for r in stale if r['where'] != 'local']
+		if far:
+			git.run('push', '--quiet', remote, *[':refs/heads/' + r['branch'] for r in far])
+		deleted = ['%s:%s' % (r['where'], r['branch']) for r in local + far]
 	return {'branches': rows, 'deleted': deleted}
 
 
