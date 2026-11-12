@@ -1,6 +1,7 @@
 """Commands of gitum 2 beyond the basic ones in cli.py."""
 
 from . import publish, sync
+from .journal import report_layers
 from .errors import EXIT_OK, EXIT_UPDATED
 
 
@@ -10,7 +11,7 @@ def short(sha):
 
 def format_report(report):
 	lines = ['Synced to %s (run %s)' % (report['target'], report['run'])]
-	for name, l in report['layers'].items():
+	for name, l in report_layers(report):
 		if l.get('unchanged'):
 			lines.append('  %-12s unchanged' % name)
 			continue

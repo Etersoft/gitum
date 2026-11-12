@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import series as series_mod
 from .errors import GitumError, NeedsHuman
+from .journal import report_layers
 
 SPEC_BEGIN = '# BEGIN gitum patches'
 SPEC_END = '# END gitum patches'
@@ -170,6 +171,18 @@ def format_patches(git, base, tip, directory, prefix='', start_number=1):
 	return files
 
 
+ZERO_FROM = b'From ' + b'0' * 40 + b' '
+
+
+def made_by_gitum(path):
+	"""Whether a patch file was written by gitum (format-patch --zero-commit), not by somebody else."""
+	try:
+		with open(path, 'rb') as f:
+			return f.read(len(ZERO_FROM)) == ZERO_FROM
+	except OSError:
+		return False
+
+
 def spec_lines(files, first=1):
 	return ['Patch%d: %s' % (i, f) for i, f in enumerate(files, first)]
 
@@ -177,7 +190,7 @@ def spec_lines(files, first=1):
 def update_spec(spec_path, files, first=1):
 	"""Replace the Patch lines between the gitum markers of a spec file."""
 	text = Path(spec_path).read_text()
-	if SPEC_BEGIN not in text or SPEC_END not in text:
+	if SPEC_BEGIN not in text or SPEC_END not in text or text.index(SPEC_END) < text.index(SPEC_BEGIN):
 		raise GitumError('%s has no "%s" ... "%s" block for the patches' % (spec_path, SPEC_BEGIN, SPEC_END))
 	head, rest = text.split(SPEC_BEGIN, 1)
 	_, tail = rest.split(SPEC_END, 1)
@@ -197,14 +210,27 @@ def export(repo, what, fmt, directory, spec=None, prefix='', first=1, clean=Fals
 			raise GitumError('the staging format is for series (gitum series export)')
 		return series_mod.export(repo, [name], directory)
 	target = directory / 'patches' if fmt == 'quilt' else directory
+	removed = []
 	if clean and target.is_dir():
-		pattern = (prefix or '') + '[0-9][0-9][0-9][0-9]-*.patch'
-		for old in target.glob(pattern):
-			old.unlink()
+		for old in sorted(target.glob((prefix or '') + '[0-9][0-9][0-9][0-9]-*.patch')):
+			if made_by_gitum(old):
+				old.unlink()
+				removed.append(old.name)
 	files = format_patches(git, base, tip, target, prefix, 1)
-	result = {'format': fmt, 'directory': str(target), 'files': files, 'base': base, 'tip': tip}
+	result = {'format': fmt, 'directory': str(target), 'files': files, 'removed': removed, 'base': base, 'tip': tip}
 	if fmt == 'quilt':
-		(target / 'series').write_text(''.join(f + '\n' for f in files))
+		# entries of patches somebody else put there stay, after ours
+		series = target / 'series'
+		others = []
+		for line in series.read_text().splitlines() if series.exists() else []:
+			if not line.strip() or line.startswith('#'):
+				others.append(line)
+				continue
+			name = line.split()[0]
+			path = target / name
+			if name not in files and path.exists() and not made_by_gitum(path):
+				others.append(line)
+		series.write_text(''.join(f + '\n' for f in files) + ''.join(l + '\n' for l in others))
 	elif fmt == 'spec':
 		result['spec_lines'] = spec_lines(files, first)
 		if spec:
@@ -261,7 +287,10 @@ def _import_patches(repo, into, source, fmt):
 					res = wt.run('commit', '-q', '--no-verify', '-m', 'Apply %s' % n, check=False)
 			if res.returncode != 0:
 				wt.run('am', '--abort', check=False)
-				raise NeedsHuman('%s does not apply: %s' % (n, res.stderr.decode(errors='replace').strip()))
+				# nothing is left half done: the layer is unchanged, so this is an error, not a stop
+				raise GitumError('%s does not apply on %s (after %d patches; the layer is unchanged): %s'
+						 % (n, branch, len(imported), res.stderr.decode(errors='replace').strip()),
+						 patch=n, applied=imported)
 			imported.append(n)
 		new_tip = wt.rev('HEAD')
 	finally:
@@ -281,7 +310,7 @@ RESULT_CLASS = {'picked': 'ok', 'resolved': 'warn', 'emptied': 'info', 'skipped'
 def html_report(report):
 	e = html.escape
 	rows = []
-	for layer, data in report['layers'].items():
+	for layer, data in report_layers(report):
 		counts = ', '.join('%s %d' % kv for kv in sorted(data.get('counts', {}).items())) or 'unchanged'
 		rows.append('<h2>%s</h2><p>%s → %s · %s</p>' % (e(layer), e(data['old_tip'][:12]), e(data['new_tip'][:12]),
 								    e(counts)))
@@ -318,7 +347,8 @@ def load_report(repo, run=None):
 	if not runs:
 		raise GitumError('no sync runs in the journal')
 	if run:
-		match = [r for r in runs if r.startswith(run) or run in r]
+		match = [r for r in runs if r == run] or [r for r in runs if r.startswith(run)] or \
+			[r for r in runs if run in r]
 		if len(match) != 1:
 			raise GitumError('run %s: %s' % (run, 'not found' if not match else 'ambiguous'))
 		run = match[0]

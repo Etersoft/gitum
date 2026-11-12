@@ -379,3 +379,34 @@ def test_command_generator_killed_after_post_command(tmp_path, capsys):
 	assert gitum(work, 'continue') == 0
 	assert work.subjects('v1.1..gen') == ['generated for v1.1', 'commit autoreconf results']
 	assert work.show('gen', 'README') == 'upstream\ngenerated\n'
+
+
+def test_export_keeps_patches_gitum_did_not_write(simple, tmp_path, capsys):
+	up, work = simple
+	g = tmp_path / 'g'
+	g.mkdir()
+	foreign = 'From 1234567890123456789012345678901234567890 Mon Sep 17 00:00:00 2001\nSubject: x\n'
+	(g / '0001-fix-build.patch').write_text(foreign)
+	(g / '0009-gone.patch').write_text('From ' + '0' * 40 + ' Mon Sep 17 00:00:00 2001\n')
+	code, data = gitum_json(work, capsys, 'export', 'layer:pkg', '--format', 'spec', '--dir', str(g),
+				'--prefix', 'alt-', '--clean')
+	code, data = gitum_json(work, capsys, 'export', 'layer:pkg', '--format', 'spec', '--dir', str(g), '--clean')
+	assert data['removed'] == ['0009-gone.patch']
+	assert (g / '0001-fix-build.patch').read_text() == foreign
+	q = tmp_path / 'q' / 'patches'
+	q.mkdir(parents=True)
+	(q / 'local.patch').write_text(foreign)
+	(q / 'series').write_text('# keep\nlocal.patch -p1\n')
+	gitum_json(work, capsys, 'export', 'layer:pkg', '--format', 'quilt', '--dir', str(tmp_path / 'q'))
+	assert (q / 'series').read_text() == '0001-fix-one.patch\n0002-fix-two.patch\n# keep\nlocal.patch -p1\n'
+
+
+def test_import_failure_leaves_the_layer(simple, tmp_path, capsys):
+	up, work = simple
+	patches = tmp_path / 'pkg'
+	patches.mkdir()
+	(patches / 'bad.diff').write_text('--- a/nosuch\n+++ b/nosuch\n@@ -1 +1 @@\n-a\n+b\n')
+	(patches / 'pkg.spec').write_text('Name: pkg\nPatch1: bad.diff\n')
+	tip = work.rev('pkg')
+	code, data = gitum_json(work, capsys, 'import', str(patches / 'pkg.spec'), '--into', 'pkg')
+	assert code == 1 and 'layer is unchanged' in data['error'] and work.rev('pkg') == tip

@@ -8,7 +8,7 @@ from pathlib import Path
 from . import __version__
 from . import config as config_mod
 from . import state
-from .errors import EXIT_OK, EXIT_UPDATED, GitumError
+from .errors import EXIT_ERROR, EXIT_OK, EXIT_UPDATED, GitumError
 from .journal import JOURNAL_REF, JournalWriter
 from .git import RefTransaction
 from .repo import Repo
@@ -31,6 +31,17 @@ class Output:
 				  sys.stdout, indent=1, ensure_ascii=False, default=str)
 			sys.stdout.write('\n')
 		print('gitum: %s' % err.message, file=sys.stderr)
+
+
+class UsageError(GitumError):
+	"""A mistake on the command line (exit code 1, not 2: nothing waits for a person)."""
+
+
+class Parser(argparse.ArgumentParser):
+	"""argparse that reports usage mistakes as a GitumError instead of exiting with 2."""
+
+	def error(self, message):
+		raise UsageError('%s: %s' % (self.prog, message), usage=self.format_usage().strip())
 
 
 def parse_pair(value, what):
@@ -197,22 +208,22 @@ def cmd_log(repo, args, out):
 		out.result(entries, '\n'.join('%s %s %s' % (short(e['sha']), e['date'], e['subject']) for e in entries))
 		return
 	journal = repo.journal()
-	entries = []
-	for sha in journal.history(args.max_count):
-		info = repo.git.commit_info(sha)
-		entries.append({'sha': sha, 'subject': info['subject']})
+	args_ = ['log', '--first-parent', '--format=%H %s', journal.sha]
+	if args.max_count:
+		args_.insert(1, '--max-count=%d' % args.max_count)
+	entries = [dict(zip(('sha', 'subject'), line.split(' ', 1) + [''])) for line in repo.git.lines(*args_)]
 	out.result(entries, '\n'.join('%s %s' % (short(e['sha']), e['subject']) for e in entries))
 
 
 def build_parser():
 	from .commands import register
-	p = argparse.ArgumentParser(prog='gitum', description='Git Upstream Manager: develop in parallel with upstream')
+	p = Parser(prog='gitum', description='Git Upstream Manager: develop in parallel with upstream')
 	p.add_argument('--version', action='version', version='%(prog)s ' + __version__)
 	p.add_argument('--repo', default='.', help='repository path (default: current directory)')
 	p.add_argument('--json', action='store_true', help='machine-readable output')
 	p.add_argument('--detailed-exitcode', action='store_true',
 		       help='exit with 10 when something was updated, 0 when nothing changed')
-	sub = p.add_subparsers(dest='command', required=True, metavar='command')
+	sub = p.add_subparsers(dest='command', required=True, metavar='command', parser_class=Parser)
 
 	s = sub.add_parser('init', help='create the journal from existing branches')
 	s.add_argument('--upstream', action='append', default=[], metavar='NAME=REF',
@@ -276,14 +287,20 @@ def hoist_global_options(argv):
 
 def main(argv=None):
 	argv = hoist_global_options(list(sys.argv[1:] if argv is None else argv))
-	args = build_parser().parse_args(argv)
-	out = Output(args.json)
+	out = Output('--json' in argv)
 	try:
+		args = build_parser().parse_args(argv)
 		repo = Repo(args.repo)
 		code = args.func(repo, args, out)
 	except GitumError as e:
 		out.error(e)
 		return e.exit_code
+	except OSError as e:
+		out.error(GitumError(str(e), kind='os'))
+		return EXIT_ERROR
+	except ValueError as e:		# bad JSON or numbers in files and arguments
+		out.error(GitumError('%s: %s' % (type(e).__name__, e), kind='value'))
+		return EXIT_ERROR
 	except KeyboardInterrupt:
 		print('gitum: interrupted', file=sys.stderr)
 		return 130

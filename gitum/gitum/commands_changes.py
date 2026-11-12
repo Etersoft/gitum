@@ -7,7 +7,7 @@ from pathlib import Path
 from . import bugs as bugs_mod
 from . import changes as changes_mod
 from . import forge, series, upstreamcheck
-from .errors import EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
+from .errors import EXIT_ERROR, EXIT_NEEDS_HUMAN, EXIT_OK, GitumError
 from .git import RefTransaction
 from .journal import JOURNAL_REF, JournalWriter
 
@@ -79,6 +79,8 @@ def cmd_change(repo, args, out):
 		return
 	# set
 	values = parse_values(args.values)
+	if not values:
+		raise GitumError('gitum change set ID needs KEY=VALUE (fate=..., pr=..., ...)')
 	fate = values.pop('fate', None)
 	if values.get('pr'):
 		values['pr'] = series.normalize_link(repo.journal().config, 'pr', values['pr'])
@@ -153,15 +155,21 @@ def series_tree(repo, journal, with_variants=False, bug=None):
 	git = repo.git
 	cfg = journal.config
 	all_series = series.load_all(journal)
-	rows = {}
+	rows, up_tips, lags = {}, {}, {}
 	for name, meta in all_series.items():
 		if bug and not bugs_mod.matches(cfg, meta, bug):
 			continue
 		up_name = meta.get('upstream') or (meta['base'].split(':', 1)[1] if meta['base'].startswith('upstream:') else '')
 		up = cfg.upstreams.get(up_name)
 		lag = None
-		if up and meta.get('base_sha') and git.rev(up.ref):
-			lag = git.count('%s..%s' % (meta['base_sha'], up.ref))
+		if up and meta.get('base_sha'):
+			if up.name not in up_tips:
+				up_tips[up.name] = git.rev(up.ref)
+			if up_tips[up.name]:
+				key = (meta['base_sha'], up_tips[up.name])
+				if key not in lags:		# series on the same base share the count
+					lags[key] = git.count('%s..%s' % key)
+				lag = lags[key]
 		row = {'name': name, 'state': meta.get('state', ''), 'version': meta.get('version', ''),
 		       'patches': len(meta.get('changes') or []), 'depends': meta.get('depends', []),
 		       'target': meta.get('target') or upstreamwork.DEFAULT_TARGET, 'base_behind': lag,
@@ -330,6 +338,10 @@ def cmd_forge(repo, args, out):
 	for err in data.get('errors', []):
 		text += '\nerror: ' + err
 	out.result(data, text)
+	if data.get('errors'):
+		return EXIT_ERROR		# what could be read is recorded; the rest needs a look
+	if data.get('outdated'):
+		return EXIT_NEEDS_HUMAN
 
 
 # journal diff and object history

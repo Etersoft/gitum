@@ -34,6 +34,13 @@ def history_ref(layer):
 	return 'refs/heads/' + HISTORY_PREFIX + layer
 
 
+def report_layers(report):
+	"""(name, data) of the layers of a sync report in stack order (the journal stores keys sorted)."""
+	layers = report['layers']
+	order = [n for n in report.get('order', []) if n in layers]
+	return [(n, layers[n]) for n in order + sorted(set(layers) - set(order))]
+
+
 def dump_json(data):
 	return (json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + '\n').encode()
 

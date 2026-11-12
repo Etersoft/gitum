@@ -278,3 +278,17 @@ def test_layer_names_are_checked_and_quoted():
 	assert 'wine-11.x' in config.parse(text).layers
 	with pytest.raises(ConfigError):
 		config.parse(text.replace('"wine-11.x"', '"bad name"'))
+
+
+def test_usage_and_file_errors_exit_1_with_json(tmp_path, capsys):
+	import json as json_mod
+	from gitum.cli import main
+	assert main(['--repo', str(tmp_path), '--json', 'sync', '--bogus']) == 1
+	data = json_mod.loads(capsys.readouterr().out)
+	assert 'unrecognized arguments' in data['error'] and data['exit_code'] == 1
+	assert main(['--repo', str(tmp_path), '--json', 'series', 'nosuch']) == 1
+	capsys.readouterr()
+	from core_helpers import Repo as PlainRepo
+	PlainRepo(tmp_path / 'r')
+	assert main(['--repo', str(tmp_path / 'r'), '--json', 'init', '--config', str(tmp_path / 'missing.toml')]) == 1
+	assert 'missing.toml' in json_mod.loads(capsys.readouterr().out)['error']

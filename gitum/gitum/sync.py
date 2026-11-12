@@ -634,7 +634,7 @@ class Sync:
 				counts[r['result']] = counts.get(r['result'], 0) + 1
 			layers[name] = {**l, 'counts': counts}
 		return {'run': op['run'], 'started': op['started'], 'finished': utcnow(), 'targets': op['targets'],
-			'target': op['target_desc'], 'layers': layers}
+			'target': op['target_desc'], 'layers': layers, 'order': list(op['layers'])}
 
 	def _needs_review(self, report):
 		mode = self.op['options']['candidate']

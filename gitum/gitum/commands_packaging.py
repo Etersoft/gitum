@@ -9,7 +9,12 @@ from .errors import GitumError
 def cmd_export(repo, args, out):
 	data = packaging.export(repo, args.what, args.format, args.dir, args.spec, args.prefix or '', args.first,
 				args.clean)
-	text = '%d patches in %s' % (len(data.get('files', data.get('written', []))), data.get('directory', args.dir))
+	if args.format == 'staging':
+		text = 'Written: %s' % (', '.join(data['written']) or 'nothing (up to date)')
+	else:
+		text = '%d patches in %s' % (len(data['files']), data['directory'])
+		if data.get('removed'):
+			text += ' (removed %d old ones)' % len(data['removed'])
 	if args.format == 'spec' and not args.spec:
 		text += '\n' + '\n'.join(data['spec_lines'])
 	elif data.get('spec_updated') is not None:
