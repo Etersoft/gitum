@@ -6,6 +6,7 @@ from . import changes as changes_mod
 from . import config as config_mod
 from .errors import ConfigError, GitumError, NeedsHuman
 from .git import RefTransaction
+from .repo import CANDIDATE_FILE, COMMIT_FILE
 from .journal import (
 	JOURNAL_REF,
 	JournalWriter,
@@ -245,9 +246,9 @@ def status(repo):
 		if not op.get('stopped_at'):
 			result['operation']['message'] = 'running' if result['lock'] else \
 				'interrupted; gitum continue resumes it, gitum abort drops it'
-	if (repo.gitum_dir / 'committing.json').exists():
-		result['interrupted_commit'] = repo.read_json('committing.json').get('kind')
-	cand = repo.gitum_dir / 'candidate.json'
+	if (repo.gitum_dir / COMMIT_FILE).exists():
+		result['interrupted_commit'] = repo.read_json(COMMIT_FILE).get('kind')
+	cand = repo.gitum_dir / CANDIDATE_FILE
 	if cand.exists():
 		result['candidate'] = json.loads(cand.read_text())
 	return result

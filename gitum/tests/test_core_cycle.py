@@ -91,6 +91,7 @@ def world(tmp_path):
 	robot.run('checkout', '-q', '-b', 'rebased', 'v1.0')
 	robot.run('am', '-q', str(staging.path / 'patches/aaa-Base/0001-aaa.patch'))
 	robot.run('checkout', '-q', '-b', 'rebased-basealt')
+	robot.run('tag', 'rebased-basealt-START')
 	robot.commit('basealt: tweak', {'basealt': 'alt\n'})
 	robot.run('checkout', '-q', '-b', 'rebased-etersoft')
 	robot.commit('etersoft: feature (eterbug #100)', {'eter': 'eter\n'})
@@ -120,6 +121,7 @@ staging-repo = "%s"
 [layer.basealt]
 base = "layer:staging"
 branch = "rebased-basealt"
+compat-start-tag = "rebased-basealt-START"
 
 [layer.etersoft]
 base = "layer:basealt"
@@ -220,6 +222,10 @@ def test_fork_through_three_releases(world):
 	assert data['changed']
 	assert {b: dev.rev(b) for b in LAYERS} == {b: robot.rev(b) for b in LAYERS}
 	assert dev.git.is_clean() and dev.read('VERSION') == '1.3\n'
+	# the compat START tag follows the layer base everywhere
+	base = GitumRepo(robot.path).journal().layer('basealt').base
+	for r in (robot, w['origin'], dev):
+		assert r.rev('refs/tags/rebased-basealt-START') == base, r.path
 
 	# the journal tells the story; the history branch is bisectable state by state
 	journal = GitumRepo(robot.path).journal()

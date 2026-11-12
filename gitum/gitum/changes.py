@@ -98,22 +98,32 @@ def action(change):
 	return ''
 
 
-def should_drop(git, change, new_base):
-	"""Whether a change must not be applied onto new_base because of its fate."""
+def drop_refs(change):
+	"""The commits whose presence in a new base decides should_drop."""
+	meta = change.get('meta', {})
+	if change.get('fate') in ('merged', 'merged-modified'):
+		return [meta['upstream_commit']] if meta.get('upstream_commit') else []
+	if change.get('fate') == 'fixed-differently':
+		return [meta['drop_on']] if meta.get('drop_on') else []
+	return []
+
+
+def should_drop(change, in_base):
+	"""Whether a change must not be applied onto a new base because of its fate.
+
+	in_base: the revs of drop_refs() that are contained in the new base.
+	"""
 	fate = change.get('fate')
 	meta = change.get('meta', {})
 	if fate == 'disabled':
 		return 'disabled'
-	if fate in ('merged', 'merged-modified') and meta.get('upstream_commit'):
-		sha = git.rev(meta['upstream_commit'])
-		if sha and git.is_ancestor(sha, new_base):
-			return 'upstream has %s' % meta['upstream_commit'][:12]
+	if fate in ('merged', 'merged-modified') and meta.get('upstream_commit') in in_base:
+		return 'upstream has %s' % meta['upstream_commit'][:12]
 	if fate == 'fixed-differently':
 		drop_on = meta.get('drop_on')
 		if not drop_on:
 			return 'fixed differently upstream'
-		sha = git.rev(drop_on)
-		if sha and git.is_ancestor(sha, new_base):
+		if drop_on in in_base:
 			return 'fixed differently upstream in %s' % drop_on
 	return None
 

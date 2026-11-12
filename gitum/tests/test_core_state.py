@@ -267,3 +267,14 @@ def test_unknown_config_keys(inited, tmp_path, capsys):
 	good.write_text(text.replace('review = "Ревью"', '[queue.markdown.titles]\nreview = "Ревью"').replace('remotes', 'remote'))
 	assert run(work, 'config', 'load', str(good)) == 0
 	assert config_mod.unknown_keys({'layer': {'x': {'base': 'upstream:u', 'colour': 1}}}) == ['layer.x.colour']
+
+
+def test_layer_names_are_checked_and_quoted():
+	import pytest
+	from gitum import config
+	from gitum.errors import ConfigError
+	text = config.render([{'name': 'u', 'ref': 'master'}], [{'name': 'wine-11.x', 'base': 'upstream:u', 'branch': 'b'}])
+	assert '[layer."wine-11.x"]' in text
+	assert 'wine-11.x' in config.parse(text).layers
+	with pytest.raises(ConfigError):
+		config.parse(text.replace('"wine-11.x"', '"bad name"'))

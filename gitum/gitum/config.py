@@ -1,5 +1,6 @@
 """Project configuration: gitum.toml stored in the journal."""
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 
@@ -154,6 +155,7 @@ def parse(text, strict=False):
 	cfg = Config(raw=raw)
 	for name, t in raw.get('upstream', {}).items():
 		where = 'upstream.' + name
+		check_name(name, where)
 		cfg.upstreams[name] = Upstream(
 			name=name,
 			ref=_get(t, 'ref', str, '', where),
@@ -167,6 +169,7 @@ def parse(text, strict=False):
 			raise ConfigError('%s: ref is required' % where)
 	for name, t in raw.get('layer', {}).items():
 		where = 'layer.' + name
+		check_name(name, where)
 		cfg.layers[name] = Layer(
 			name=name,
 			branch=_get(t, 'branch', str, name, where),
@@ -217,6 +220,19 @@ def parse(text, strict=False):
 	return cfg
 
 
+NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+-]*$')
+
+
+def check_name(name, where):
+	"""Upstream and layer names become ref and file names: letters, digits and _.+- only."""
+	if not NAME_RE.match(name) or name.endswith('.lock') or '..' in name:
+		raise ConfigError('%s: bad name %r (letters, digits and _.+- only)' % (where, name))
+
+
+def _key(name):
+	return name if re.match(r'^[A-Za-z0-9_-]+$', name) else _quote(name)
+
+
 def _quote(value):
 	if isinstance(value, bool):
 		return 'true' if value else 'false'
@@ -229,13 +245,13 @@ def render(upstreams, layers, extra=''):
 	"""Render a minimal gitum.toml from upstream and layer definitions (lists of dicts)."""
 	lines = ['version = %d' % CONFIG_VERSION, '']
 	for up in upstreams:
-		lines.append('[upstream.%s]' % up['name'])
+		lines.append('[upstream.%s]' % _key(up['name']))
 		for key in ('remote', 'url', 'ref', 'release-tags', 'prefix', 'rewritten'):
 			if up.get(key):
 				lines.append('%s = %s' % (key, _quote(up[key])))
 		lines.append('')
 	for layer in layers:
-		lines.append('[layer.%s]' % layer['name'])
+		lines.append('[layer.%s]' % _key(layer['name']))
 		for key in ('base', 'branch', 'compat-start-tag', 'annihilate-reverts'):
 			if layer.get(key) not in (None, '', False):
 				lines.append('%s = %s' % (key, _quote(layer[key])))

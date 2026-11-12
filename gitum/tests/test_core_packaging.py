@@ -346,3 +346,36 @@ def test_staging_generator_killed_and_continued(staged, capsys):
 	assert work.subjects('v1.1..rebased') == ['aaa: Base.', 'bbb: Uses base.']
 	assert work.subjects('rebased..rebased-etersoft') == ['etersoft: own']
 	assert GitumRepo(work.path).load_op() is None
+
+
+def test_command_generator_killed_after_post_command(tmp_path, capsys):
+	"""Killed after post-command committed: continue redoes it once, not on top of itself."""
+	import os
+	import subprocess
+	import sys
+	from pathlib import Path
+	import gitum as gitum_pkg
+	up = make_upstream(tmp_path / 'upstream', versions=('1.0', '1.1'))
+	work = Repo(tmp_path / 'work', init=False)
+	up.git.at(tmp_path).run('clone', '-q', '-o', 'winehq', str(up.path), str(work.path))
+	work.git = work.git.at(work.path)
+	work.run('checkout', '-q', '-b', 'gen', 'v1.0')
+	work.commit('generated for v1.0', {'gen': '1.0\n'})
+	work.run('checkout', '-q', '--detach')
+	script = tmp_path / 'gen.sh'
+	script.write_text('#!/bin/sh\necho "$GITUM_TARGET_TAG" > gen\ngit add gen\ngit commit -q -m "generated for $GITUM_TARGET_TAG"\n')
+	script.chmod(0o755)
+	cfg = tmp_path / 'gitum.toml'
+	cfg.write_text('version = 2\n[upstream.u]\nref = "winehq/master"\nrelease-tags = "v*"\n'
+		       '[layer.g]\nbase = "upstream:u"\nbranch = "gen"\ngenerator = "command"\ncommand = "%s"\n'
+		       'post-command = "echo generated >> README"\npost-message = "commit autoreconf results"\n' % script)
+	assert gitum(work, 'init', '--config', str(cfg)) == 0
+	env = {**os.environ, 'PYTHONPATH': str(Path(gitum_pkg.__file__).resolve().parents[1]),
+	       'GITUM_TEST_CRASH': 'commit:1:after'}
+	res = subprocess.run([sys.executable, '-m', 'gitum', '--repo', str(work.path), 'sync', '--next-release'], env=env)
+	assert res.returncode == 137
+	code, data = gitum_json(work, capsys, 'skip')
+	assert code == 1 and 'nothing is stopped' in data['error']
+	assert gitum(work, 'continue') == 0
+	assert work.subjects('v1.1..gen') == ['generated for v1.1', 'commit autoreconf results']
+	assert work.show('gen', 'README') == 'upstream\ngenerated\n'

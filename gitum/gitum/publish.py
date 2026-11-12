@@ -32,8 +32,8 @@ def _remote(repo, remote):
 
 
 def fetch(repo, remote):
-	repo.git.run('fetch', '--quiet', remote,
-		     '+refs/heads/*:refs/remotes/%s/*' % remote, '+refs/tags/*:refs/tags/*')
+	"""Branches of the remote; tags are not taken (the compat START tags follow the journal instead)."""
+	repo.git.run('fetch', '--quiet', '--no-tags', remote, '+refs/heads/*:refs/remotes/%s/*' % remote)
 
 
 def _integrate(repo, branch, published, remote_tip, local_tip):
@@ -73,7 +73,8 @@ def publish(repo, remote=None):
 			elif published and git.is_ancestor(published, theirs):
 				new_tip, commits = _integrate(repo, branch, published, theirs, local)
 				state.move_layer(repo, layer.name, new_tip, 'integrate commits from %s' % remote, keep=[theirs])
-				integrated[layer.name] = [git.commit_info(c)['subject'] for c in commits]
+				infos = git.commit_infos(commits)
+				integrated[layer.name] = [infos[c]['subject'] for c in commits]
 				leases[branch] = theirs
 			elif git.is_ancestor(local, theirs):
 				raise NeedsHuman('%s/%s is ahead of the local %s: gitum pull %s first' % (remote, branch, branch, remote))
@@ -165,8 +166,10 @@ def pull(repo, remote=None):
 				moved.append((layer.branch, local, st.tip))
 			hist = git.rev(remote_ref(remote, HISTORY_PREFIX + layer.name))
 			local_hist = git.rev(history_ref(layer.name))
-			if hist and (not local_hist or git.is_ancestor(local_hist, hist)):
-				tr.update(history_ref(layer.name), hist, '')
+			if hist and hist != local_hist and (not local_hist or git.is_ancestor(local_hist, hist)):
+				tr.update(history_ref(layer.name), hist, local_hist or None)
+			if layer.compat_start_tag and st.base and git.rev('refs/tags/' + layer.compat_start_tag) != st.base:
+				tr.update('refs/tags/' + layer.compat_start_tag, st.base, '')
 			tr.update(published_ref(remote, layer.branch), git.rev(remote_ref(remote, layer.branch)) or st.tip, '')
 		tr.update(JOURNAL_REF, target, local_journal or None)
 		with repo.committing(tr, moved, kind='pull'):

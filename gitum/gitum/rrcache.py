@@ -18,17 +18,19 @@ def import_from(repo, journal):
 	"""Copy resolutions from the journal into the repository rr-cache (missing ones only)."""
 	target = local_dir(repo)
 	count = 0
-	for entry in journal.list('rr-cache'):
-		for name in RR_FILES:
-			dst = target / entry / name
-			if dst.exists():
-				continue
-			data = journal.read('rr-cache/%s/%s' % (entry, name))
-			if data is not None:
-				dst.parent.mkdir(parents=True, exist_ok=True)
-				dst.write_bytes(data)
-				count += 1
+	for path, data in journal.read_files('rr-cache').items():
+		dst = target / path[len('rr-cache/'):]
+		if data is None or dst.exists() or not is_rr_file(dst.name):
+			continue
+		dst.parent.mkdir(parents=True, exist_ok=True)
+		dst.write_bytes(data)
+		count += 1
 	return count
+
+
+def is_rr_file(name):
+	"""preimage, postimage and the numbered variants rerere keeps for several resolutions."""
+	return name.split('.', 1)[0] in RR_FILES
 
 
 def export_to(repo, writer, journal):
@@ -41,8 +43,8 @@ def export_to(repo, writer, journal):
 	for entry in sorted(p for p in source.iterdir() if p.is_dir()):
 		if entry.name in known or not (entry / 'postimage').exists():
 			continue
-		for name in RR_FILES:
-			if (entry / name).exists():
-				writer.put('rr-cache/%s/%s' % (entry.name, name), (entry / name).read_bytes())
+		for f in sorted(entry.iterdir()):
+			if f.is_file() and is_rr_file(f.name):
+				writer.put('rr-cache/%s/%s' % (entry.name, f.name), f.read_bytes())
 		count += 1
 	return count

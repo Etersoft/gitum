@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import socket
+import time
 from pathlib import Path
 
 from .errors import Busy, NeedsHuman, NotGitumRepo
@@ -82,12 +83,24 @@ class Repo:
 			return
 		self.gitum_dir.mkdir(parents=True, exist_ok=True)
 		fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
-		try:
-			fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-		except BlockingIOError:
-			os.close(fd)
-			raise Busy('the repository is locked by another gitum: %s' % self.lock_owner(),
-				   owner=self.lock_owner())
+		if wait:
+			fcntl.flock(fd, fcntl.LOCK_EX)
+		else:
+			# a short retry: `gitum status` holds a shared lock for a moment to read the owner
+			for attempt in range(20):
+				try:
+					fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+					break
+				except BlockingIOError:
+					owner = self.lock_owner()
+					if owner is not None and attempt >= 2:
+						os.close(fd)
+						raise Busy('the repository is locked by another gitum: %s'
+							   % json.dumps(owner, ensure_ascii=False), owner=owner) from None
+					time.sleep(0.05)
+			else:
+				os.close(fd)
+				raise Busy('the repository is locked by another gitum', owner={})
 		os.ftruncate(fd, 0)
 		os.write(fd, json.dumps(owner_info()).encode())
 		self._lock_fd = fd
@@ -197,6 +210,8 @@ class Repo:
 					self.remove_worktree(op['worktree'])
 				self.clear_op()
 			if kind == 'accept':
+				if marker.get('candidate_on_remote'):
+					self.write_json('candidate-on-remote.json', marker['candidate_on_remote'])
 				(self.gitum_dir / CANDIDATE_FILE).unlink(missing_ok=True)
 				for ref in marker.get('delete_refs', []):
 					if self.git.ref(ref):

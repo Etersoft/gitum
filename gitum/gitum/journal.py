@@ -127,7 +127,13 @@ class Journal:
 		return LayerState(name, data) if data else None
 
 	def layers(self):
-		return {name: self.layer(name) for name in self.config.layers if self.layer(name)}
+		files = self.read_files('layers', '.json')
+		result = {}
+		for name in self.config.layers:
+			data = files.get('layers/%s.json' % name)
+			if data:
+				result[name] = LayerState(name, json.loads(data))
+		return result
 
 	def upstream(self, name):
 		return self.read_json('upstreams/%s.json' % name, {})

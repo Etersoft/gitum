@@ -12,6 +12,10 @@ BASE_ENV = {
 	'GIT_EDITOR': 'true',
 	'GIT_TERMINAL_PROMPT': '0',
 	'GIT_MERGE_AUTOEDIT': 'no',
+	# paths as they are (not C-quoted) where -z is not used
+	'GIT_CONFIG_COUNT': '1',
+	'GIT_CONFIG_KEY_0': 'core.quotePath',
+	'GIT_CONFIG_VALUE_0': 'false',
 }
 
 ZERO_SHA = '0' * 40
@@ -66,6 +70,11 @@ class Git:
 	def out(self, *args, **kwargs):
 		"""Run git and return stripped stdout as text."""
 		return self.run(*args, **kwargs).stdout.decode('utf-8', errors='replace').strip()
+
+	def zlines(self, *args, **kwargs):
+		"""NUL-separated output (-z) as a list of strings."""
+		out = self.run(*args, **kwargs).stdout.decode('utf-8', errors='surrogateescape')
+		return [p for p in out.split('\0') if p]
 
 	def lines(self, *args, **kwargs):
 		text = self.out(*args, **kwargs)
@@ -130,7 +139,7 @@ class Git:
 			end = out.index(b'\n', pos)
 			header = out[pos:end].split()
 			pos = end + 1
-			if len(header) < 3 or header[1] == b'missing':
+			if not header or header[-1] in (b'missing', b'ambiguous'):
 				result[spec] = None
 				continue
 			size = int(header[2])
@@ -138,9 +147,25 @@ class Git:
 			pos += size + 1
 		return result
 
+	def in_history(self, revs, base):
+		"""The revs (shas or refs) that are commits contained in base, in one or two git processes."""
+		revs = sorted({r for r in revs if r})
+		if not revs:
+			return set()
+		out = self.run('cat-file', '--batch-check=%(objectname) %(objecttype)', input='\n'.join(revs) + '\n').stdout
+		commits = {}
+		for rev, line in zip(revs, out.decode().splitlines()):
+			parts = line.split()
+			if len(parts) == 2 and parts[1] == 'commit':
+				commits[rev] = parts[0]
+		if not commits:
+			return set()
+		outside = set(self.lines('rev-list', '--stdin', input='^%s\n%s\n' % (base, '\n'.join(set(commits.values())))))
+		return {rev for rev, sha in commits.items() if sha not in outside}
+
 	def ls_files(self, rev, path):
 		"""Paths of all files under a directory of a revision (recursive)."""
-		return self.lines('ls-tree', '-r', '--name-only', rev, '--', path.rstrip('/') + '/')
+		return self.zlines('ls-tree', '-r', '-z', '--name-only', rev, '--', path.rstrip('/') + '/')
 
 	def commit_infos(self, revs):
 		"""commit_info() of many commits in one git process: {sha: info}."""
@@ -171,10 +196,10 @@ class Git:
 
 	def ls_tree(self, rev, path=''):
 		"""Names directly under a directory of a revision."""
-		args = ['ls-tree', '--name-only', rev]
+		args = ['ls-tree', '-z', '--name-only', rev]
 		if path:
 			args.append(path.rstrip('/') + '/')
-		return [p.rsplit('/', 1)[-1] for p in self.lines(*args)]
+		return [p.rsplit('/', 1)[-1] for p in self.zlines(*args)]
 
 	def hash_blob(self, data):
 		return self.out('hash-object', '-w', '--stdin', input=data)
@@ -235,7 +260,7 @@ class Git:
 		return not self.out('status', '--porcelain', '--untracked-files=no')
 
 	def unmerged_files(self):
-		return self.lines('diff', '--name-only', '--diff-filter=U')
+		return sorted(set(self.zlines('diff', '-z', '--name-only', '--diff-filter=U')))
 
 	def config(self, key, default=None):
 		res = self.run('config', '--get', key, check=False)

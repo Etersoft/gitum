@@ -7,7 +7,6 @@ resume it from the state saved in <common dir>/gitum/operation.json.
 """
 
 import datetime
-import json
 import re
 import shutil
 import subprocess
@@ -17,6 +16,7 @@ from . import changes as changes_mod
 from . import hooks, packaging, rrcache, state
 from .errors import GitumError, NeedsHuman
 from .git import RefTransaction
+from .repo import CANDIDATE_FILE
 from .journal import (
 	JOURNAL_REF,
 	JournalWriter,
@@ -51,20 +51,25 @@ def next_release(git, upstream, current):
 	"""The first release tag after the current base, by version order."""
 	if not upstream.release_tags:
 		raise GitumError('upstream %s has no release-tags pattern for --next-release' % upstream.name)
-	for tag in git.lines('tag', '-l', upstream.release_tags, '--sort=v:refname'):
-		sha = git.rev('refs/tags/' + tag)
-		if sha and sha != current and git.is_ancestor(current, sha):
+	args = ['for-each-ref', '--sort=v:refname', '--format=%(objectname) %(*objectname) %(refname:short)',
+		'refs/tags/' + upstream.release_tags]
+	if current:
+		args.insert(1, '--contains=' + current)
+	for line in git.lines(*args):
+		parts = line.split()
+		sha, tag = (parts[1], parts[2]) if len(parts) == 3 else (parts[0], parts[1])
+		if sha != current:
 			return tag, sha
 	return None, None
 
 
-def origin_commit(git, message, new_base):
-	"""The upstream commit a backport came from, if it is in the new base."""
-	for line in ORIGIN_RE.findall(message):
-		for sha in SHA_RE.findall(line):
-			if git.rev(sha) and git.is_ancestor(sha, new_base):
-				return sha
-	return None
+def origin_shas(message):
+	return [sha for line in ORIGIN_RE.findall(message) for sha in SHA_RE.findall(line)]
+
+
+def origin_commit(message, in_base):
+	"""The upstream commit a backport came from, if it is in the new base (in_base: such revs)."""
+	return next((sha for sha in origin_shas(message) if sha in in_base), None)
 
 
 def revert_pairs(git, commits):
@@ -101,10 +106,7 @@ class Sync:
 		  find_culprit=False, allow_rewrite=False):
 		repo, git = self.repo, self.git
 		self.op_allow_rewrite = allow_rewrite
-		if repo.load_op():
-			raise NeedsHuman('an operation is in progress: gitum continue, skip or abort')
-		if (repo.gitum_dir / 'candidate.json').exists():
-			raise NeedsHuman('a candidate is waiting for review: gitum accept or gitum drop-candidate')
+		check_idle(repo)
 		journal = repo.journal()
 		cfg = journal.config
 		if fetch:
@@ -152,12 +154,17 @@ class Sync:
 			# not stopped on a conflict: the previous gitum was killed; redo the interrupted step
 			self._recover()
 			return self._run()
+		if action == 'skip' and not op.get('stopped_at'):
+			raise GitumError('nothing is stopped to skip: the previous gitum was interrupted; '
+					 'gitum continue redoes the interrupted step, gitum abort stops the sync')
 		if not cur or not wt:
 			raise GitumError('nothing to %s' % action)
 		if cur.get('gen'):
 			self._resume_generation(wt, action)
 			return self._run()
-		res = next(r for r in cur['results'] if r['sha'] == op.get('stopped_at'))
+		res = next((r for r in cur['results'] if r['sha'] == op.get('stopped_at')), None)
+		if res is None:
+			raise GitumError('the stopped change %s is not in the current layer' % op.get('stopped_at'))
 		if action == 'skip':
 			wt.run('cherry-pick', '--skip', check=False)
 			wt.run('reset', '-q', '--hard', 'HEAD')
@@ -259,6 +266,10 @@ class Sync:
 		if gen and gen.get('applying') is not None:
 			wt.run('reset', '-q', '--hard', gen['head'])
 			gen.pop('applying')
+		if gen and gen.get('post'):
+			wt.run('reset', '-q', '--hard', gen['post'])
+			wt.run('clean', '-q', '-fdx')
+			gen.pop('post')
 		self.repo.save_op(op)
 
 	def _check_checkouts(self):
@@ -322,14 +333,17 @@ class Sync:
 			sign, sha = line.split()
 			cherry[sha] = sign
 		infos = git.commit_infos(commits)
+		in_base = git.in_history(
+			[s for sha in commits for s in origin_shas(infos[sha]['message'])] +
+			[r for f in fate_of.values() if f for r in changes_mod.drop_refs(f)], new_base)
 		for sha in commits:
 			info = infos[sha]
 			res = {'sha': sha, 'subject': info['subject']}
 			gid = re.findall(r'^Gitum-Id:\s*(\S+)', info['message'], re.M)
 			if gid:
 				res['gitum_id'] = gid[-1]
-			origin = origin_commit(git, info['message'], new_base)
-			marked = changes_mod.should_drop(git, fate_of[sha], new_base) if fate_of.get(sha) else None
+			origin = origin_commit(info['message'], in_base)
+			marked = changes_mod.should_drop(fate_of[sha], in_base) if fate_of.get(sha) else None
 			if sha in pairs:
 				res.update(result=ANNIHILATED, pair=pairs[sha])
 			elif marked:
@@ -401,6 +415,9 @@ class Sync:
 			gen['pos'] += 1
 			gen.pop('applying', None)
 			self.repo.save_op(op)
+		# a step marker: after a crash the work tree goes back to `post` and post-command runs again
+		gen['post'] = wt.rev('HEAD')
+		self.repo.save_op(op)
 		post = packaging.post_command(self.repo, wt, layer.options, self._env(layer.name), op['run_dir'], layer.name)
 		if post:
 			gen['info']['post_log'] = post
@@ -467,7 +484,9 @@ class Sync:
 			op['worktree'] = str(wt.cwd)
 		else:
 			wt = self.git.at(op['worktree'])
-			wt.run('clean', '-q', '-fdx')		# leftovers of the previous layer (generated files)
+			# leftovers of the previous layer (generated files) or of a killed generator
+			wt.run('reset', '-q', '--hard')
+			wt.run('clean', '-q', '-fdx')
 			wt.run('checkout', '-q', '--detach', rev)
 		return wt
 
@@ -761,7 +780,7 @@ def save_candidate(repo, op, report):
 		pushed = True
 	data = {'run': op['run'], 'op': {k: v for k, v in op.items() if k not in ('current', 'pending')},
 		'refs': refs, 'pushed': pushed, 'report': report}
-	repo.write_json('candidate.json', data)
+	repo.write_json(CANDIDATE_FILE, data)
 	where = ' and %s' % cfg.publish_remote if pushed else ''
 	return {'refs': refs, 'pushed': pushed,
 		'message': 'the result is in %s*%s' % (cfg.candidate_prefix, where)}
@@ -785,25 +804,35 @@ def accept(repo, publish_=False):
 	"""Publish a reviewed candidate (the candidate branches may have been edited)."""
 	git = repo.git
 	with repo.lock():
-		path = repo.gitum_dir / 'candidate.json'
-		if not path.exists():
+		path = repo.gitum_dir / CANDIDATE_FILE
+		cand = repo.read_json(CANDIDATE_FILE)
+		if not cand:
 			raise GitumError('no candidate to accept')
-		cand = json.loads(path.read_text())
 		op = cand['op']
 		cfg = repo.journal(op['journal']).config
 		if cand['pushed'] and cfg.publish_remote:
 			git.run('fetch', '--quiet', cfg.publish_remote,
 				*['+%s:%s' % (r, r) for r in cand['refs'].values()])
 		tips = {name: git.rev(ref) for name, ref in cand['refs'].items()}
+		missing = [ref for name, ref in cand['refs'].items() if not tips[name]]
+		if missing:
+			raise NeedsHuman('candidate branches are gone: %s; gitum drop-candidate and sync again'
+					 % ', '.join(missing), missing=missing)
+		snapshot = op.get('snapshot', {})
+		moved = [ref for ref, sha in snapshot.items() if ref.startswith('refs/heads/') and git.rev(ref) != sha]
+		if moved:
+			raise NeedsHuman('%s moved since the candidate was made; gitum drop-candidate and sync again'
+					 % ', '.join(r[len('refs/heads/'):] for r in moved), moved=moved)
+		# the remote keeps the candidate until the accepted state is published there
+		on_remote = {'remote': cfg.publish_remote, 'refs': list(cand['refs'].values())} \
+			if cand['pushed'] and cfg.publish_remote else None
 		tr, moves = commit_states(repo, op, cand['report'], tips)
 		for ref in cand['refs'].values():
 			tr.delete(ref)
 		with repo.committing(tr, moves, kind='accept', run=op['run'], delete_refs=list(cand['refs'].values()),
-				     hooks_report='runs/%s/report.json' % op['run']):
-			if cand['pushed'] and cfg.publish_remote:
-				# the remote keeps the candidate until the accepted state is published there
-				repo.write_json('candidate-on-remote.json', {'remote': cfg.publish_remote,
-									     'refs': list(cand['refs'].values())})
+				     hooks_report='runs/%s/report.json' % op['run'], candidate_on_remote=on_remote):
+			if on_remote:
+				repo.write_json('candidate-on-remote.json', on_remote)
 			path.unlink()
 			hooks.run_hooks(repo, cand['report'])
 	result = {'changed': True, 'report': cand['report'], 'accepted': cand['run']}
@@ -815,19 +844,19 @@ def accept(repo, publish_=False):
 
 def drop_candidate(repo):
 	git = repo.git
-	path = repo.gitum_dir / 'candidate.json'
-	if not path.exists():
-		raise GitumError('no candidate')
-	cand = json.loads(path.read_text())
-	cfg = repo.journal(cand['op']['journal']).config
-	tr = RefTransaction(git)
-	for ref in cand['refs'].values():
-		if git.ref(ref):
-			tr.delete(ref)
-	tr.commit()
-	if cand['pushed'] and cfg.publish_remote:
-		git.run('push', '--quiet', cfg.publish_remote, *[':' + r for r in cand['refs'].values()], check=False)
-	path.unlink()
+	with repo.lock():
+		cand = repo.read_json(CANDIDATE_FILE)
+		if not cand:
+			raise GitumError('no candidate')
+		cfg = repo.journal(cand['op']['journal']).config
+		tr = RefTransaction(git)
+		for ref in cand['refs'].values():
+			if git.ref(ref):
+				tr.delete(ref)
+		tr.commit()
+		if cand['pushed'] and cfg.publish_remote:
+			git.run('push', '--quiet', cfg.publish_remote, *[':' + r for r in cand['refs'].values()], check=False)
+		(repo.gitum_dir / CANDIDATE_FILE).unlink()
 	return {'dropped': cand['run']}
 
 
@@ -850,8 +879,17 @@ def step_targets(repo, to=None, next_release_=False):
 	return repo.git.rev_list('--reverse', '--first-parent', '%s..%s' % (current, target))
 
 
+def check_idle(repo):
+	"""Stop if a sync is stopped or a candidate waits: nothing may move the branches under them."""
+	if repo.load_op():
+		raise NeedsHuman('an operation is in progress: gitum continue, skip or abort')
+	if (repo.gitum_dir / CANDIDATE_FILE).exists():
+		raise NeedsHuman('a candidate is waiting for review: gitum accept or gitum drop-candidate')
+
+
 def sync(repo, step=False, **kwargs):
 	with repo.lock(wait=kwargs.pop('wait', False)):
+		check_idle(repo)
 		cfg = repo.journal().config
 		if kwargs.get('fetch', True) and cfg.publish_remote:
 			from . import publish
