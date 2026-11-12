@@ -178,6 +178,16 @@ def cmd_log(repo, args, out):
 	out.result(entries, '\n'.join('%s %s' % (short(e['sha']), e['subject']) for e in entries))
 
 
+def cmd_restore(repo, args, out):
+	data = state.restore(repo, args.state)
+	if not data['changed']:
+		out.result(data, 'The stack is already as in %s.' % short(data['state']))
+		return EXIT_OK
+	out.result(data, 'Restored %s as in %s (a new journal state; gitum log shows the previous one).'
+		   % (', '.join(data['layers']), short(data['state'])))
+	return done(args, True)
+
+
 def build_parser():
 	from .commands import register
 	p = Parser(prog='gitum', description='Git Upstream Manager: develop in parallel with upstream')
@@ -216,6 +226,10 @@ def build_parser():
 	c = cs.add_parser('load', help='check a file and make it the configuration')
 	c.add_argument('file')
 	s.set_defaults(func=cmd_config)
+
+	s = sub.add_parser('restore', help='bring the layers back to an earlier journal state (recorded as a new one)')
+	s.add_argument('state', metavar='STATE', help='a journal state from gitum log, e.g. gitum/journal~2')
+	s.set_defaults(func=cmd_restore)
 
 	s = sub.add_parser('log', help='journal history, or the history of a change, series:NAME or layer:NAME')
 	s.add_argument('target', nargs='?')

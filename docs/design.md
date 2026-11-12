@@ -179,6 +179,42 @@ refined along the way.
   chats: it passes JSON events on stdin to hooks, and a failing hook never
   fails the operation.
 
+## Similar tools
+
+Checked in November 2026 against their current documentation.
+
+| | git-debrebase / dgit | gbp pq | rdopkg | StGit | b4 | git-branchless, Sapling | gitum |
+|---|---|---|---|---|---|---|---|
+| Stack of layers over an upstream | one patch queue | no | no | one stack | no | a commit stack | yes, with generated layers |
+| History of rebases kept | yes, pseudo-merges in the branch | only `debian/patches` | no | local undo log | versions of a series | event log | journal and history branches |
+| Accepted upstream | patch-id during rebase | patch-id during rebase | patch-id during rebase | reverse apply | patch-id | landed PR | patch-id, Origin, content check, suspects |
+| Accepted with edits | no | no | no | partly | no | no | yes, verified by content |
+| Conflict automation | no | no | no | no | — | no | rerere → rules → agent, shared rerere |
+| Series and dependencies | no | topics | no | no | one series | stacks | yes, variants, queue |
+| Resumable after a crash | partly | no | no | undo | — | undo | required and tested |
+
+- **git-debrebase and dgit** (Debian) keep a rebasing branch fast-forward with
+  pseudo-merges: the old tip becomes a parent that only keeps history. gitum
+  keeps that history in the journal instead, because there are several layers
+  and several sessions at once; git-debrebase itself calls merging two
+  diverged queues an open problem.
+- **gbp pq** keeps the patch queue in a throwaway branch and the history only
+  as `debian/patches` files; **rdopkg** rebases a `-patches` branch with force
+  and is barely maintained. Neither tracks the fate of a patch.
+- **DEP-3** patch headers (`Origin`, `Forwarded`, `Applied-Upstream`,
+  `Bug-*`) say per patch almost what gitum keeps as the fate of a change, so
+  gitum writes and reads them in spec and quilt patch sets.
+- **b4** keeps versions of a series and its cover letter and finds applied
+  series by patch-id; it works with mailing lists and has no layers.
+
+Taken from them: DEP-3 headers in exported patches and back from imported
+ones; `gitum restore` to bring the branches back to an earlier journal state
+(the undo of git-branchless and StGit); `export --verify`, which applies the
+written patches onto the base and compares the tree with the layer (the
+guarantee dgit gives for the archive). Considered for later: a fast-forward
+publishing branch per layer made of pseudo-merges, review trailers taken from
+merge requests, stable patch file names.
+
 ## What gitum will not do
 
 - It does not create MRs/PRs itself: only preparation, the text and a push to

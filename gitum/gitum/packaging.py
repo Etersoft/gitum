@@ -193,7 +193,44 @@ def update_spec(spec_path, files, first=1):
 	return new != text
 
 
-def export(repo, what, fmt, directory, spec=None, prefix='', first=1, clean=False):
+def add_dep3(repo, base, tip, directory, files):
+	"""Write the fate of each change into its patch as DEP-3 fields."""
+	from . import changes as changes_mod
+	from . import dep3
+	cfg = repo.journal().config
+	by_sha = {rec.get('sha'): rec for rec in changes_mod.load_all(repo.journal()).values() if rec.get('sha')}
+	# the commits format-patch writes, in its order (it skips merges, not empty commits)
+	shas = repo.git.rev_list('--reverse', '--no-merges', '%s..%s' % (base, tip))
+	for sha, f in zip(shas, files):
+		path = directory / f
+		text = path.read_bytes().decode('utf-8', 'surrogateescape')	# byte exact: CRLF lines stay
+		new = dep3.add_to_patch(text, dep3.fields(cfg, by_sha.get(sha)))
+		if new != text:
+			path.write_bytes(new.encode('utf-8', 'surrogateescape'))
+
+
+def verify(repo, base, tip, directory, files):
+	"""Apply the written patches onto the base: they must give exactly the tree of the tip."""
+	git = repo.git
+	wt = repo.add_worktree(base, 'verify-export')
+	try:
+		for f in files:
+			res = wt.run('am', '--keep-cr', '--quiet', '--empty=keep', str(directory / f), check=False)
+			if res.returncode != 0:
+				wt.run('am', '--abort', check=False)
+				raise GitumError('exported %s does not apply on the base %s: %s'
+						 % (f, base[:12], res.stderr.decode(errors='replace').strip()))
+		got = wt.out('rev-parse', 'HEAD^{tree}')
+	finally:
+		repo.remove_worktree(wt.cwd)
+	want = git.out('rev-parse', tip + '^{tree}')
+	if got != want:
+		stat = git.out('diff', '--stat', got, want, check=False)
+		raise GitumError('the exported patches do not rebuild %s (what they miss is below):\n%s' % (tip[:12], stat),
+				 diffstat=stat)
+
+
+def export(repo, what, fmt, directory, spec=None, prefix='', first=1, clean=False, dep3=False, check_tree=False):
 	git = repo.git
 	base, tip, name = layer_range(repo, what)
 	directory = Path(directory)
@@ -209,7 +246,12 @@ def export(repo, what, fmt, directory, spec=None, prefix='', first=1, clean=Fals
 				old.unlink()
 				removed.append(old.name)
 	files = format_patches(git, base, tip, target, prefix, 1)
-	result = {'format': fmt, 'directory': str(target), 'files': files, 'removed': removed, 'base': base, 'tip': tip}
+	if dep3:
+		add_dep3(repo, base, tip, target, files)
+	if check_tree:
+		verify(repo, base, tip, target, files)
+	result = {'format': fmt, 'directory': str(target), 'files': files, 'removed': removed, 'base': base, 'tip': tip,
+		  'verified': bool(check_tree)}
 	if fmt == 'quilt':
 		# entries of patches somebody else put there stay, after ours
 		series = target / 'series'
@@ -265,7 +307,8 @@ def _import_patches(repo, into, source, fmt):
 	branch = cfg.layers[into].branch
 	tip = git.rev('refs/heads/' + branch)
 	wt = repo.add_worktree(tip, 'import-' + into)
-	imported = []
+	imported, fates = [], {}
+	from . import dep3
 	try:
 		for n in names:
 			path = directory / n
@@ -284,12 +327,22 @@ def _import_patches(repo, into, source, fmt):
 						 % (n, branch, len(imported), res.stderr.decode(errors='replace').strip()),
 						 patch=n, applied=imported)
 			imported.append(n)
+			fate, meta = dep3.fate_of(dep3.parse(path.read_text(errors='replace')))
+			if fate:
+				fates[wt.rev('HEAD')] = (fate, meta)
 		new_tip = wt.rev('HEAD')
 	finally:
 		repo.remove_worktree(wt.cwd)
 	from . import state
-	state.move_layer(repo, into, new_tip, 'import %d patches from %s' % (len(imported), source.name))
-	return {'layer': into, 'imported': imported, 'tip': new_tip}
+
+	def adjust(tracker, layer_state):
+		for c in layer_state.changes:
+			if c.sha in fates:
+				tracker.set(c.gitum_id, fates[c.sha][0], **fates[c.sha][1])
+
+	state.move_layer(repo, into, new_tip, 'import %d patches from %s' % (len(imported), source.name), adjust=adjust)
+	return {'layer': into, 'imported': imported, 'tip': new_tip,
+		'fates': {sha: fate for sha, (fate, _meta) in fates.items()}}
 
 
 # HTML report

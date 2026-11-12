@@ -10,7 +10,8 @@ from .errors import EXIT_NEEDS_HUMAN, GitumError
 
 def cmd_export(repo, args, out):
 	if args.format == 'staging':
-		bad = [o for o, v in (('--spec', args.spec), ('--prefix', args.prefix), ('--clean', args.clean)) if v]
+		bad = [o for o, v in (('--spec', args.spec), ('--prefix', args.prefix), ('--clean', args.clean),
+				      ('--dep3', args.dep3), ('--verify', args.verify)) if v]
 		if bad:
 			raise UsageError('%s do not apply to --format staging' % ', '.join(bad))
 		names = []
@@ -34,10 +35,12 @@ def cmd_export(repo, args, out):
 	if args.format == 'quilt' and (args.spec or args.first != 1):
 		raise UsageError('--spec and --first are for --format spec')
 	data = packaging.export(repo, args.what[0], args.format, args.dir, args.spec, args.prefix or '', args.first,
-				args.clean)
+				args.clean, args.dep3, args.verify)
 	text = '%d patches in %s' % (len(data['files']), data['directory'])
 	if data.get('removed'):
 		text += ' (removed %d old ones)' % len(data['removed'])
+	if data.get('verified'):
+		text += '; they rebuild the tip exactly'
 	if args.format == 'spec' and not args.spec:
 		text += '\n' + '\n'.join(data['spec_lines'])
 	elif data.get('spec_updated') is not None:
@@ -85,6 +88,9 @@ def register(sub):
 	s.add_argument('--prefix', help='quilt, spec: prefix of the patch file names')
 	s.add_argument('--first', type=int, default=1, help='spec: number of the first PatchN')
 	s.add_argument('--clean', action='store_true', help='quilt, spec: remove the old patches gitum wrote there')
+	s.add_argument('--dep3', action='store_true', help='quilt, spec: write the fate of each change as DEP-3 fields')
+	s.add_argument('--verify', action='store_true',
+		       help='quilt, spec: apply the written patches onto the base and require the tree of the tip')
 	s.set_defaults(func=cmd_export)
 
 	s = sub.add_parser('import', help='read patches: onto a layer (quilt, spec) or as series (wine-staging)')

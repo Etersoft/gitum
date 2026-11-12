@@ -530,3 +530,25 @@ def test_accept_keeps_remote_candidate_until_publish(published, tmp_path, capsys
 	assert gitum(work, 'publish') == 0
 	assert not bare.rev('candidate/rebased-etersoft')
 	assert bare.rev('rebased-etersoft') == work.rev('rebased-etersoft')
+
+
+def test_restore_an_earlier_state(stack, capsys):
+	up, work = stack
+	before = {b: work.rev(b) for b in ('rebased', 'rebased-basealt', 'rebased-etersoft')}
+	state = work.rev(JOURNAL_REF)
+	release(up, '1.1')
+	assert gitum(work, 'sync', '--next-release') == 0
+	work.run('checkout', '-q', 'rebased-etersoft')		# a clean work tree follows
+	code, data = gitum_json(work, capsys, 'restore', state)
+	assert code == 0 and data['layers'] == ['rebased', 'basealt', 'etersoft']
+	assert {b: work.rev(b) for b in before} == before
+	assert work.read('VERSION') == '1.0\n' and work.git.is_clean()
+	j = GitumRepo(work.path).journal()
+	assert j.upstream('winehq')['tag'] == 'v1.0' and j.layer('basealt').tip == before['rebased-basealt']
+	assert work.rev('rebased-basealt-START') == j.layer('basealt').base
+	# nothing is lost: the synced state is still in the journal, and restoring it again works
+	synced = work.git.out('rev-parse', JOURNAL_REF + '~1')
+	assert gitum(work, 'restore', synced) == 0 and work.read('VERSION') == '1.1\n'
+	code, data = gitum_json(work, capsys, 'restore', synced)
+	assert code == 0 and not data['changed']
+	assert gitum(work, 'restore', 'v1.0') == 1				# not a journal state

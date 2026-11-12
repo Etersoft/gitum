@@ -304,3 +304,57 @@ def move_layer(repo, name, new_tip, message, adjust=None, keep=()):
 		pass
 	return state
 
+
+
+def restore(repo, rev):
+	"""Bring the whole stack back to an earlier journal state; recorded as a new state, nothing is lost.
+
+	The layer branches, their bases (and compat START tags) and the upstream
+	sync points become those of the state rev; the history branches and the
+	journal only grow, so the restore itself can be undone the same way.
+	"""
+	from .sync import check_idle
+	git = repo.git
+	with repo.lock():
+		check_idle(repo)
+		journal = repo.journal()
+		sha = git.rev(rev + '^{commit}') if rev else None
+		if not sha or sha not in journal.history():
+			raise GitumError('%s is not a state of the journal (gitum log lists them)' % rev)
+		old = repo.journal(sha)
+		cfg = journal.config
+		writer = JournalWriter(git, journal.sha)
+		tracker = changes_mod.Tracker(journal)
+		tr = RefTransaction(git)
+		moves, restored = [], []
+		for name, data in old.read_files('upstreams', '.json').items():
+			writer.put(name, data)
+		for layer in cfg.ordered_layers():
+			then, now_ = old.layer(layer.name), journal.layer(layer.name)
+			if not then:
+				raise GitumError('layer %s did not exist in %s' % (layer.name, rev))
+			ref = 'refs/heads/' + layer.branch
+			current = git.rev(ref)
+			if now_ and (then.base, then.tip) == (now_.base, now_.tip) and current == then.tip:
+				continue
+			state = LayerState(layer.name, {**then.to_json(), 'branch': layer.branch,
+							'upstream_ref': cfg.root_upstream(layer).ref})
+			tracker.track_layer(layer.name, now_, state.changes, context='restore %s' % sha[:12])
+			writer.put_layer(state)
+			if current != then.tip:
+				tr.update(ref, then.tip, current or None)
+				moves.append((layer.branch, current, then.tip))
+			hist_old = git.rev(history_ref(layer.name))
+			tr.update(history_ref(layer.name), history_commit(git, then.tip, hist_old, '%s: restore %s\n\ntip %s\n' % (
+				layer.name, sha[:12], then.tip)), hist_old or None)
+			if layer.compat_start_tag:
+				tr.update('refs/tags/' + layer.compat_start_tag, then.base, '')
+			restored.append(layer.name)
+		if not restored:
+			return {'changed': False, 'state': sha, 'layers': []}
+		tracker.write(writer)
+		tr.update(JOURNAL_REF, writer.write('gitum: restore the state %s' % sha[:12],
+						     [m[2] for m in moves]), journal.sha)
+		with repo.committing(tr, moves, kind='restore'):
+			pass
+		return {'changed': True, 'state': sha, 'layers': restored}

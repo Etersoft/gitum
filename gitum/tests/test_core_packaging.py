@@ -410,3 +410,43 @@ def test_import_failure_leaves_the_layer(simple, tmp_path, capsys):
 	tip = work.rev('pkg')
 	code, data = gitum_json(work, capsys, 'import', str(patches / 'pkg.spec'), '--into', 'pkg')
 	assert code == 1 and 'layer is unchanged' in data['error'] and work.rev('pkg') == tip
+
+
+def test_export_dep3_verify_and_import_fates(simple, tmp_path, capsys):
+	up, work = simple
+	ids = {r['subject']: r['id'] for r in gitum_json(work, capsys, 'change', 'list')[1]}
+	assert gitum(work, 'change', 'set', ids['fix one'], 'fate=sent', 'pr=https://gitlab.example/u/p/-/merge_requests/5') == 0
+	assert gitum(work, 'change', 'set', ids['fix two'], 'fate=distro-only', 'reason=packaging') == 0
+	q = tmp_path / 'q'
+	code, data = gitum_json(work, capsys, 'export', 'layer:pkg', '--format', 'quilt', '--dir', str(q),
+				'--dep3', '--verify')
+	assert code == 0 and data['verified'], data
+	one = (q / 'patches' / '0001-fix-one.patch').read_text()
+	assert 'Forwarded: https://gitlab.example/u/p/-/merge_requests/5\n---\n' in one
+	assert 'Forwarded: not-needed' in (q / 'patches' / '0002-fix-two.patch').read_text()
+	# a patch set that does not rebuild the layer is refused
+	work.run('checkout', '-q', 'pkg')
+	work.commit('merge-like empty', {})
+	work.run('checkout', '-q', '--detach')
+	assert gitum(work, 'save') == 0
+	code, data = gitum_json(work, capsys, 'export', 'layer:pkg', '--format', 'spec', '--dir', str(tmp_path / 's'),
+				'--verify')
+	assert code == 0, data		# an empty commit changes no tree: still exact
+	# importing the patches back gives the changes their fates
+	work.run('branch', '-f', 'pkg', 'v1.0')
+	assert gitum(work, 'save') == 0
+	code, data = gitum_json(work, capsys, 'import', str(q), '--into', 'pkg')
+	assert code == 0 and sorted(data['fates'].values()) == ['distro-only', 'sent']
+	rows = {r['subject']: r for r in gitum_json(work, capsys, 'change', 'list')[1]}
+	assert rows['fix one']['fate'] == 'sent' and rows['fix one']['meta']['pr'].endswith('/5')
+
+
+def test_dep3_fields_and_parse():
+	from gitum import dep3
+	text = 'From 0\nSubject: [PATCH] x\n\nBody.\n\nSigned-off-by: A <a@x>\n---\n f | 1 +\n'
+	out = dep3.add_to_patch(text, [('Forwarded', 'no')])
+	assert 'Signed-off-by: A <a@x>\nForwarded: no\n---\n' in out
+	assert dep3.parse('Description: x\nApplied-Upstream: 11.5\n---\n+++ b/f\n') == {'Applied-Upstream': '11.5'}
+	assert dep3.fate_of({'Applied-Upstream': 'abc1234'}) == ('merged', {'upstream_commit': 'abc1234'})
+	assert dep3.fate_of({'Origin': 'upstream, https://x/commit/1'}) == ('backport', {'origin': 'https://x/commit/1'})
+	assert dep3.fate_of({'Forwarded': 'no'}) == (None, {})
